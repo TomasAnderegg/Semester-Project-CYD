@@ -432,9 +432,9 @@ def filter_cybersecurity(df, keywords):
     
     df_filtered = df[mask_combined].reset_index(drop=True)
     
-    # print(f"✓ Correspondances dans category_groups: {mask_cat.sum():,}")
-    # print(f"✓ Correspondances dans short_description: {mask_desc.sum():,}")
-    # print(f"✓ Total d'entreprises cybersécurité: {len(df_filtered):,}")
+    print(f"✓ Correspondances dans category_groups: {mask_cat.sum():,}")
+    print(f"✓ Correspondances dans short_description: {mask_desc.sum():,}")
+    print(f"✓ Total d'entreprises cybersécurité: {len(df_filtered):,}")
     
     if len(df_filtered) > 0:
         pass
