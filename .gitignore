@@ -19,6 +19,9 @@ data/*.txt
 *.gpickle
 *.pkl
 *.png
+*.parquet
+*.json
+*.txt
 .DS_Store
 
 ### PyCharm ###
