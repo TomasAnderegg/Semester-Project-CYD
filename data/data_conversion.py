@@ -1,11 +1,14 @@
 """
-Script de traitement des données CrunchBase pour TechRank
+Script autonome de traitement des données CrunchBase pour TechRank
 Auteur: Tomas
 Date: 2025
 
-Ce script charge, nettoie et traite les données d'organisations CrunchBase,
-avec option de filtrage pour les entreprises de cybersécurité.
-Supporte CSV et DuckDB comme sources de données.
+Fonctionnalités :
+- Chargement CSV ou DuckDB
+- Nettoyage et traitement des catégories
+- Filtrage cybersécurité
+- Création d'un graphe tripartite Companies ↔ Investments ↔ Technologies
+- Sauvegarde des dictionnaires et du graphe
 """
 
 import pandas as pd
@@ -14,656 +17,406 @@ import os
 from pathlib import Path
 import duckdb
 import networkx as nx
-import random, string, urllib, requests
-from typing import List
-# ============================================================================
+import numpy as np
+
+# ===================================================================
 # CONFIGURATION
-# ============================================================================
+# ===================================================================
 
-# Choix de la source de données
-USE_DUCKDB = True  # True = utiliser DuckDB, False = utiliser CSV
+USE_DUCKDB = True  # True = utiliser DuckDB, False = CSV
 
-# Chemins des fichiers
 DATA_PATH_DUCKDB = r"C:\Users\tjga9\Documents\Tomas\EPFL\MA3\CYD PDS\Crunchbase dataset\crunchbase.duckdb"
 DATA_PATH_CSV = r"C:\Users\tjga9\Documents\Tomas\EPFL\MA3\CYD PDS\Code\TechRank\5-TechRank-main\5-TechRank-main\data\sample CB data\organizations.csv"
-ENTITY_NAME_1 = "organizations"  # Nom de l'entité qu'on considère dans DuckDB peut etre faire une structure iterative pour aller dans organization, tech, investiseement pour ne pas le faire a la main !!
+
+ENTITY_NAME_1 = "organizations"
 ENTITY_NAME_2 = "investments"
+ENTITY_NAME_3 = "funding_rounds"
 
 SAVE_DIR_CLASSES = "savings/classes"
 SAVE_DIR_NETWORKS = "savings/networks"
 
-# Paramètres de filtrage
-FLAG_CYBERSECURITY = True  # True = uniquement cybersécurité, False = tous les domaines
-LIMITS = [10000]#[2443]  # Nombre de lignes à traiter
-CYBERSECURITY_KEYWORDS = ['quantum computing'] #Permet de selectionner la catégorie de cybersécurité
+FLAG_CYBERSECURITY = True
+LIMITS = [10000]
+CYBERSECURITY_KEYWORDS = ['quantum computing']  # mots-clés pour cybersécurité
 
-# ============================================================================
-# FONCTIONS UTILITAIRES
-# ============================================================================
-def visualize_graph(B, max_companies=20, max_technologies=30):
-    """Visualize the bipartite graph B using matplotlib."""
-    print('\n' + '='*60)
-    print('DÉBUT DE VISUALIZE_GRAPH')
-    print('='*60)
-    
-    try:
-        import matplotlib
-        import matplotlib.pyplot as plt
-        from networkx.algorithms import bipartite
-        print(f"✓ Matplotlib version: {matplotlib.__version__}")
-        print(f"✓ Backend: {matplotlib.get_backend()}")
-    except ImportError as e:
-        print(f"❌ Erreur d'import: {e}")
-        return
-
-    # Vérifier le graphe
-    print(f"\n📊 Informations sur le graphe complet:")
-    print(f"   - Nœuds: {B.number_of_nodes()}")
-    print(f"   - Arêtes: {B.number_of_edges()}")
-    
-    if B.number_of_nodes() == 0:
-        print("⚠️ Graphe vide, impossible de visualiser")
-        return
-
-    # Séparer les nœuds en deux ensembles
-    print("\n📋 Séparation des nœuds...")
-    companies = {n for n, d in B.nodes(data=True) if d.get('bipartite') == 0}
-    technologies = set(B) - companies
-    
-    print(f"   - Companies totales: {len(companies)}")
-    print(f"   - Technologies totales: {len(technologies)}")
-    
-    # ====== LIMITATION DU NOMBRE DE NŒUDS ======
-    
-    # Sélectionner les top companies (par degré = nombre de connexions)
-    company_degrees = [(c, B.degree(c)) for c in companies]
-    company_degrees.sort(key=lambda x: x[1], reverse=True)
-    top_companies = [c for c, _ in company_degrees[:max_companies]]
-    
-    # Sélectionner les top technologies (par degré)
-    tech_degrees = [(t, B.degree(t)) for t in technologies]
-    tech_degrees.sort(key=lambda x: x[1], reverse=True)
-    top_technologies = [t for t, _ in tech_degrees[:max_technologies]]
-    
-    print(f"\n✂️  Réduction du graphe:")
-    print(f"   - Companies affichées: {len(top_companies)}/{len(companies)}")
-    print(f"   - Technologies affichées: {len(top_technologies)}/{len(technologies)}")
-    
-    # Créer un sous-graphe avec seulement ces nœuds
-    nodes_to_keep = set(top_companies) | set(top_technologies)
-    B_sub = B.subgraph(nodes_to_keep).copy()
-    
-    print(f"   - Nœuds dans le sous-graphe: {B_sub.number_of_nodes()}")
-    print(f"   - Arêtes dans le sous-graphe: {B_sub.number_of_edges()}")
-    
-    if B_sub.number_of_nodes() == 0:
-        print("⚠️ Sous-graphe vide après filtrage!")
-        return
-
-    # Positionner les nœuds
-    print("\n📐 Calcul des positions...")
-    pos = dict()
-    pos.update((n, (1, i)) for i, n in enumerate(top_companies))
-    pos.update((n, (2, i)) for i, n in enumerate(top_technologies))
-    print(f"   ✓ {len(pos)} positions calculées")
-
-    # Dessiner le graphe
-    print("\n🎨 Création de la figure...")
-    try:
-        plt.figure(figsize=(16, 12))
-        print("   ✓ Figure créée")
-        
-        # Couleurs
-        companies_in_sub = {n for n in top_companies if n in B_sub}
-        node_colors = ['lightblue' if n in companies_in_sub else 'lightgreen' for n in B_sub.nodes()]
-        print(f"   ✓ {len(node_colors)} couleurs définies")
-        
-        print("   Drawing graph...")
-        nx.draw(
-            B_sub, 
-            pos=pos, 
-            with_labels=True, 
-            node_size=800,
-            node_color=node_colors,
-            font_size=8,
-            font_weight='bold',
-            edge_color='gray',
-            alpha=0.7
-        )
-        print("   ✓ Graphe dessiné")
-        
-        plt.title(f"Bipartite Graph: Top {len(top_companies)} Companies and Top {len(top_technologies)} Technologies", 
-                  fontsize=14, fontweight='bold')
-        print("   ✓ Titre ajouté")
-        
-        # Sauvegarder
-        plt.savefig('bipartite_graph_limited.png', dpi=300, bbox_inches='tight')
-        print("   ✓ Graphe sauvegardé: bipartite_graph_limited.png")
-        
-        print("\n📺 Affichage...")
-        plt.show()
-        print("   ✓ plt.show() appelé")
-        
-    except Exception as e:
-        print(f"   ❌ Erreur pendant le dessin: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    plt.close()
-    print('\n' + '='*60)
-    print('FIN DE VISUALIZE_GRAPH')
-    print('='*60 + '\n')
+# ===================================================================
+# UTILITAIRES
+# ===================================================================
 
 def create_directories():
-    """Crée les répertoires de sauvegarde s'ils n'existent pas."""
     Path(SAVE_DIR_CLASSES).mkdir(parents=True, exist_ok=True)
     Path(SAVE_DIR_NETWORKS).mkdir(parents=True, exist_ok=True)
-    # print("✓ Répertoires de sauvegarde créés/vérifiés")
 
+def convert_to_list(x):
+    # Si x est une Series, appliquer récursivement
+    if isinstance(x, pd.Series):
+        return x.apply(convert_to_list)
 
-def convert_to_list(string):
-    """Convertit une chaîne séparée par des virgules en liste."""
-    # Gérer les Series pandas
-    if isinstance(string, pd.Series):
-        if len(string) == 1:
-            string = string.iloc[0]
-        else:
-            return string.apply(convert_to_list)
-    
-    if pd.isna(string):
+    # Si NaN ou None, retourner liste vide
+    if x is None or pd.isna(x):
         return []
-    return [item.strip() for item in str(string).split(",")]
 
+    # Si c'est déjà une liste, nettoyer et convertir en string
+    if isinstance(x, list):
+        return [str(item).strip() for item in x if pd.notna(item)]
 
-# ============================================================================
+    # Sinon, convertir en string et split sur la virgule
+    return [item.strip() for item in str(x).split(',') if item.strip()]
+
+# ===================================================================
 # CHARGEMENT DES DONNÉES
-# ============================================================================
-
-def explore_duckdb(filepath, ENTITY_NAME):
-    """Explore la structure d'une base DuckDB."""
-    # print(f"\n{'='*60}")
-    # print("EXPLORATION DE LA BASE DUCKDB")
-    # print(f"{'='*60}")
-    
-    conn = duckdb.connect(filepath, read_only=True)
-    
-    # Lister les tables
-    tables = conn.execute("SHOW TABLES").fetchall()
-    # print(f"✓ Tables disponibles: {[t[0] for t in tables]}")
-    
-    # Si la table existe, afficher ses colonnes
-    if any(ENTITY_NAME in t for t in tables):
-        columns = conn.execute(f"DESCRIBE {ENTITY_NAME}").fetchall()
-        # print(f"\n✓ Colonnes de la table '{TABLE_NAME}':")
-        for col in columns[:10]:  # Afficher les 10 premières colonnes
-            # print(f"  - {col[0]}: {col[1]}")
-            pass
-        if len(columns) > 10:
-            pass
-            # print(f"  ... et {len(columns) - 10} autres colonnes")
-        
-        # Compter les lignes
-        count = conn.execute(f"SELECT COUNT(*) FROM {ENTITY_NAME}").fetchone()[0]
-        # print(f"\n✓ Nombre total de lignes: {count:,}")
-    else:
-        pass
-        # print(f"\n⚠ Table '{TABLE_NAME}' non trouvée!")
-        # print(f"  Tables disponibles: {[t[0] for t in tables]}")
-    
-    conn.close()
-    return tables
-
+# ===================================================================
 
 def load_data_from_duckdb(filepath, table_name):
-    """Charge les données depuis une base DuckDB."""
-    # print(f"\n{'='*60}")
-    # print("CHARGEMENT DES DONNÉES (DUCKDB)")
-    # print(f"{'='*60}")
-    
-    # Vérifier que le fichier existe
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Fichier DuckDB introuvable: {filepath}")
-    
-    # print(f"✓ Connexion à: {Path(filepath).name}")
-    
-    # Explorer la base
-    explore_duckdb(filepath, table_name)
-    
-    # Charger les données
     conn = duckdb.connect(filepath, read_only=True)
-    
-    # Requête pour charger toutes les données
-    query = f"SELECT * FROM {table_name}"
-    df = conn.execute(query).fetchdf()
-    
+    df = conn.execute(f"SELECT * FROM {table_name}").fetchdf()
     conn.close()
-    
-    # print(f"\n✓ {len(df):,} lignes chargées depuis la table '{table_name}'")
-    # print(f"✓ {len(df.columns)} colonnes disponibles")
-    # print(f"\n✓ Aperçu des colonnes:")
-    for i, col in enumerate(df.columns[:15]):
-        # print(f"  {i+1}. {col}")
-        pass
-    if len(df.columns) > 15:
-        pass
-        # print(f"  ... et {len(df.columns) - 15} autres colonnes")
-    
     return df
-
 
 def load_data_from_csv(filepath):
-    """Charge les données depuis un fichier CSV."""
-    # print(f"\n{'='*60}")
-    # print("CHARGEMENT DES DONNÉES (CSV)")
-    # print(f"{'='*60}")
-    
-    df = pd.read_csv(filepath)
-    # print(f"✓ {len(df):,} lignes chargées depuis {Path(filepath).name}")
-    # print(f"✓ {len(df.columns)} colonnes disponibles")
-    
-    return df
-
+    return pd.read_csv(filepath)
 
 def load_data(use_duckdb=True, entity_name=ENTITY_NAME_1):
-    """Charge les données depuis la source configurée.
-    Si on a choisi DuckDB, utilise cette source, sinon CSV.
-    """
     if use_duckdb:
         return load_data_from_duckdb(DATA_PATH_DUCKDB, entity_name)
     else:
         return load_data_from_csv(DATA_PATH_CSV)
 
-
-# ============================================================================
+# ===================================================================
 # NETTOYAGE DES DONNÉES
-# ============================================================================
+# ===================================================================
 
 def clean_data(df):
-    """Nettoie et prépare les données."""
-    # print(f"\n{'='*60}")
-    # print("NETTOYAGE DES DONNÉES")
-    # print(f"{'='*60}")
-    
-    # Colonnes à supprimer
-    columns_to_drop = [
-        'type', 'permalink', 'cb_url', 'created_at', 'domain',
-        'address', 'state_code', 'updated_at', 'legal_name', 'roles',
-        'postal_code', 'homepage_url', 'num_funding_rounds',
-        'total_funding_currency_code', 'phone', 'email', 'num_exits',
-        'alias1', 'alias2', 'alias3', 'logo_url', 'last_funding_on',
-        'twitter_url', 'facebook_url', 'linkedin_url', 'crunchbase_url',
-        'overview', 'acquisitions', 'city', 'primary_role', 'region', 'founded_on',
-        'ipo', 'milestones', 'news_articles', 'status', 'country_code', 'region', 'investment_type',
-        'post_money_valuation_usd', 'pre_money_valuation_usd', 'closed_on'
-    ]
-    
-    # Renommer les colonnes (adaptable selon la source)
-    """ Sert a renommer les colonnes pour uniformiser les noms entre DuckDB et CSV, 
-        donc si categrory_list est present on le renomme en category_groups et 
-        ainsi de suite
-    """
-    rename_mapping = {
-        'category_list': 'category_groups',
-        'category_groups_list': 'category_groups'  # Au cas où
-    }
-    
-    # Colonnes où NaN n'est pas acceptable
-    required_columns = ['category_groups', 'rank', 'short_description']
-    
-    # Appliquer le nettoyage
     df_clean = df.copy()
-    
-    # print(f"✓ Colonnes présentes avant nettoyage: {list(df_clean.columns[:10])}...")
-    
-    # IMPORTANT: Supprimer les colonnes dupliquées
-    if df_clean.columns.duplicated().any():
-        duplicated_cols = df_clean.columns[df_clean.columns.duplicated()].tolist()
-        # print(f"⚠ Colonnes dupliquées détectées: {duplicated_cols}")
-        # Garder seulement la première occurrence de chaque colonne
-        df_clean = df_clean.loc[:, ~df_clean.columns.duplicated()]
-        # print(f"✓ Colonnes dupliquées supprimées")
-    
-    # Supprimer les colonnes inutiles
-    """ Supprimer seulement les colonnes qu'on a defini dans columns_to_drop et 
-        qui existent dans le DataFrame
-    """
-    cols_to_drop = [col for col in columns_to_drop if col in df_clean.columns]
+    columns_to_drop = [
+        'type','permalink','cb_url','created_at','domain','address','state_code',
+        'updated_at','legal_name','roles','postal_code','homepage_url','num_funding_rounds',
+        'total_funding_currency_code','phone','email','num_exits','alias1','alias2','alias3',
+        'logo_url','last_funding_on','twitter_url','facebook_url','linkedin_url','crunchbase_url',
+        'overview','acquisitions','city','primary_role','region','founded_on','ipo','milestones',
+        'news_articles','status','country_code','investment_type','post_money_valuation_usd',
+        'pre_money_valuation_usd','closed_on'
+    ]
+    cols_to_drop = [c for c in columns_to_drop if c in df_clean.columns]
     df_clean = df_clean.drop(columns=cols_to_drop)
-    # print(f"✓ {len(cols_to_drop)} colonnes supprimées")
-    
-    # Renommer (seulement les colonnes qui existent)
-    actual_renames = {k: v for k, v in rename_mapping.items() if k in df_clean.columns}
-    if actual_renames:
-        df_clean = df_clean.rename(columns=actual_renames)
-        # print(f"✓ Colonnes renommées: {actual_renames}")
-    
-    # Vérifier que les colonnes requises existent
+
+    rename_mapping = {'category_list':'category_groups','category_groups_list':'category_groups'}
+    actual_renames = {k:v for k,v in rename_mapping.items() if k in df_clean.columns}
+    df_clean = df_clean.rename(columns=actual_renames)
+
+    required_columns = ['category_groups','rank','short_description']
     missing_cols = [col for col in required_columns if col not in df_clean.columns]
     if missing_cols:
-        # print(f"\n⚠ ATTENTION: Colonnes manquantes: {missing_cols}")
-        # print(f"  Colonnes disponibles: {list(df_clean.columns)}")
         raise ValueError(f"Colonnes requises manquantes: {missing_cols}")
-    
-    # Supprimer les lignes avec NaN dans les colonnes requises
-    before = len(df_clean)
+
     df_clean = df_clean.dropna(subset=required_columns)
-    # print(f"✓ {before - len(df_clean):,} lignes supprimées (valeurs manquantes)")
-    
-    # Trier par rang
-    if 'rank' in df_clean.columns:
-        df_clean = df_clean.sort_values('rank').reset_index(drop=True)
-        # print(f"✓ Données triées par 'rank'")
-    
+    df_clean = df_clean.sort_values('rank').reset_index(drop=True)
     return df_clean
 
-
 def process_category_groups(df):
-    """Convertit la colonne category_groups en listes."""
-    # print(f"\n{'='*60}")
-    # print("TRAITEMENT DES CATÉGORIES")
-    # print(f"{'='*60}")
-    
     df_proc = df.copy()
     
     # Vérifier que la colonne existe
     if "category_groups" not in df_proc.columns:
-        raise ValueError(f"Colonne 'category_groups' introuvable. Colonnes disponibles: {list(df_proc.columns)}")
+        raise ValueError(f"Colonne 'category_groups' introuvable")
     
-    # S'assurer qu'il n'y a qu'une seule colonne category_groups
+    # Gérer les colonnes dupliquées
     if df_proc.columns.duplicated().any():
-        # print(f"⚠ Colonnes dupliquées encore présentes, nettoyage...")
         df_proc = df_proc.loc[:, ~df_proc.columns.duplicated()]
     
-    # Obtenir la Series (pas DataFrame)
+    # Obtenir la Series
     col_series = df_proc['category_groups']
-    
-    # Vérifier que c'est bien une Series
-    if not isinstance(col_series, pd.Series):
-        # print(f"⚠ 'category_groups' est un {type(col_series)}, conversion en Series...")
-        col_series = df_proc['category_groups'].squeeze()
-    
-    # print(f"✓ Type de la colonne: {type(col_series)}")
     
     # Vérifier le type de la première valeur non-nulle
     first_valid_idx = col_series.first_valid_index()
     if first_valid_idx is not None:
         first_valid = col_series.loc[first_valid_idx]
-        # print(f"✓ Exemple de valeur: '{first_valid[:50]}...' (type: {type(first_valid)})")
         
         # Convertir en liste si ce n'est pas déjà une liste
         if not isinstance(first_valid, list):
             df_proc['category_groups'] = col_series.apply(convert_to_list)
-            # print(f"✓ Conversion des catégories en listes effectuée")
-        else:
-            pass
-            # print(f"✓ Les catégories sont déjà au format liste")
-    else:
-        pass
-        # print(f"⚠ Aucune valeur valide trouvée dans category_groups")
     
-    # Statistiques
-    # print(f"✓ Valeurs NaN: {df_proc['category_groups'].isna().sum()}")
-    # print(f"✓ Exemples de catégories:")
-    for i in range(min(3, len(df_proc))):
-        cats = df_proc['category_groups'].iloc[i]
-        print(f"  {i+1}. {cats}")
+    # IMPORTANT: Reset de l'index après le traitement
+    df_proc = df_proc.reset_index(drop=True)
     
     return df_proc
 
-
 def filter_cybersecurity(df, keywords):
-    """Filtre les entreprises de cybersécurité."""
+    """Filtre les entreprises de cybersécurité - VERSION CORRIGÉE."""
     print(f"\n{'='*60}")
     print("FILTRAGE CYBERSÉCURITÉ")
     print(f"{'='*60}")
     
-    # Recherche dans category_groups
-    mask_cat = df['category_groups'].apply(
-        lambda lst: isinstance(lst, list) and 
-        any(k.lower() in ' '.join(lst).lower() for k in keywords)
-    )
+    # ÉTAPE 1: Forcer le reset d'index avant toute opération
+    df = df.reset_index(drop=True).copy()
     
-    # Recherche dans short_description
+    # DIAGNOSTIC: Vérifier la structure de category_groups
+    print(f"DEBUG: Longueur du DataFrame: {len(df)}")
+    if len(df) > 0:
+        sample = df['category_groups'].iloc[0]
+        print(f"DEBUG: Type de category_groups[0]: {type(sample)}")
+        print(f"DEBUG: Valeur: {sample}")
+    
+    # ÉTAPE 2: Fonction pour vérifier les catégories (gère les listes imbriquées)
+    def check_in_categories(lst):
+        if not isinstance(lst, list):
+            return False
+        # Aplatir les listes imbriquées
+        flat_list = []
+        for item in lst:
+            if isinstance(item, list):
+                flat_list.extend([str(x) for x in item])
+            else:
+                flat_list.append(str(item))
+        # Vérifier si un keyword est présent
+        return any(k.lower() in ' '.join(flat_list).lower() for k in keywords)
+    
+    # ÉTAPE 3: Créer les masques
+    mask_cat = df['category_groups'].apply(check_in_categories)
     mask_desc = df['short_description'].astype(str).str.contains(
         '|'.join(keywords), case=False, na=False
     )
     
-    # Combinaison des masques
+    # DIAGNOSTIC: Vérifier les shapes
+    print(f"DEBUG: Shape mask_cat: {mask_cat.shape}")
+    print(f"DEBUG: Shape mask_desc: {mask_desc.shape}")
+    
+    # ÉTAPE 4: Combinaison - GARDER en pandas Series pour éviter le problème de shape
     mask_combined = mask_cat | mask_desc
     
+    # ÉTAPE 5: Appliquer le filtre
     df_filtered = df[mask_combined].reset_index(drop=True)
     
+    # Affichage des résultats
     print(f"✓ Correspondances dans category_groups: {mask_cat.sum():,}")
     print(f"✓ Correspondances dans short_description: {mask_desc.sum():,}")
     print(f"✓ Total d'entreprises cybersécurité: {len(df_filtered):,}")
     
     if len(df_filtered) > 0:
-        pass
-        # print(f"\n  Exemples d'entreprises filtrées:")
+        print(f"\n  Exemples d'entreprises filtrées:")
         for i, row in df_filtered.head(3).iterrows():
-            pass
-            # print(f"  - {row.get('name', 'N/A')}: {row['category_groups']}")
+            print(f"  - {row.get('name', 'N/A')}: {row['category_groups']}")
     
     return df_filtered
 
+# ===================================================================
+# GRAPHE TRIPARTITE
+# ===================================================================
 
-# ============================================================================
-# EXTRACTION ET SAUVEGARDE
-# ============================================================================
-def extract_classes_company_tech(df):
-    """Extracts the dictionaries of Companies and Technologies 
-    from the dataset and create the network
-    
-    Args:
-        - df: dataset
-
-    Return:
-        - dict_companies: dictionary of companies
-        - dict_tech: dictionary of technologies
-        - B: graph that links companies and technologies 
+def extract_tripartite_graph(companies_df, investments_df, funding_rounds_df):
     """
- 
-    # from geopy.geocoders import Nominatim
-    import classes  # tes classes Company et Technology
-    print('INSIDE EXTRACT FUNCTION')
-    print(f"DataFrame shape: {df.shape}")  # ← AJOUTEZ CECI
-    print(f"DataFrame columns: {df.columns.tolist()}")  # ← AJOUTEZ CECI
-    
-    dict_companies = {}
-    dict_tech = {}
-    B = nx.Graph() #creation d'un graph vide no orienté
-
-    # Boucle sur chaque ligne du DataFrame
-    for index, row in df.iterrows():
-        # Création du nom de l'entreprise
-        comp_name = row['name']
-
-        # Exemple : créer l'objet Company
-        c = classes.Company(
-            id=row.get('uuid', index),
-            name=comp_name,
-            technologies=row.get('category_groups', []),
-
-        )
-
-        dict_companies[comp_name] = c # on sauvegarde sous le nom de l'entreprise les infos de l'entreprises (uuid, nom, categories, tot_previous_investments, num_previous_investments)
-        B.add_node(comp_name, bipartite=0) #creation d'un noeud avec le nom de la comapagnie et bipartite=0 correspond a la premiere entite (dans ce cas compagnie)
-
-        # Technologies
-        categories = row.get('category_groups', [])
-        if not isinstance(categories, list):
-            categories = [categories]
-
-        for tech in categories:
-            if tech not in dict_tech:
-                t = classes.Technology(name=tech)
-                dict_tech[tech] = t
-                B.add_node(tech, bipartite=1)
-
-            # Lien entreprise → technologie
-            B.add_edge(comp_name, tech)
-    print('INSIDE EXTRACT FUNCTION 2')
-    print(f"Total nodes in graph: {B.number_of_nodes()}")  # ← AJOUTEZ CECI
-    print(f"Total edges in graph: {B.number_of_edges()}")  # ← AJOUTEZ CECI
-
-    return dict_companies, dict_tech, B
-
-def extract_classes_investment(df_funding_rounds, df_invest):
- 
-    # from geopy.geocoders import Nominatim
-    import classes  # tes classes Company et Technology
-    print('INSIDE EXTRACT FUNCTION')
-    print(f"DataFrame shape: {df_funding_rounds.shape}")  # ← AJOUTEZ CECI
-    print(f"DataFrame columns: {df_funding_rounds.columns.tolist()}")  # ← AJOUTEZ CECI
-    
-    funding_round_ids = df_invest['funding_round_uuid'].tolist()
-    B = nx.Graph() #creation d'un graph vide no orienté
-
-    # Boucle sur chaque ligne du DataFrame
-    matching_rows_funding_rounds = df_funding_rounds[df_funding_rounds['uuid'].isin(funding_round_ids)]
-
-    i = classes.Investor(
-        name=matching_rows_funding_rounds['orga_name'],
-        raised_money_usd=matching_rows_funding_rounds['raised_amount_usd'],
-        funding_round_id=funding_round_ids
-
-    )
-
-    for index, row in df_funding_rounds.iterrows():
-        # Création du nom de l'entreprise
-        funding_round_ids = row['funding_round_uuid']
-        
-        B.add_node(funding_round_ids, bipartite=2) #creation d'un noeud avec le nom de la comapagnie et bipartite=0 correspond a la premiere entite (dans ce cas compagnie)
-        B.add_edge(i.raised_amount_usd, tech)
-
-    print('INSIDE EXTRACT FUNCTION 2')
-    print(f"Total nodes in graph: {B.number_of_nodes()}")  # ← AJOUTEZ CECI
-    print(f"Total edges in graph: {B.number_of_edges()}")  # ← AJOUTEZ CECI
-
-    return dict_companies, dict_tech, B
-
-
-
-def extract_and_save(df, limit, is_cybersecurity):
-    """Extrait les classes et sauvegarde les résultats."""
+    Crée un graphe tripartite Companies ↔ Investments ↔ Technologies.
+    """
     print(f"\n{'='*60}")
-    print(f"EXTRACTION ET SAUVEGARDE (limite: {limit:,} lignes)")
+    print("CRÉATION DU GRAPHE TRIPARTITE")
     print(f"{'='*60}")
     
-    # Limiter les données
-    df_limited = df[:limit]
-    print(df_limited.head())
-    # print(f"✓ Traitement de {len(df_limited):,} entreprises")
-    print(f"Colonnes disponibles: {df_limited.columns.tolist()}")  # ← AJOUTEZ
+    # DIAGNOSTIC: Afficher les colonnes disponibles
+    print(f"Colonnes companies_df: {companies_df.columns.tolist()}")
+    print(f"Colonnes investments_df: {investments_df.columns.tolist()}")
+    print(f"Colonnes funding_rounds_df: {funding_rounds_df.columns.tolist()}")
     
-    # Extraction des classes (fonction à importer depuis votre module)
-    # Note: Cette fonction doit être définie dans votre code
-    dict_companies, dict_tech, B = extract_classes_company_tech(df_limited)
-    try:
-        # dict_companies, dict_tech, B = extract_classes_company_tech(df_limited)
-        # visualize_graph(B)
-        visualize_graph(B, max_companies=5, max_technologies=10)
-    # except ImportError:
-    #     print("⚠ Fonction extract_classes_company_tech non disponible")
-    #     print("  Veuillez l'importer depuis votre module")
-    #     return
-    except Exception as e:
-        print(f"⚠️ Erreur lors de la visualisation: {e}")
-        import traceback
-        traceback.print_exc()
+    # Identifier la colonne ID de l'organisation
+    org_id_col = None
+    for col in ['organization_id', 'uuid', 'id', 'org_id']:
+        if col in companies_df.columns:
+            org_id_col = col
+            print(f"✓ Colonne ID organisation trouvée: {org_id_col}")
+            break
     
-    print(f"✓ {len(dict_companies):,} entreprises extraites")
-    print(f"✓ {len(dict_tech):,} technologies extraites")
+    if org_id_col is None:
+        raise ValueError(f"Aucune colonne ID trouvée. Colonnes disponibles: {companies_df.columns.tolist()}")
     
-    # Générer les noms de fichiers
+    B = nx.Graph()
+
+    # --- Companies ---
+    for idx, row in companies_df.iterrows():
+        company_id = row.get(org_id_col)
+        # Vérifier que l'ID n'est pas None
+        if pd.notna(company_id) and company_id is not None:
+            B.add_node(
+                company_id,
+                type='company',
+                name=row.get('name'),
+                categories=row.get('category_groups')
+            )
+
+    # --- Préparer les informations financières depuis funding_rounds_df ---
+    # La colonne s'appelle 'type' et non 'funding_type'
+    funding_info = funding_rounds_df[['uuid','raised_amount_usd','type','announced_on']].rename(
+        columns={'uuid':'uuid_of_f_r', 'type':'funding_type'}
+    )
+
+    # Merge investments avec funding_rounds pour enrichir
+    investments_full = investments_df.merge(
+        funding_info,
+        left_on='funding_round_uuid',
+        right_on='uuid_of_f_r',
+        how='left'
+    )
+
+    # --- Investments ---
+    for idx, row in investments_full.iterrows():
+        funding_uuid = row.get('funding_round_uuid')
+        # Vérifier que l'UUID n'est pas None avant d'ajouter le nœud
+        if pd.notna(funding_uuid) and funding_uuid is not None:
+            B.add_node(
+                funding_uuid,
+                type='investment',
+                money_raised_usd=row.get('raised_amount_usd'),
+                announced_on=row.get('announced_on')
+            )
+
+    # --- Technologies ---
+    tech_df = companies_df[[org_id_col,'category_groups']].copy()
+    tech_df = tech_df.explode('category_groups')[['category_groups']].drop_duplicates()
+    for idx, row in tech_df.iterrows():
+        tech_name = row.get('category_groups')
+        # Vérifier que le nom de la technologie n'est pas None
+        if pd.notna(tech_name) and tech_name is not None:
+            B.add_node(tech_name, type='technology')
+
+    # --- Arêtes Company ↔ Investment ---
+    # Identifier la colonne org_id dans investments_full
+    # D'après le merge, il devrait y avoir 'org_uuid' depuis funding_rounds_df
+    inv_org_col = None
+    for col in ['org_uuid', 'organization_id', 'company_uuid', org_id_col]:
+        if col in investments_full.columns:
+            inv_org_col = col
+            print(f"✓ Colonne org dans investments trouvée: {inv_org_col}")
+            break
+    
+    if inv_org_col:
+        for idx, row in investments_full.iterrows():
+            org_id = row.get(inv_org_col)
+            funding_uuid = row.get('funding_round_uuid')
+            # Vérifier que les deux IDs ne sont pas None
+            if pd.notna(org_id) and org_id is not None and pd.notna(funding_uuid) and funding_uuid is not None:
+                B.add_edge(
+                    org_id,
+                    funding_uuid,
+                    type='company_investment',
+                    money_raised_usd=row.get('raised_amount_usd')
+                )
+        print(f"✓ Arêtes Company ↔ Investment créées")
+    else:
+        print(f"⚠️ Colonne organisation non trouvée dans investments. Colonnes: {investments_full.columns.tolist()}")
+
+    # --- Arêtes Company ↔ Technology ---
+    edges_CT = companies_df[[org_id_col,'category_groups']].copy()
+    edges_CT = edges_CT.explode('category_groups')[[org_id_col,'category_groups']]
+    for idx, row in edges_CT.iterrows():
+        company_id = row.get(org_id_col)
+        tech_name = row.get('category_groups')
+        # Vérifier que les deux IDs ne sont pas None
+        if pd.notna(company_id) and company_id is not None and pd.notna(tech_name) and tech_name is not None:
+            B.add_edge(
+                company_id,
+                tech_name,
+                type='company_technology'
+            )
+
+    # --- Arêtes Investment ↔ Technology ---
+    if inv_org_col:
+        edges_IT = edges_CT.merge(
+            investments_full[['funding_round_uuid',inv_org_col]],
+            on=inv_org_col
+        )
+        edges_IT = edges_IT[['funding_round_uuid','category_groups']].drop_duplicates()
+        for idx, row in edges_IT.iterrows():
+            funding_uuid = row.get('funding_round_uuid')
+            tech_name = row.get('category_groups')
+            # Vérifier que les deux IDs ne sont pas None
+            if pd.notna(funding_uuid) and funding_uuid is not None and pd.notna(tech_name) and tech_name is not None:
+                B.add_edge(
+                    funding_uuid,
+                    tech_name,
+                    type='investment_technology'
+                )
+    
+    print(f"✓ Graphe créé: {B.number_of_nodes()} nœuds, {B.number_of_edges()} arêtes")
+    return B
+
+# ===================================================================
+# VISUALISATION
+# ===================================================================
+
+def visualize_graph(B, max_companies=20, max_technologies=30):
+    import matplotlib.pyplot as plt
+    companies = [n for n,d in B.nodes(data=True) if d.get('type')=='company']
+    technologies = [n for n,d in B.nodes(data=True) if d.get('type')=='technology']
+
+    top_companies = sorted(companies, key=lambda n:B.degree(n), reverse=True)[:max_companies]
+    top_tech = sorted(technologies, key=lambda n:B.degree(n), reverse=True)[:max_technologies]
+    nodes_to_keep = set(top_companies) | set(top_tech)
+    B_sub = B.subgraph(nodes_to_keep).copy()
+
+    pos = {}
+    pos.update((n,(1,i)) for i,n in enumerate(top_companies))
+    pos.update((n,(2,i)) for i,n in enumerate(top_tech))
+
+    colors = ['lightblue' if B.nodes[n]['type']=='company' else 'lightgreen' for n in B_sub.nodes()]
+
+    plt.figure(figsize=(12,8))
+    nx.draw(B_sub, pos, with_labels=True, node_size=800, node_color=colors, edge_color='gray', alpha=0.7, font_size=8)
+    plt.title(f"Top {len(top_companies)} Companies & Top {len(top_tech)} Technologies", fontsize=14)
+    plt.show()
+    plt.close()
+
+# ===================================================================
+# SAUVEGARDE
+# ===================================================================
+
+def save_graph_and_dicts(B, companies_df, limit, is_cybersecurity):
     suffix = "cybersecurity_" if is_cybersecurity else ""
-    
-    file_companies = f"{SAVE_DIR_CLASSES}/dict_companies_{suffix}{len(dict_companies)}.pickle"
-    file_tech = f"{SAVE_DIR_CLASSES}/dict_tech_{suffix}{len(dict_tech)}.pickle"
-    file_graph = f"{SAVE_DIR_NETWORKS}/{suffix}comp_{len(dict_companies)}_tech_{len(dict_tech)}.gpickle"
-    
-    # Sauvegarder les dictionnaires
-    with open(file_companies, "wb") as f:
-        pickle.dump(dict_companies, f)
-    print(f"✓ Entreprises sauvegardées: {file_companies}")
-    
-    with open(file_tech, "wb") as f:
-        pickle.dump(dict_tech, f)
-    print(f"✓ Technologies sauvegardées: {file_tech}")
-    
-    # Sauvegarder le graphe
-    with open(file_graph, "wb") as f:
-        pickle.dump(B, f)
-    print(f"✓ Graphe sauvegardé: {file_graph}")
+    file_graph = f"{SAVE_DIR_NETWORKS}/{suffix}graph_{limit}.gpickle"
+    with open(file_graph,'wb') as f:
+        pickle.dump(B,f)
+    print(f"✓ Graphe sauvegardé : {file_graph}")
 
+    # Identifier la colonne ID
+    org_id_col = None
+    for col in ['organization_id', 'uuid', 'id', 'org_id']:
+        if col in companies_df.columns:
+            org_id_col = col
+            break
+    
+    if org_id_col:
+        dict_companies = {row[org_id_col]:row.to_dict() for idx,row in companies_df.iterrows()}
+        file_companies = f"{SAVE_DIR_CLASSES}/dict_companies_{suffix}{limit}.pickle"
+        with open(file_companies,'wb') as f:
+            pickle.dump(dict_companies,f)
+        print(f"✓ Dictionnaire entreprises sauvegardé : {file_companies}")
+    else:
+        print(f"⚠️ Impossible de sauvegarder le dictionnaire: colonne ID non trouvée")
 
-# ============================================================================
-# Exécution principale 
-# ============================================================================
+# ===================================================================
+# MAIN
+# ===================================================================
 
 def main():
-    """Fonction principale orchestrant tout le pipeline."""
-    print("\n" + "="*60)
-    print(" "*15 + "TECHRANK - TRAITEMENT CRUNCHBASE")
-    print("="*60)
-    print(f"\nSource de données: {'DuckDB' if USE_DUCKDB else 'CSV'}")
-    
-    # Créer les répertoires
     create_directories()
-    
-    try:
-        # 1. Charger les données
-        df_comp_tech = load_data(use_duckdb=USE_DUCKDB, entity_name=ENTITY_NAME_1)
-        df_invest = load_data(use_duckdb=USE_DUCKDB, entity_name=ENTITY_NAME_2)
 
-        print("=== Aperçu de df (brut) ===")
-        print(df_comp_tech.shape)          # nombre de lignes et colonnes
-        print(df_comp_tech.columns)        # noms des colonnes
-        print(df_comp_tech.head(5))        # les 5 premières lignes
-        
-        # 2. Nettoyer les données
-        df_comp_tech_clean = clean_data(df_comp_tech)
-        df_invest_clean = clean_data(df_invest)
-        
-        # 3. Traiter les catégories
-        df_comp_tech_proc = process_category_groups(df_comp_tech_clean)
-        df_invest_proc = process_category_groups(df_invest_clean)
-        
-        # 4. Filtrer si nécessaire
-        if FLAG_CYBERSECURITY:
-            df_comp_tech_final = filter_cybersecurity(df_comp_tech_proc, CYBERSECURITY_KEYWORDS)
-            
-            if len(df_comp_tech_final) == 0:
-                print("\n⚠ ATTENTION: Aucune entreprise de cybersécurité trouvée!")
-                print("  Vérifiez les mots-clés ou les données source")
-                return
-        else:
-            df_comp_tech_final = df_comp_tech_proc
-            print(f"\n✓ Mode tous domaines: {len(df_comp_tech_final):,} entreprises")
-        
-        # 5. Extraire et sauvegarder pour chaque limite
-        for limit in LIMITS:
-            if limit > len(df_comp_tech_final):
-                print(f"\n⚠ Limite {limit:,} > données disponibles ({len(df_comp_tech_final):,})")
-                print(f"  Utilisation de {len(df_comp_tech_final):,} lignes")
-                limit = len(df_comp_tech_final)
-            
-            extract_and_save(df_comp_tech_final, limit, FLAG_CYBERSECURITY)
-        
-        print(f"\n{'='*60}")
-        print(" "*20 + "✓ TRAITEMENT TERMINÉ")
-        print(f"{'='*60}\n")
-        
-    except Exception as e:
-        print(f"\n❌ ERREUR: {type(e).__name__}")
-        print(f"   {str(e)}")
-        import traceback
-        traceback.print_exc()
+    df_comp = load_data(use_duckdb=USE_DUCKDB, entity_name=ENTITY_NAME_1)
+    df_invest = load_data(use_duckdb=USE_DUCKDB, entity_name=ENTITY_NAME_2)
+    df_fund = load_data(use_duckdb=USE_DUCKDB, entity_name=ENTITY_NAME_3)
 
+    df_comp_clean = clean_data(df_comp)
+    df_comp_proc = process_category_groups(df_comp_clean)
 
-# ============================================================================
-# POINT D'ENTRÉE
-# ============================================================================
+    if FLAG_CYBERSECURITY:
+        df_comp_proc = filter_cybersecurity(df_comp_proc, CYBERSECURITY_KEYWORDS)
+        if len(df_comp_proc)==0:
+            print("⚠️ Aucune entreprise cybersécurité trouvée")
+            return
 
-if __name__ == "__main__":
+    for limit in LIMITS:
+        df_limited = df_comp_proc.iloc[:limit]
+        B = extract_tripartite_graph(df_limited, df_invest, df_fund)
+        visualize_graph(B, max_companies=10, max_technologies=15)
+        save_graph_and_dicts(B, df_limited, limit, FLAG_CYBERSECURITY)
+
+if __name__=="__main__":
     main()
