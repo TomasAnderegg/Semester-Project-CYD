@@ -26,7 +26,8 @@ USE_DUCKDB = True  # True = utiliser DuckDB, False = utiliser CSV
 # Chemins des fichiers
 DATA_PATH_DUCKDB = r"C:\Users\tjga9\Documents\Tomas\EPFL\MA3\CYD PDS\Crunchbase dataset\crunchbase.duckdb"
 DATA_PATH_CSV = r"C:\Users\tjga9\Documents\Tomas\EPFL\MA3\CYD PDS\Code\TechRank\5-TechRank-main\5-TechRank-main\data\sample CB data\organizations.csv"
-ENTITY_NAME = "organizations"  # Nom de l'entité qu'on considère dans DuckDB peut etre faire une structure iterative pour aller dans organization, tech, investiseement pour ne pas le faire a la main !!
+ENTITY_NAME_1 = "organizations"  # Nom de l'entité qu'on considère dans DuckDB peut etre faire une structure iterative pour aller dans organization, tech, investiseement pour ne pas le faire a la main !!
+ENTITY_NAME_2 = "investments"
 
 SAVE_DIR_CLASSES = "savings/classes"
 SAVE_DIR_NETWORKS = "savings/networks"
@@ -178,7 +179,7 @@ def convert_to_list(string):
 # CHARGEMENT DES DONNÉES
 # ============================================================================
 
-def explore_duckdb(filepath):
+def explore_duckdb(filepath, ENTITY_NAME):
     """Explore la structure d'une base DuckDB."""
     # print(f"\n{'='*60}")
     # print("EXPLORATION DE LA BASE DUCKDB")
@@ -226,7 +227,7 @@ def load_data_from_duckdb(filepath, table_name):
     # print(f"✓ Connexion à: {Path(filepath).name}")
     
     # Explorer la base
-    explore_duckdb(filepath)
+    explore_duckdb(filepath, table_name)
     
     # Charger les données
     conn = duckdb.connect(filepath, read_only=True)
@@ -263,12 +264,12 @@ def load_data_from_csv(filepath):
     return df
 
 
-def load_data(use_duckdb=True):
+def load_data(use_duckdb=True, entity_name=ENTITY_NAME_1):
     """Charge les données depuis la source configurée.
     Si on a choisi DuckDB, utilise cette source, sinon CSV.
     """
     if use_duckdb:
-        return load_data_from_duckdb(DATA_PATH_DUCKDB, ENTITY_NAME)
+        return load_data_from_duckdb(DATA_PATH_DUCKDB, entity_name)
     else:
         return load_data_from_csv(DATA_PATH_CSV)
 
@@ -507,6 +508,41 @@ def extract_classes_company_tech(df):
 
     return dict_companies, dict_tech, B
 
+def extract_classes_investment(df_funding_rounds, df_invest):
+ 
+    # from geopy.geocoders import Nominatim
+    import classes  # tes classes Company et Technology
+    print('INSIDE EXTRACT FUNCTION')
+    print(f"DataFrame shape: {df_funding_rounds.shape}")  # ← AJOUTEZ CECI
+    print(f"DataFrame columns: {df_funding_rounds.columns.tolist()}")  # ← AJOUTEZ CECI
+    
+    funding_round_ids = df_invest['funding_round_uuid'].tolist()
+    B = nx.Graph() #creation d'un graph vide no orienté
+
+    # Boucle sur chaque ligne du DataFrame
+    matching_rows_funding_rounds = df_funding_rounds[df_funding_rounds['uuid'].isin(funding_round_ids)]
+
+    i = classes.Investor(
+        name=matching_rows_funding_rounds['orga_name'],
+        raised_money_usd=matching_rows_funding_rounds['raised_amount_usd'],
+        funding_round_id=funding_round_ids
+
+    )
+
+    for index, row in df_funding_rounds.iterrows():
+        # Création du nom de l'entreprise
+        funding_round_ids = row['funding_round_uuid']
+        
+        B.add_node(funding_round_ids, bipartite=2) #creation d'un noeud avec le nom de la comapagnie et bipartite=0 correspond a la premiere entite (dans ce cas compagnie)
+        B.add_edge(i.raised_amount_usd, tech)
+
+    print('INSIDE EXTRACT FUNCTION 2')
+    print(f"Total nodes in graph: {B.number_of_nodes()}")  # ← AJOUTEZ CECI
+    print(f"Total edges in graph: {B.number_of_edges()}")  # ← AJOUTEZ CECI
+
+    return dict_companies, dict_tech, B
+
+
 
 def extract_and_save(df, limit, is_cybersecurity):
     """Extrait les classes et sauvegarde les résultats."""
@@ -577,39 +613,42 @@ def main():
     
     try:
         # 1. Charger les données
-        df = load_data(use_duckdb=USE_DUCKDB)
+        df_comp_tech = load_data(use_duckdb=USE_DUCKDB, entity_name=ENTITY_NAME_1)
+        df_invest = load_data(use_duckdb=USE_DUCKDB, entity_name=ENTITY_NAME_2)
 
         print("=== Aperçu de df (brut) ===")
-        print(df.shape)          # nombre de lignes et colonnes
-        print(df.columns)        # noms des colonnes
-        print(df.head(5))        # les 5 premières lignes
+        print(df_comp_tech.shape)          # nombre de lignes et colonnes
+        print(df_comp_tech.columns)        # noms des colonnes
+        print(df_comp_tech.head(5))        # les 5 premières lignes
         
         # 2. Nettoyer les données
-        df_clean = clean_data(df)
+        df_comp_tech_clean = clean_data(df_comp_tech)
+        df_invest_clean = clean_data(df_invest)
         
         # 3. Traiter les catégories
-        df_proc = process_category_groups(df_clean)
+        df_comp_tech_proc = process_category_groups(df_comp_tech_clean)
+        df_invest_proc = process_category_groups(df_invest_clean)
         
         # 4. Filtrer si nécessaire
         if FLAG_CYBERSECURITY:
-            df_final = filter_cybersecurity(df_proc, CYBERSECURITY_KEYWORDS)
+            df_comp_tech_final = filter_cybersecurity(df_comp_tech_proc, CYBERSECURITY_KEYWORDS)
             
-            if len(df_final) == 0:
+            if len(df_comp_tech_final) == 0:
                 print("\n⚠ ATTENTION: Aucune entreprise de cybersécurité trouvée!")
                 print("  Vérifiez les mots-clés ou les données source")
                 return
         else:
-            df_final = df_proc
-            print(f"\n✓ Mode tous domaines: {len(df_final):,} entreprises")
+            df_comp_tech_final = df_comp_tech_proc
+            print(f"\n✓ Mode tous domaines: {len(df_comp_tech_final):,} entreprises")
         
         # 5. Extraire et sauvegarder pour chaque limite
         for limit in LIMITS:
-            if limit > len(df_final):
-                print(f"\n⚠ Limite {limit:,} > données disponibles ({len(df_final):,})")
-                print(f"  Utilisation de {len(df_final):,} lignes")
-                limit = len(df_final)
+            if limit > len(df_comp_tech_final):
+                print(f"\n⚠ Limite {limit:,} > données disponibles ({len(df_comp_tech_final):,})")
+                print(f"  Utilisation de {len(df_comp_tech_final):,} lignes")
+                limit = len(df_comp_tech_final)
             
-            extract_and_save(df_final, limit, FLAG_CYBERSECURITY)
+            extract_and_save(df_comp_tech_final, limit, FLAG_CYBERSECURITY)
         
         print(f"\n{'='*60}")
         print(" "*20 + "✓ TRAITEMENT TERMINÉ")

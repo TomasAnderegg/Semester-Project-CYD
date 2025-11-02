@@ -13,10 +13,8 @@ class Company:
 
 @dataclasses.dataclass
 class Investor:
-    id: str
-    name: str
-    investor_type: str
-    investment_count: int = 0 # number of investments
+    funding_round_id : str
+
 
 
 @dataclasses.dataclass

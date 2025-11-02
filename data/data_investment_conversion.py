@@ -170,13 +170,15 @@ def clean_investments(df):
     print(f"{'='*60}")
     
     to_drop = [
-        'uuid',
         'permalink',
         'funding_round_name',
-        'cb_url',
-        'created_at',
-        'updated_at',   
-        'rank',
+        'cb_url',  
+        'is_lead_investor',
+        'investor_type',
+        'country_code',
+        'state_code',
+        'region',
+        'city',
     ]
     
     to_rename = {}
@@ -199,14 +201,16 @@ def clean_funding_rounds(df):
         'cb_url',   
         'rank',
         'funding_round_name',
-        'created_at',
-        'updated_at',
         'investor_type',
         'raised_amount',
         'is_lead_investor',
         'post_money_valuation_usd',                                      
         'post_money_valuation',                                    
         'post_money_valuation_currency_code',
+        'country_code',
+        'state_code',
+        'region',
+        'city',
     ]
     
     to_rename = {
@@ -228,7 +232,6 @@ def clean_merged_invest_funding(df):
     print(f"{'='*60}")
     
     to_drop = [
-        'funding_round_uuid',
         'name_x',
         'org_uuid',   
         'lead_investor_uuids',
@@ -353,44 +356,44 @@ def main():
         # 1. Charger les données
         if USE_DUCKDB:
             df_investments = load_data_from_duckdb(DATA_PATH_DUCKDB, 'investments')
-            df_funding = load_data_from_duckdb(DATA_PATH_DUCKDB, 'funding_rounds')
+            # df_funding = load_data_from_duckdb(DATA_PATH_DUCKDB, 'funding_rounds')
             
-            if df_investments is None or df_funding is None:
+            if df_investments is None :
                 print("\n❌ Impossible de charger les données depuis DuckDB")
                 return None
         else:
             df_investments = load_data_from_csv(DATA_PATH_INVESTMENTS_CSV)
-            df_funding = load_data_from_csv(DATA_PATH_FUNDING_CSV)
+            # df_funding = load_data_from_csv(DATA_PATH_FUNDING_CSV)
         
         # Afficher les colonnes disponibles
         print(f"\n📋 Colonnes dans investments: {df_investments.columns.tolist()}")
-        print(f"📋 Colonnes dans funding_rounds: {df_funding.columns.tolist()}")
+        # print(f"📋 Colonnes dans funding_rounds: {df_funding.columns.tolist()}")
         
         # 2. Nettoyer les données
         df_investments_clean = clean_investments(df_investments)
-        df_funding_clean = clean_funding_rounds(df_funding)
+        # df_funding_clean = clean_funding_rounds(df_funding)
         
         # 3. Fusionner
-        df_merged = merge_investments_funding(df_funding_clean, df_investments_clean)
+        # df_merged = merge_investments_funding(df_funding_clean, df_investments_clean)
         
-        if df_merged is None or len(df_merged) == 0:
-            print("\n⚠️  Fusion échouée ou résultat vide")
-            return None
+        # if df_merged is None or len(df_merged) == 0:
+        #     print("\n⚠️  Fusion échouée ou résultat vide")
+        #     return None
         
         # 4. Nettoyer le résultat fusionné
-        df_invest_funding = clean_merged_invest_funding(df_merged)
+        # df_invest_funding = clean_merged_invest_funding(df_merged)
         
         # 5. Afficher un aperçu
         print(f"\n{'='*60}")
         print("APERÇU DES DONNÉES FINALES")
         print(f"{'='*60}")
-        print(f"\nShape: {df_invest_funding.shape}")
-        print(f"\nColonnes: {df_invest_funding.columns.tolist()}")
+        print(f"\nShape: {df_investments_clean.shape}")
+        print(f"\nColonnes: {df_investments_clean.columns.tolist()}")
         print(f"\nPremières lignes:")
-        print(df_invest_funding.head())
+        print(df_investments_clean.head())
         
         # 6. Extraire le graphe (optionnel)
-        G = extract_investment_graph(df_invest_funding)
+        G = extract_investment_graph(df_investments_clean)
         
         if G.number_of_nodes() > 0:
             # Sauvegarder le graphe
@@ -402,19 +405,19 @@ def main():
         # 7. Sauvegarder le DataFrame final
         output_file = f"{SAVE_DIR_CLASSES}/df_invest_funding.pickle"
         with open(output_file, "wb") as f:
-            pickle.dump(df_invest_funding, f)
+            pickle.dump(df_investments_clean, f)
         print(f"✓ DataFrame sauvegardé: {output_file}")
         
         # Alternative: sauvegarder en CSV
-        csv_file = f"{SAVE_DIR_CLASSES}/df_invest_funding.csv"
-        df_invest_funding.to_csv(csv_file, index=False)
+        csv_file = f"{SAVE_DIR_CLASSES}/df_investments_clean.csv"
+        df_investments_clean.to_csv(csv_file, index=False)
         print(f"✓ CSV sauvegardé: {csv_file}")
         
         print(f"\n{'='*60}")
         print(" "*15 + "✓ TRAITEMENT TERMINÉ")
         print(f"{'='*60}\n")
         
-        return df_invest_funding
+        return df_investments_clean
         
     except Exception as e:
         print(f"\n❌ ERREUR: {type(e).__name__}")
