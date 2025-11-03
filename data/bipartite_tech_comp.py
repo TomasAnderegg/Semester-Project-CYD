@@ -306,10 +306,6 @@ def save_graph_and_dicts(B, companies_df, limit, is_cybersecurity):
 # MAIN
 # ===================================================================
 
-# ===================================================================
-# MAIN
-# ===================================================================
-
 def main(max_companies_plot=20, max_tech_plot=20):
     create_directories()
     df_comp = load_data(use_duckdb=USE_DUCKDB, entity_name=ENTITY_NAME_1)
