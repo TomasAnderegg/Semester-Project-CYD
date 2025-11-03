@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from typing import List, Dict
 import math
 import matplotlib
+
 matplotlib.use('Qt5Agg')  # ou 'TkAgg' selon ton installation
 
 
@@ -23,7 +24,6 @@ DATA_PATH_DUCKDB = r"C:\Users\tjga9\Documents\Tomas\EPFL\MA3\CYD PDS\Crunchbase 
 DATA_PATH_CSV = r"C:\Users\tjga9\Documents\Tomas\EPFL\MA3\CYD PDS\Code\TechRank\5-TechRank-main\5-TechRank-main\data\sample CB data\organizations.csv"
 
 ENTITY_NAME_1 = "organizations"
-
 
 SAVE_DIR_CLASSES = "savings/bipartite_tech_comp/classes"
 SAVE_DIR_NETWORKS = "savings/bipartite_tech_comp/networks"
@@ -50,6 +50,7 @@ def convert_to_list(x):
         return [str(item).strip() for item in x if pd.notna(item)]
     return [item.strip() for item in str(x).split(',') if item.strip()]
 
+
 def load_data_from_duckdb(filepath, table_name):
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Fichier DuckDB introuvable: {filepath}")
@@ -58,19 +59,22 @@ def load_data_from_duckdb(filepath, table_name):
     conn.close()
     return df
 
+
 def load_data_from_csv(filepath):
     return pd.read_csv(filepath)
+
 
 def load_data(use_duckdb=True, entity_name=ENTITY_NAME_1):
     if use_duckdb:
         return load_data_from_duckdb(DATA_PATH_DUCKDB, entity_name)
     else:
         return load_data_from_csv(DATA_PATH_CSV)
-    
+
 
 # ===================================================================
 # DATA CLEANING AND PROCESSING
 # ===================================================================
+
 def clean_data(df):
     df_clean = df.copy()
     columns_to_drop = [
@@ -98,6 +102,7 @@ def clean_data(df):
     df_clean = df_clean.sort_values('rank').reset_index(drop=True)
     return df_clean
 
+
 def process_category_groups(df):
     df_proc = df.copy()
     if "category_groups" not in df_proc.columns:
@@ -112,6 +117,7 @@ def process_category_groups(df):
             df_proc['category_groups'] = col_series.apply(convert_to_list)
     df_proc = df_proc.reset_index(drop=True)
     return df_proc
+
 
 def filter_cybersecurity(df, keywords):
     print("\n========================== FILTRAGE CYBER ==========================")
@@ -136,172 +142,126 @@ def filter_cybersecurity(df, keywords):
     print(f"✓ Total d'entreprises cybersécurité: {len(df_filtered):,}")
     return df_filtered
 
+
 # ===================================================================
 # BIPARTITE CREATION FUNCTION
 # ===================================================================
 
 def extract_classes_company_tech(df):
     """Extracts the dictionaries of Companies and Technologies 
-    from the dataset and create the network
+    from the dataset and create the network"""
     
-    Args:
-        - df: dataset
-
-    Return:
-        - dict_companies: dictionary of companies
-        - dict_tech: dictionary of technologies
-        - B: graph that links companies and technologies 
-    """
-    
-    # dictionary of companies: name company: class Company
     dict_companies = {}
-    # dictionary of technologies: name technology: class Technology
     dict_tech = {}
-    
-    # initialization bipartite graph:
     B = nx.Graph()
 
-    for index, row in df.iterrows(): # for each company
-        
-        # Companies:
+    for index, row in df.iterrows():
         comp_name = row['name']
 
         c = classes.Company(
-            id = row['uuid'],
-            name = comp_name,
-            technologies = row['category_groups'],
-            )
+            id=row['uuid'],
+            name=comp_name,
+            technologies=row['category_groups'],
+        )
 
-        # if CB rank
         if 'rank_company' in df.columns:
             c.rank_CB = row['rank_company']
         elif 'rank' in df.columns:
             c.rank_CB = row['rank']
         
         dict_companies[comp_name] = c
-
         B.add_node(comp_name, bipartite=0)
         
-        # Technologies:
-        if issubclass(type(row['category_groups']), List):
+        if isinstance(row['category_groups'], list):
             for tech in row['category_groups']:
-                t = classes.Technology(name=tech)
-                dict_tech[tech] = t
-
-                B.add_node(tech, bipartite=1)
-
-                # add edges
+                if tech not in dict_tech:
+                    dict_tech[tech] = classes.Technology(name=tech)
+                    B.add_node(tech, bipartite=1)
                 B.add_edge(comp_name, tech)
         else:
-            t = classes.Technology(name=row['category_groups'])
-            dict_tech[tech] = t   
-
-            B.add_node(tech, bipartite=1)
-
-            # add edges
+            tech = row['category_groups']
+            if tech not in dict_tech:
+                dict_tech[tech] = classes.Technology(name=tech)
+                B.add_node(tech, bipartite=1)
             B.add_edge(comp_name, tech)
 
     return dict_companies, dict_tech, B
+
+
 # ===================================================================
 # VISUALIZATION FUNCTION
 # ===================================================================
+
 def filter_dict(G, percentage, set1, set2):
-    """Selects values to delete from the graph G according to ...
-
-    Args:
-        - G: graph 
-        - percentage: percentage of entities to keep
-        - set1: first group of nodes
-        - set2: second group of nodes
-
-    Return:
-        - to_delete: list of values to delete
-    """
-
     degree_set2 = list(dict(nx.degree(G, set2)).values())
-    
-    threshold_companies = math.ceil( len(set2)/percentage )
-    
-    
-    if threshold_companies > np.max(degree_set2): # not okay because we would not plot anything
-        threshold_companies=np.mean(degree_set2)
-    
+    threshold_companies = math.ceil(len(set2)/percentage)
+    if threshold_companies > np.max(degree_set2):
+        threshold_companies = np.mean(degree_set2)
     dict_nodes = nx.degree(G, set1) 
-    
-    to_delete= []
-    
-    # Iterate over all the items in dictionary
-    for (key, value) in dict(dict_nodes).items():
-        
-        if value <= threshold_companies:
-            to_delete.append(key)
-    
+    to_delete = [key for key, value in dict(dict_nodes).items() if value <= threshold_companies]
     return to_delete
 
+
 def plot_bipartite_graph(G, small_degree=True, percentage=10, circular=False):
-    """ Plots the bipartite network ... """
     print("\n========================== PLOTTING BIPARTITE GRAPH ==========================")
 
     set1 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 0]
     set2 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 1]
 
-    if circular:
-        pos = nx.circular_layout(G)
-    else:
-        pos = nx.spring_layout(G)
-
-    if len(set1) >= 20:
-        plt.figure(figsize=(25,15))
-    else:
-        plt.figure(figsize=(19,13))
-
-    plt.ion()  # <-- active l'interactivité (zoom/pan)
-    plt.axis('on')  # pour voir les axes et pouvoir zoomer/paner
+    pos = nx.circular_layout(G) if circular else nx.spring_layout(G)
+    plt.figure(figsize=(25,15) if len(set1) >= 20 else (19,13))
+    plt.ion()
+    plt.axis('on')
 
     company = set1
     value = set2
 
-    # calculate degree centrality
     companyDegree = nx.degree(G, company) 
     valueDegree = nx.degree(G, value)
 
-    nx.draw_networkx_nodes(G,
-                           pos,
-                           nodelist=company,
-                           node_color='r',
+    nx.draw_networkx_nodes(G, pos, nodelist=company, node_color='r',
                            node_size=[v * 100 for v in dict(companyDegree).values()],
-                           alpha=0.6,
-                           label=company)
+                           alpha=0.6, label=company)
 
-    nx.draw_networkx_nodes(G,
-                           pos,
-                           nodelist=value,
-                           node_color='b',
+    nx.draw_networkx_nodes(G, pos, nodelist=value, node_color='b',
                            node_size=[v * 200 for v in dict(valueDegree).values()],
-                           alpha=0.6,
-                           label=value)
+                           alpha=0.6, label=value)
 
     nx.draw_networkx_labels(G, pos, {n: n for n in company}, font_size=10)
     nx.draw_networkx_labels(G, pos, {n: n for n in value}, font_size=10)
     nx.draw_networkx_edges(G, pos, width=1.0, alpha=0.4)
 
     plt.tight_layout()
-    plt.show(block=True)  # <-- avec plt.ion() tu peux maintenant zoomer et déplacer la figure
+    plt.show(block=True)
     return pos
 
 
 # ===================================================================
-# SAVING FUNCTION
+# ✅ SAVING FUNCTION (corrigée)
 # ===================================================================
 
-def save_graph_and_dicts(B, companies_df, limit, is_cybersecurity):
-    suffix = "cybersecurity_" if is_cybersecurity else ""
-    file_graph = f"{SAVE_DIR_NETWORKS}/{suffix}graph_{limit}.gpickle"
-    with open(file_graph,'wb') as f:
-        pickle.dump(B,f)
-    print(f"✓ Graphe sauvegardé : {file_graph}")
+def save_graph_and_dicts(B, df_companies, dict_companies, dict_tech, limit, flag_cybersecurity):
+    """Sauvegarde le graphe et les dictionnaires associés."""
+    prefix = "cybersecurity_" if flag_cybersecurity else ""
 
+    os.makedirs(SAVE_DIR_CLASSES, exist_ok=True)
+    os.makedirs(SAVE_DIR_NETWORKS, exist_ok=True)
 
+    # Sauvegarder les dictionnaires
+    with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_companies_ranked_{limit}.pickle', 'wb') as f:
+        pickle.dump(dict_companies, f)
+
+    with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_tech_ranked_{limit}.pickle', 'wb') as f:
+        pickle.dump(dict_tech, f)
+
+    # ✅ Sauvegarder le graphe avec pickle directement (évite tout bug NetworkX)
+    with open(f"{SAVE_DIR_NETWORKS}/{prefix}bipartite_graph_{limit}.gpickle", "wb") as f:
+        pickle.dump(B, f)
+
+    # Sauvegarder le DataFrame
+    df_companies.to_csv(f'{SAVE_DIR_CLASSES}/{prefix}companies_ranked_{limit}.csv', index=False)
+
+    print(f"\n✓ Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
 # ===================================================================
 # MAIN
 # ===================================================================
@@ -320,11 +280,8 @@ def main(max_companies_plot=20, max_tech_plot=20):
             return
 
     for limit in LIMITS:
-
         dict_companies, dict_tech, B = extract_classes_company_tech(df_comp_proc)
 
-        # --- Limiter le graphe pour le plotting ---
-        # Sélectionner les entreprises et technologies les plus connectées
         companies = [n for n, d in B.nodes(data=True) if d['bipartite'] == 0]
         techs = [n for n, d in B.nodes(data=True) if d['bipartite'] == 1]
 
@@ -334,11 +291,13 @@ def main(max_companies_plot=20, max_tech_plot=20):
         nodes_to_keep = set(top_companies) | set(top_techs)
         B_sub = B.subgraph(nodes_to_keep).copy()
 
-        # --- Plot ---
         pos = plot_bipartite_graph(B_sub)
 
-        save_graph_and_dicts(B_sub, df_comp_proc, limit, FLAG_CYBERSECURITY)
+        # ✅ Appel corrigé
+        save_graph_and_dicts(B, df_comp_proc, dict_companies, dict_tech, limit, FLAG_CYBERSECURITY)
+
+
+
 
 if __name__ == "__main__":
-    # Exemples : plot seulement 10 entreprises et 15 technologies
     main(max_companies_plot=10, max_tech_plot=15)
