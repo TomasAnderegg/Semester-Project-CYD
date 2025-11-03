@@ -156,15 +156,15 @@ def extract_tripartite_graph(companies_df, investments_df, funding_rounds_df):
 
     B = nx.Graph()
 
-    # --- Companies ---
+    # ---  Node Companies ---
     for _, row in companies_df.iterrows():
         company_id = row.get(org_id_col)
         if pd.notna(company_id):
             B.add_node(company_id, type='company', name=row.get('name'), categories=row.get('category_groups'))
 
     # --- Funding + Investments ---
-    funding_info = funding_rounds_df[['uuid','raised_amount_usd','type','announced_on']].rename(
-        columns={'uuid':'uuid_of_f_r', 'type':'funding_type'}
+    funding_info = funding_rounds_df[['uuid','raised_amount_usd','announced_on']].rename(
+        columns={'uuid':'uuid_of_f_r'}
     )
     investments_full = investments_df.merge(
         funding_info, left_on='funding_round_uuid', right_on='uuid_of_f_r', how='left'
