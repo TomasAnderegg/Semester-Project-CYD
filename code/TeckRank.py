@@ -10,6 +10,7 @@ import time
 from networkx.algorithms import bipartite
 from scipy.sparse import csr_matrix
 import classes
+import json
 
 # Importer les fonctions externes si disponibles
 try:
@@ -46,6 +47,7 @@ SAVE_DIR_CLASSES = "savings/bipartite_tech_comp/classes"
 SAVE_DIR_NETWORKS = "savings/bipartite_tech_comp/networks"
 SAVE_DIR_M = "savings/bipartite_tech_comp/M"
 SAVE_DIR_RESULTS = "savings/bipartite_tech_comp/results"
+SAVE_DIR_PLOTS = "plots/rank_evolution"
 
 # Paramètres de l'algorithme
 OPTIMAL_ALPHA_COMP = 0.5  # À ajuster selon calibration
@@ -58,7 +60,7 @@ OPTIMAL_BETA_COMP = 0.5   # À ajuster selon calibration
 
 def create_directories():
     """Crée tous les répertoires nécessaires"""
-    for directory in [SAVE_DIR_CLASSES, SAVE_DIR_NETWORKS, SAVE_DIR_M, SAVE_DIR_RESULTS]:
+    for directory in [SAVE_DIR_CLASSES, SAVE_DIR_NETWORKS, SAVE_DIR_M, SAVE_DIR_RESULTS, SAVE_DIR_PLOTS]:
         Path(directory).mkdir(parents=True, exist_ok=True)
 
 
@@ -89,6 +91,17 @@ def extract_nodes(B, bipartite_value):
             if data.get('bipartite') == bipartite_value]
 
 
+def preferences_to_string(preferences):
+    """Convertit le dictionnaire de préférences en string pour les noms de fichiers"""
+    # Créer une version simplifiée pour le nom de fichier
+    parts = []
+    for key, value in preferences.items():
+        # Raccourcir les noms de clés
+        short_key = key[:4]  # Prendre les 4 premiers caractères
+        parts.append(f"{short_key}{value}")
+    return "_".join(parts)
+
+
 # ===================================================================
 # LOADING FUNCTIONS
 # ===================================================================
@@ -116,7 +129,6 @@ def load_saved_data(num_comp, num_tech, flag_cybersecurity):
     # Charger le graphe
     with open(paths['graph'], 'rb') as f:
         B = pickle.load(f)
-    # B = nx.read_gpickle(paths['graph'])
     
     print(f"✓ Données chargées:")
     print(f"  - {len(dict_companies)} entreprises")
@@ -141,64 +153,75 @@ def create_adjacency_matrix(B):
         set0: liste des companies
         set1: liste des technologies
     """
-    set0 = extract_nodes(B, 0) #toutes les companies
-    set1 = extract_nodes(B, 1) #toutes les technologies
+    set0 = extract_nodes(B, 0)
+    set1 = extract_nodes(B, 1)
     
     # Matrice d'adjacence bipartite (sparse)
-    adj_matrix = bipartite.biadjacency_matrix(B, set0, set1) #on cree la matrice adjacente, ou les lignes sont les companies et les colonnes les techs
+    adj_matrix = bipartite.biadjacency_matrix(B, set0, set1)
     
     # Convertir en matrice dense
-    adj_matrix_dense = adj_matrix.todense() #transformer en matrice dense (numpy.matrix). Chaque element d'une matrice dense est stockee explictement en memoire
+    adj_matrix_dense = adj_matrix.todense()
     
     # Convertir en numpy array
-    M = np.squeeze(np.asarray(adj_matrix_dense)) #np.asarray pour transformer en array, np.squeeze pour enlever les dimensions inutiles
+    M = np.squeeze(np.asarray(adj_matrix_dense))
     
     print(f"✓ Matrice créée: shape {M.shape}")
     
     return M, set0, set1
 
+
 def Gct_beta(M, c, t, k_c, beta):
-
-    num = (M[c,t]) * (k_c[c] ** (- beta))
-
+    """Calcule la probabilité de transition de company c vers technologie t"""
+    # Gérer les cas de division par zéro
+    if k_c[c] == 0:
+        return 0.0
+    
+    num = M[c, t] * (k_c[c] ** (-beta))
+    
     # sum over the technologies
-    M_t = M[:,t].flatten()
-    k_c_beta = [x ** (-1 * beta) for x in k_c]
-
+    M_t = M[:, t].flatten()
+    k_c_beta = np.array([x ** (-beta) if x > 0 else 0.0 for x in k_c])
+    
     den = float(np.dot(M_t, k_c_beta))
     
-    return num/den
+    if den == 0:
+        return 0.0
+    
+    return num / den
 
 
 def Gtc_alpha(M, c, t, k_t, alpha):
+    """Calcule la probabilité de transition de technologie t vers company c"""
+    # Gérer les cas de division par zéro
+    if k_t[t] == 0:
+        return 0.0
     
-    num = (M.T[t,c]) * (k_t[t] ** (- alpha))
+    num = M.T[t, c] * (k_t[t] ** (-alpha))
     
     # sum over the companies
-    M_c = M[c,:].flatten()
-    k_t_alpha = [x ** (-1 * alpha) for x in k_t]
-    
-    type(M_c)
-    type(k_t_alpha)
+    M_c = M[c, :].flatten()
+    k_t_alpha = np.array([x ** (-alpha) if x > 0 else 0.0 for x in k_t])
     
     den = float(np.dot(M_c, k_t_alpha))
     
-    return num/den
+    if den == 0:
+        return 0.0
+    
+    return num / den
+
 
 def next_order_score(G_ct, G_tc, fitness_prev, ubiquity_prev):
-    '''Generates w^(n+1) from w^n
-    '''
-    
-    fitness_next = np.sum( G_ct * ubiquity_prev, axis=1 )
-    ubiquity_next = np.sum( G_tc * fitness_prev, axis=1 )
+    """Generates w^(n+1) from w^n"""
+    fitness_next = np.sum(G_ct * ubiquity_prev, axis=1)
+    ubiquity_next = np.sum(G_tc * fitness_prev, axis=1)
     
     return fitness_next, ubiquity_next
 
 
 def make_G_hat(M, alpha=1, beta=1):
-    '''G hat is Markov chain of length 2
-    Gct is a matrix to go from  companies to technologies and  
-    Gtc is a matrix to go from technologies to companies'''
+    """G hat is Markov chain of length 2
+    Gct is a matrix to go from companies to technologies and  
+    Gtc is a matrix to go from technologies to companies"""
     
     # zero order score
     k_c, k_t = zero_order_score(M)
@@ -209,13 +232,13 @@ def make_G_hat(M, alpha=1, beta=1):
     
     # Gct_beta
     for [c, t], val in np.ndenumerate(M):
-        G_ct[c,t] = Gct_beta(M, c, t, k_c, beta)
+        G_ct[c, t] = Gct_beta(M, c, t, k_c, beta)
     
     # Gtc_alpha
     for [t, c], val in np.ndenumerate(M.T):
-        G_tc[t,c] = Gtc_alpha(M, c, t, k_t, alpha)
+        G_tc[t, c] = Gtc_alpha(M, c, t, k_t, alpha)
     
-    return {'G_ct': G_ct, "G_tc" : G_tc}
+    return {'G_ct': G_ct, "G_tc": G_tc}
 
 
 def save_matrix(M, num_comp, num_tech, flag_cybersecurity):
@@ -234,23 +257,23 @@ def M_test_triangular(M, flag_cybersecurity=False):
     user_edits_order = user_edits_sum.argsort()
     article_edits_order = article_edits_sum.argsort()
 
-    M_sorted = M[user_edits_order,:]
+    M_sorted = M[user_edits_order, :]
 
-    if len(M_sorted.shape)>2: # the matrix in inside the first
-        M_sorted = M_sorted[0] # so it becomes of size 2
+    if len(M_sorted.shape) > 2:
+        M_sorted = M_sorted[0]
 
     M_sorted_transpose = M_sorted.transpose()
 
-    M_sorted_transpose = M_sorted_transpose[article_edits_order,:]
+    M_sorted_transpose = M_sorted_transpose[article_edits_order, :]
 
-    if len(M_sorted_transpose.shape)>2: # the matrix in inside the first
-        M_sorted_transpose = M_sorted_transpose[0] # so it becomes of size 2
+    if len(M_sorted_transpose.shape) > 2:
+        M_sorted_transpose = M_sorted_transpose[0]
 
-    M_sorted_sorted = M_sorted_transpose#.transpose()
+    M_sorted_sorted = M_sorted_transpose
 
     params = {
         'axes.labelsize': 18,
-        'axes.titlesize':28, 
+        'axes.titlesize': 28, 
         'legend.fontsize': 22, 
         'xtick.labelsize': 16, 
         'ytick.labelsize': 16}
@@ -260,24 +283,16 @@ def M_test_triangular(M, flag_cybersecurity=False):
     plt.imshow(M_sorted_sorted, cmap=plt.cm.bone, interpolation='nearest')
     plt.xlabel("Companies")
     plt.ylabel("Technologies")
-
-    # if flag_cybersecurity==False: # all fields
-    #     name_plot_M = f'plots/M_triangulize/matrix_{str(M_sorted.shape)}'
-    # else: # only companies in cybersecurity
-    #     name_plot_M = f'plots/M_triangulize/cybersec_matrix_{str(M_sorted.shape)}'
-
-    # plt.savefig(f'{name_plot_M}.pdf')
-    # plt.savefig(f'{name_plot_M}.png')
     plt.show()
 
     return
+
 
 def generator_order_w(M, alpha, beta):
     """Generates w_t^{n+1} and w_c^{n+1}
     
     fitness_next = w_t next
     ubliq_next = w_c next
-    
     """
     
     # transition probabilities
@@ -285,23 +300,22 @@ def generator_order_w(M, alpha, beta):
     G_ct = G_hat['G_ct']
     G_tc = G_hat['G_tc']
     
-    # strating point
-    fitness_0, ubiquity_0  = zero_order_score(M)
+    # starting point
+    fitness_0, ubiquity_0 = zero_order_score(M)
     
     fitness_next = fitness_0
     ubiquity_next = ubiquity_0
     i = 0
     
     while True:
-        
         fitness_prev = fitness_next
         ubiquity_prev = ubiquity_next
         i += 1
         
         fitness_next, ubiquity_next = next_order_score(G_ct, G_tc, fitness_prev, ubiquity_prev)
         
-        yield {'iteration':i, 'fitness': fitness_next, 'ubiquity': ubiquity_next}
-   
+        yield {'iteration': i, 'fitness': fitness_next, 'ubiquity': ubiquity_next}
+
 
 # ===================================================================
 # TECHRANK ALGORITHM FUNCTIONS
@@ -333,16 +347,21 @@ def find_convergence(M,
                     fit_or_ubiq, 
                     do_plot=False, 
                     flag_cybersecurity=False,
-                    preferences = ''):
-    '''TechRank evolution: finds the convergence point (or gives up after 1000 iterations)
+                    preferences=''):
+    """TechRank evolution: finds the convergence point (or gives up after 1000 iterations)
     
     Args:
-        - 
+        M: matrice d'adjacence
+        alpha: paramètre alpha
+        beta: paramètre beta
+        fit_or_ubiq: 'fitness' pour companies, 'ubiquity' pour technologies
+        do_plot: afficher le plot de convergence
+        flag_cybersecurity: flag cybersecurity
+        preferences: dictionnaire de préférences
         
     Return: 
-        - 
-        
-    '''
+        dictionnaire avec les scores finaux et informations de convergence
+    """
     
     # technologies or company
     if fit_or_ubiq == 'fitness':
@@ -352,38 +371,33 @@ def find_convergence(M,
         name = 'Technologies'
         M_shape = M.shape[1]
 
-    #print(name)
-    
     rankings = list()
     scores = list()
     
     prev_rankdata = np.zeros(M_shape)
     iteration = 0
-    
 
     weights = generator_order_w(M, alpha, beta)
-
 
     stops_flag = 0
 
     for stream_data in weights:
         
         iteration = stream_data['iteration']
+        data = stream_data[fit_or_ubiq]
         
-        data = stream_data[fit_or_ubiq] # weights
+        # Gérer les NaN
+        if np.any(np.isnan(data)):
+            print(f"⚠ NaN détectés à l'itération {iteration}, remplacement par 0")
+            data = np.nan_to_num(data, nan=0.0)
         
         rankdata = data.argsort().argsort()
 
-        # print(f"iteration : {iteration}")
-        
-        if iteration==1:
-            # print(iteration, rankdata)
+        if iteration == 1:
             initial_conf = rankdata
 
-        # print(f"Iteration: {iteration} stops flag: {stops_flag}")
-
         # stops in case algorithm does not change for some iterations
-        if stops_flag==10:
+        if stops_flag == 10:
             print(f"Converge at {iteration}")
             convergence_iteration = iteration
             for i in range(90):
@@ -392,19 +406,18 @@ def find_convergence(M,
             break
 
         # test for convergence, in case break
-        elif np.equal(rankdata,prev_rankdata).all(): # no changes
-            if stops_flag==0:
+        elif np.equal(rankdata, prev_rankdata).all():
+            if stops_flag == 0:
                 convergence_iteration = iteration
             stops_flag += 1
 
-            # reappend two times to make plot flat
             rankings.append(rankdata)
             scores.append(data)
             prev_rankdata = rankdata
 
         # max limit
         elif iteration == 5000: 
-            print("We break becuase we reach a too high number of iterations")
+            print("We break because we reach a too high number of iterations")
             convergence_iteration = iteration
             break
 
@@ -415,16 +428,13 @@ def find_convergence(M,
             prev_rankdata = rankdata
             stops_flag = 0
 
-            
-    # print(iteration, rankdata)
     final_conf = rankdata
     
     # plot:
-    if do_plot and iteration>2:
-
+    if do_plot and iteration > 2:
         params = {
             'axes.labelsize': 26,
-            'axes.titlesize':28, 
+            'axes.titlesize': 28, 
             'legend.fontsize': 22, 
             'xtick.labelsize': 16, 
             'ytick.labelsize': 16}
@@ -434,22 +444,25 @@ def find_convergence(M,
         plt.xlabel('Iterations')
         plt.ylabel('Rank, higher is better')
         plt.title(f'{name} rank evolution')
-        plt.semilogx(range(1,len(rankings)+1), rankings, '-,', alpha=0.5)
+        plt.semilogx(range(1, len(rankings) + 1), rankings, '-,', alpha=0.5)
 
-        # save figure 
-        if flag_cybersecurity==False:
-            name_plot = f'code/plots/rank_evolution/techrank_{name}_{str(M_shape)}_{str(preferences)}'
-        else:
-            name_plot = f'code/plots/rank_evolution/techrank_cybersecurity_{name}_{str(M_shape)}_{str(preferences)}'
-        plt.savefig(f'{name_plot}.pdf')
-        plt.savefig(f'{name_plot}.png')
-
+        # save figure avec nom de fichier valide
+        prefix = "cybersecurity_" if flag_cybersecurity else ""
+        pref_str = preferences_to_string(preferences) if isinstance(preferences, dict) else str(preferences)
+        name_plot = f'{SAVE_DIR_PLOTS}/techrank_{prefix}{name}_{M_shape}_{pref_str}'
         
+        try:
+            plt.savefig(f'{name_plot}.pdf')
+            plt.savefig(f'{name_plot}.png')
+        except Exception as e:
+            print(f"⚠ Erreur lors de la sauvegarde du plot: {e}")
+        
+        plt.close()
+
     return {fit_or_ubiq: scores[-1], 
             'iteration': convergence_iteration, 
             'initial_conf': initial_conf, 
             'final_conf': final_conf}
-
 
 
 def plot_convergence_results(scores, fit_or_ubiq, flag_cybersecurity):
@@ -498,18 +511,15 @@ def rank_df_class(convergence, dict_class):
 
     df_final = pd.DataFrame(columns=columns_final, index=range(n))
 
-    # print(f"----{n}----{len(convergence['initial_conf'])}----")
-    if n>len(convergence['initial_conf']):
-        n = n-1
+    if n > len(convergence['initial_conf']):
+        n = n - 1
     
     for i in range(n):
-        # print(i)
-        
         name = list_names[i]
         
-        ini_pos = convergence['initial_conf'][i] # initial position
-        final_pos = convergence['final_conf'][i] # final position
-        rank = round(convergence[fit_or_ubiq][i], 3) # final rank rounded
+        ini_pos = convergence['initial_conf'][i]
+        final_pos = convergence['final_conf'][i]
+        rank = round(convergence[fit_or_ubiq][i], 3)
         degree = dict_class[name].degree
         
         df_final.loc[final_pos, 'final_configuration'] = name
@@ -517,18 +527,14 @@ def rank_df_class(convergence, dict_class):
         df_final.loc[final_pos, 'initial_position'] = ini_pos
         df_final.loc[final_pos, 'techrank'] = rank
 
-
         if hasattr(dict_class[name], 'rank_CB'):
             rank_CB = dict_class[name].rank_CB
             df_final.loc[final_pos, 'rank_CB'] = rank_CB
         
-        
         # update class's instances with rank
         dict_class[name].rank_algo = rank
     
-    
     return df_final, dict_class
-
 
 
 # ===================================================================
@@ -638,8 +644,8 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH,
         num_comp: nombre de companies
         num_tech: nombre de technologies
         flag_cybersecurity: flag pour cybersecurity
-        preferences_comp: préférences pour companies (pas utilisee)
-        preferences_tech: préférences pour technologies (pas utilisee)
+        preferences_comp: préférences pour companies
+        preferences_tech: préférences pour technologies
         do_calibration: effectuer la calibration
         alpha: paramètre alpha (si pas de calibration)
         beta: paramètre beta (si pas de calibration)
@@ -669,23 +675,12 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH,
     save_matrix(M, num_comp, num_tech, flag_cybersecurity)
     
     # 3. Test de la matrice
-    '''
-    TeckRank se base sur les sommations de connexions et les iterations enttre entreprises et technologies. Si la matrice est triangulaire, cela signifie qu'il y a une hiérarchie stricte
-    certaines technologies ou entreprises n'ont jamais de connexions avec certaines autres. Le ranking deviendrait biaisé, car certaines entreprises ou technologies seraient systématiquement avantagées ou désavantagées.
-    Par exemple, si une entreprise n'a jamais investi dans une technologie spécifique (représentée par un zéro dans la matrice triangulaire), cette entreprise ne pourra jamais être classée favorablement par rapport à d'autres qui ont investi dans cette technologie.
-    En résumé, une matrice triangulaire indiquerait une structure de données inadéquate pour l'algorithme TechRank, compromettant ainsi la validité des résultats de classement obtenus..
-    '''
-    M_test_triangular(M, flag_cybersecurity) #fonction qui sert a verifier que la matrice n'est pas triangulaire, car si elle l'est, l'algorithme TechRank ne fonctionnera pas correctement.
+    M_test_triangular(M, flag_cybersecurity)
  
     # 4. Calcul des scores d'ordre zéro
     k_c, k_t = zero_order_score(M)
     
     # 5. Calibration (optionnel)
-    ''''
-    Calibration des paramètres alpha et beta en fonction des préférences données.
-    Cette étape ajuste les paramètres de l'algorithme TechRank pour mieux refléter les préférences spécifiques des utilisateurs ou des analystes.
-    Si do_calibration est True et que les fonctions externes sont disponibles, la calibration est effectuée.
-    '''
     if do_calibration and EXTERNAL_FUNCTIONS_AVAILABLE:
         alpha, beta = run_calibration_companies(M, dict_companies, preferences_comp)
         run_calibration_technologies(M, dict_tech, preferences_tech)
@@ -765,7 +760,7 @@ if __name__ == "__main__":
         flag_cybersecurity=FLAG_CYBERSECURITY,
         preferences_comp=PREFERENCES_COMP,
         preferences_tech=PREFERENCES_TECH,
-        do_calibration=True,  # Mettre True pour faire la calibration
+        do_calibration=False,  # Mettre True pour faire la calibration
         alpha=0.5,
         beta=0.5
     )
