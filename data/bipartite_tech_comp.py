@@ -29,8 +29,8 @@ SAVE_DIR_CLASSES = "savings/bipartite_tech_comp/classes"
 SAVE_DIR_NETWORKS = "savings/bipartite_tech_comp/networks"
 
 FLAG_CYBERSECURITY = True
-LIMITS = [10000]
-CYBERSECURITY_KEYWORDS = ['quantum computing']
+LIMITS = [500]
+CYBERSECURITY_KEYWORDS = ['cyber', 'security', 'cybersecurity']
 
 # ===================================================================
 # UTILS
@@ -147,21 +147,47 @@ def filter_cybersecurity(df, keywords):
 # BIPARTITE CREATION FUNCTION
 # ===================================================================
 
-def extract_classes_company_tech(df):
-    """Extracts the dictionaries of Companies and Technologies 
-    from the dataset and create the network"""
+def extract_classes_company_tech_cybersecurity_only(df, cybersecurity_keywords=['cyber', 'security', 'cybersecurity']):
+    """Extrait uniquement les entreprises cybersecurity et leurs technologies cybersecurity"""
     
     dict_companies = {}
     dict_tech = {}
     B = nx.Graph()
 
+    cybersecurity_companies = 0
+    cybersecurity_techs_found = set()
+    total_techs_excluded = 0
+    
     for index, row in df.iterrows():
         comp_name = row['name']
 
+        # Convertir et nettoyer les technologies
+        if isinstance(row['category_groups'], list):
+            tech_list = [str(tech).strip() for tech in row['category_groups'] if tech and str(tech).strip()]
+        else:
+            tech_list = [str(row['category_groups']).strip()] if row['category_groups'] else []
+        
+        # 🔥 FILTRE CRITIQUE : Garder UNIQUEMENT les technologies cybersecurity
+        cybersecurity_tech_list = []
+        for tech in tech_list:
+            tech_lower = tech.lower()
+            # Vérifier si la technologie contient un mot-clé cybersecurity
+            if any(keyword in tech_lower for keyword in cybersecurity_keywords):
+                cybersecurity_tech_list.append(tech)
+                cybersecurity_techs_found.add(tech)
+            else:
+                total_techs_excluded += 1
+        
+        # ⚠️ Ne garder que les entreprises avec AU MOINS une technologie cybersecurity
+        if not cybersecurity_tech_list:
+            continue  # Ignorer les entreprises sans technologie cybersecurity
+            
+        cybersecurity_companies += 1
+        
         c = classes.Company(
             id=row['uuid'],
             name=comp_name,
-            technologies=row['category_groups'],
+            technologies=cybersecurity_tech_list,
         )
 
         if 'rank_company' in df.columns:
@@ -172,19 +198,19 @@ def extract_classes_company_tech(df):
         dict_companies[comp_name] = c
         B.add_node(comp_name, bipartite=0)
         
-        if isinstance(row['category_groups'], list):
-            for tech in row['category_groups']:
-                if tech not in dict_tech:
-                    dict_tech[tech] = classes.Technology(name=tech)
-                    B.add_node(tech, bipartite=1)
-                B.add_edge(comp_name, tech)
-        else:
-            tech = row['category_groups']
+        # 🔥 AJOUTER UNIQUEMENT LES TECHNOLOGIES CYBERSECURITY
+        for tech in cybersecurity_tech_list:
             if tech not in dict_tech:
                 dict_tech[tech] = classes.Technology(name=tech)
                 B.add_node(tech, bipartite=1)
             B.add_edge(comp_name, tech)
 
+    print(f"🔒 FILTRAGE CYBERSECURITY STRICT:")
+    print(f"  - Entreprises avec technologies cybersecurity: {cybersecurity_companies}")
+    print(f"  - Technologies cybersecurity uniques: {len(cybersecurity_techs_found)}")
+    print(f"  - Technologies exclues (non-cybersecurity): {total_techs_excluded}")
+    print(f"  - Technologies cybersecurity trouvées: {sorted(cybersecurity_techs_found)}")
+    
     return dict_companies, dict_tech, B
 
 
@@ -202,38 +228,120 @@ def filter_dict(G, percentage, set1, set2):
     return to_delete
 
 
-def plot_bipartite_graph(G, small_degree=True, percentage=10, circular=False):
+def plot_bipartite_graph(G, max_companies=10, max_techs=15):
     print("\n========================== PLOTTING BIPARTITE GRAPH ==========================")
-
-    set1 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 0]
-    set2 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 1]
-
-    pos = nx.circular_layout(G) if circular else nx.spring_layout(G)
-    plt.figure(figsize=(25,15) if len(set1) >= 20 else (19,13))
-    plt.ion()
-    plt.axis('on')
-
-    company = set1
-    value = set2
-
-    companyDegree = nx.degree(G, company) 
-    valueDegree = nx.degree(G, value)
-
-    nx.draw_networkx_nodes(G, pos, nodelist=company, node_color='r',
-                           node_size=[v * 100 for v in dict(companyDegree).values()],
-                           alpha=0.6, label=company)
-
-    nx.draw_networkx_nodes(G, pos, nodelist=value, node_color='b',
-                           node_size=[v * 200 for v in dict(valueDegree).values()],
-                           alpha=0.6, label=value)
-
-    nx.draw_networkx_labels(G, pos, {n: n for n in company}, font_size=10)
-    nx.draw_networkx_labels(G, pos, {n: n for n in value}, font_size=10)
-    nx.draw_networkx_edges(G, pos, width=1.0, alpha=0.4)
-
+    
+    # Identifier les composantes connexes
+    connected_components = list(nx.connected_components(G))
+    connected_components.sort(key=len, reverse=True)
+    
+    # Prendre la plus grande composante connexe
+    if connected_components:
+        largest_component = connected_components[0]
+        G_connected = G.subgraph(largest_component).copy()
+    else:
+        G_connected = G
+    
+    # Séparer les types de nœuds dans la composante connexe
+    companies = [n for n, d in G_connected.nodes(data=True) if d['bipartite'] == 0]
+    techs = [n for n, d in G_connected.nodes(data=True) if d['bipartite'] == 1]
+    
+    print(f"Composante principale: {len(companies)} companies, {len(techs)} technologies")
+    
+    # Si c'est encore trop grand, filtrer intelligemment
+    if len(companies) > max_companies or len(techs) > max_techs:
+        # Garder les nœuds les plus connectés MAIS avec leurs voisins
+        top_companies = sorted(companies, key=lambda n: G_connected.degree(n), reverse=True)[:max_companies]
+        
+        # Récupérer toutes les technologies connectées à ces companies
+        connected_techs = set()
+        for company in top_companies:
+            connected_techs.update(G_connected.neighbors(company))
+        
+        # Récupérer toutes les companies connectées à ces technologies (pour complétude)
+        all_companies = set(top_companies)
+        for tech in connected_techs:
+            all_companies.update(G_connected.neighbors(tech))
+        
+        G_final = G_connected.subgraph(all_companies | connected_techs).copy()
+    else:
+        G_final = G_connected
+    
+    # Visualisation
+    pos = nx.spring_layout(G_final, k=1, iterations=50)
+    plt.figure(figsize=(20, 12))
+    
+    companies_final = [n for n, d in G_final.nodes(data=True) if d['bipartite'] == 0]
+    techs_final = [n for n, d in G_final.nodes(data=True) if d['bipartite'] == 1]
+    
+    # Taille des nœuds proportionnelle au degré
+    company_sizes = [G_final.degree(node) * 200 for node in companies_final]
+    tech_sizes = [G_final.degree(node) * 300 for node in techs_final]
+    
+    # Dessiner
+    nx.draw_networkx_nodes(G_final, pos, nodelist=companies_final, 
+                          node_color='red', node_size=company_sizes, alpha=0.7, label='Companies')
+    nx.draw_networkx_nodes(G_final, pos, nodelist=techs_final, 
+                          node_color='blue', node_size=tech_sizes, alpha=0.7, label='Technologies')
+    
+    # Labels seulement pour les nœuds importants
+    labels = {}
+    for node in companies_final:
+        if G_final.degree(node) >= 2:  # Seulement les companies avec au moins 2 connexions
+            labels[node] = node[:15] + "..." if len(node) > 15 else node
+    
+    for node in techs_final:
+        if G_final.degree(node) >= 3:  # Seulement les technologies avec au moins 3 connexions
+            labels[node] = node[:15] + "..." if len(node) > 15 else node
+    
+    nx.draw_networkx_labels(G_final, pos, labels, font_size=8)
+    nx.draw_networkx_edges(G_final, pos, alpha=0.3, width=0.5)
+    
+    plt.legend()
+    plt.title(f"Graphe Bipartite - {len(companies_final)} Companies, {len(techs_final)} Technologies")
+    plt.axis('off')
     plt.tight_layout()
-    plt.show(block=True)
+    plt.show()
+    
     return pos
+
+def analyze_graph_structure(B):
+    """Analyse la structure du graphe pour identifier les problèmes"""
+    print("\n" + "="*50)
+    print("ANALYSE DU GRAPHE")
+    print("="*50)
+    
+    companies = [n for n, d in B.nodes(data=True) if d['bipartite'] == 0]
+    techs = [n for n, d in B.nodes(data=True) if d['bipartite'] == 1]
+    
+    # Degrés
+    company_degrees = [B.degree(node) for node in companies]
+    tech_degrees = [B.degree(node) for node in techs]
+    
+    print(f"Nombre total de companies: {len(companies)}")
+    print(f"Nombre total de technologies: {len(techs)}")
+    print(f"Nombre total d'arêtes: {B.number_of_edges()}")
+    print(f"Degré moyen companies: {np.mean(company_degrees):.2f}")
+    print(f"Degré moyen technologies: {np.mean(tech_degrees):.2f}")
+    
+    # Composantes connexes
+    connected_components = list(nx.connected_components(B))
+    print(f"Nombre de composantes connexes: {len(connected_components)}")
+    
+    for i, comp in enumerate(connected_components[:5]):  # Afficher les 5 plus grandes
+        comp_companies = [n for n in comp if n in companies]
+        comp_techs = [n for n in comp if n in techs]
+        print(f"  Composante {i+1}: {len(comp_companies)} companies, {len(comp_techs)} technologies")
+    
+    # Nœuds isolés
+    isolated_nodes = list(nx.isolates(B))
+    print(f"Nœuds isolés: {len(isolated_nodes)}")
+    
+    return {
+        'companies': companies,
+        'techs': techs,
+        'components': connected_components
+    }
 
 
 # ===================================================================
@@ -280,18 +388,29 @@ def main(max_companies_plot=20, max_tech_plot=20):
             return
 
     for limit in LIMITS:
-        dict_companies, dict_tech, B = extract_classes_company_tech(df_comp_proc)
+        dict_companies, dict_tech, B = extract_classes_company_tech_cybersecurity_only(df_comp_proc)
 
+        # 3. DIAGNOSTIC CRITIQUE
+        if B.number_of_nodes() == 0:
+            print("❌ Graphe vide - aucune entreprise avec technologies cybersecurity")
+            continue
+            
         companies = [n for n, d in B.nodes(data=True) if d['bipartite'] == 0]
         techs = [n for n, d in B.nodes(data=True) if d['bipartite'] == 1]
+        
+        print(f"📈 MÉTRIQUES RÉSEAU CYBERSECURITY:")
+        print(f"  - Companies: {len(companies)}")
+        print(f"  - Technologies CYBERSECURITY: {len(techs)}")
+        print(f"  - Arêtes: {B.number_of_edges()}")
+        
+        # Vérifier s'il y a des entreprises sans connexion
+        isolated_companies = [node for node in companies if B.degree(node) == 0]
+        if isolated_companies:
+            print(f"⚠️  Entreprises sans connexion: {len(isolated_companies)}")
+            print(f"   Exemples: {isolated_companies[:3]}")
+        else:
+            print("✅ Toutes les entreprises ont au moins une connexion")
 
-        top_companies = sorted(companies, key=lambda n: B.degree(n), reverse=True)[:max_companies_plot]
-        top_techs = sorted(techs, key=lambda n: B.degree(n), reverse=True)[:max_tech_plot]
-
-        nodes_to_keep = set(top_companies) | set(top_techs)
-        B_sub = B.subgraph(nodes_to_keep).copy()
-
-        pos = plot_bipartite_graph(B_sub)
 
         # ✅ Appel corrigé
         save_graph_and_dicts(B, df_comp_proc, dict_companies, dict_tech, limit, FLAG_CYBERSECURITY)

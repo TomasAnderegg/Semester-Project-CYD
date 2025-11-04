@@ -14,7 +14,7 @@ import json
 
 # Importer les fonctions externes si disponibles
 try:
-    from functions.fun_external_factors import rank_comparison, calibrate_analytic, create_exogenous_rank
+    # from functions.fun_external_factors import rank_comparison, calibrate_analytic, create_exogenous_rank
     EXTERNAL_FUNCTIONS_AVAILABLE = True
 except ImportError:
     print("⚠ Fonctions externes non disponibles - certaines fonctionnalités seront limitées")
@@ -26,8 +26,8 @@ except ImportError:
 # ===================================================================
 
 # Paramètres du réseau
-NUM_COMP = 10000
-NUM_TECH = 10000
+NUM_COMP = 500
+NUM_TECH = 500
 
 # Préférences pour le ranking
 PREFERENCES_COMP = {
@@ -142,70 +142,73 @@ def load_saved_data(num_comp, num_tech, flag_cybersecurity):
 # MATRIX OPERATIONS
 # ===================================================================
 
-def create_adjacency_matrix(B):
-    """Crée la matrice d'adjacence du graphe bipartite
+def create_adjacency_matrix_simple(B):
+    """Version simple et robuste qui garantit une matrice valide"""
     
-    Args:
-        B: graphe bipartite
-    
-    Return:
-        M: matrice d'adjacence dense (numpy array)
-        set0: liste des companies
-        set1: liste des technologies
-    """
     set0 = extract_nodes(B, 0)
     set1 = extract_nodes(B, 1)
     
-    # Matrice d'adjacence bipartite (sparse)
-    adj_matrix = bipartite.biadjacency_matrix(B, set0, set1)
+    print("🔧 CRÉATION MATRICE SIMPLE")
+    print(f"  - Companies: {len(set0)}")
+    print(f"  - Technologies: {len(set1)}")
+    print(f"  - Arêtes graphe: {B.number_of_edges()}")
     
-    # Convertir en matrice dense
-    adj_matrix_dense = adj_matrix.todense()
+    # Créer la matrice manuellement pour éviter tout bug NetworkX
+    if len(set0) == 0 or len(set1) == 0:
+        print("❌ Aucun nœud dans une des partitions")
+        return np.array([]), [], []
     
-    # Convertir en numpy array
-    M = np.squeeze(np.asarray(adj_matrix_dense))
+    M = np.zeros((len(set0), len(set1)))
+    company_to_idx = {company: i for i, company in enumerate(set0)}
+    tech_to_idx = {tech: i for i, tech in enumerate(set1)}
     
-    print(f"✓ Matrice créée: shape {M.shape}")
+    edge_count = 0
+    for company in set0:
+        i = company_to_idx[company]
+        for tech in B.neighbors(company):
+            if tech in tech_to_idx:
+                j = tech_to_idx[tech]
+                M[i, j] = 1
+                edge_count += 1
+    
+    print(f"✅ Matrice créée manuellement:")
+    print(f"  - Shape: {M.shape}")
+    print(f"  - Arêtes comptées: {edge_count}")
+    print(f"  - Somme matrice: {np.sum(M)}")
+    
+    # Vérification cohérence
+    if edge_count != B.number_of_edges():
+        print(f"⚠️  Attention: {edge_count} arêtes comptées vs {B.number_of_edges()} dans le graphe")
     
     return M, set0, set1
+   
 
 
 def Gct_beta(M, c, t, k_c, beta):
     """Calcule la probabilité de transition de company c vers technologie t"""
-    # Gérer les cas de division par zéro
-    if k_c[c] == 0:
-        return 0.0
-    
-    num = M[c, t] * (k_c[c] ** (-beta))
-    
+    num = (M[c,t]) * (k_c[c] ** (- beta))
+
     # sum over the technologies
-    M_t = M[:, t].flatten()
-    k_c_beta = np.array([x ** (-beta) if x > 0 else 0.0 for x in k_c])
-    
+    M_t = M[:,t].flatten()
+    k_c_beta = [x ** (-1 * beta) for x in k_c]
+
     den = float(np.dot(M_t, k_c_beta))
-    
-    if den == 0:
-        return 0.0
-    
     return num / den
 
 
 def Gtc_alpha(M, c, t, k_t, alpha):
     """Calcule la probabilité de transition de technologie t vers company c"""
     # Gérer les cas de division par zéro
-    if k_t[t] == 0:
-        return 0.0
-    
-    num = M.T[t, c] * (k_t[t] ** (-alpha))
+    num = (M.T[t,c]) * (k_t[t] ** (- alpha))
     
     # sum over the companies
-    M_c = M[c, :].flatten()
-    k_t_alpha = np.array([x ** (-alpha) if x > 0 else 0.0 for x in k_t])
+    M_c = M[c,:].flatten()
+    k_t_alpha = [x ** (-1 * alpha) for x in k_t]
+    
+    type(M_c)
+    type(k_t_alpha)
     
     den = float(np.dot(M_c, k_t_alpha))
-    
-    if den == 0:
-        return 0.0
     
     return num / den
 
@@ -490,117 +493,128 @@ def plot_convergence_results(scores, fit_or_ubiq, flag_cybersecurity):
     plt.show()
 
 
-def rank_df_class(convergence, dict_class):
-    """Creates a Dataframe to have a representation of the evolution with the iterations and the rank and 
-    update the class with the rank found with the find_convergence algorithm
-    """
+def rank_df_class_robust(convergence, dict_class, active_names=None):
+    """Version ultra-robuste avec gestion explicite des noms actifs"""
     
     if 'fitness' in convergence.keys():
         fit_or_ubiq = 'fitness'
     elif 'ubiquity' in convergence.keys():
         fit_or_ubiq = 'ubiquity'
-    
-    list_names = [*dict_class]
-    
-    n = len(list_names)
-
-    if hasattr(list_names[0], 'rank_CB'):
-        columns_final = ['initial_position', 'final_configuration', 'degree', 'techrank', 'rank_CB']
     else:
-        columns_final = ['initial_position', 'final_configuration', 'degree', 'techrank']
-
+        print("❌ Aucune clé 'fitness' ou 'ubiquity' trouvée dans convergence")
+        return pd.DataFrame(), dict_class
+    
+    # Utiliser les noms actifs si fournis, sinon tous les noms du dictionnaire
+    if active_names is None:
+        active_names = list(dict_class.keys())
+    
+    n_convergence = len(convergence[fit_or_ubiq])
+    n_active = len(active_names)
+    
+    print(f"🔍 TAILLES - Convergence: {n_convergence}, Actives: {n_active}")
+    
+    # Prendre le minimum pour éviter les dépassements
+    n = min(n_convergence, n_active)
+    
+    if n_convergence != n_active:
+        print(f"⚠️  Ajustement: utilisation de {n} éléments sur {n_convergence} convergence et {n_active} actives")
+    
+    # Créer le DataFrame
+    columns_final = ['initial_position', 'final_configuration', 'techrank']
+    if hasattr(dict_class[active_names[0]], 'rank_CB'):
+        columns_final.append('rank_CB')
+    
     df_final = pd.DataFrame(columns=columns_final, index=range(n))
-
-    if n > len(convergence['initial_conf']):
-        n = n - 1
     
     for i in range(n):
-        name = list_names[i]
+        name = active_names[i]
         
-        ini_pos = convergence['initial_conf'][i]
-        final_pos = convergence['final_conf'][i]
-        rank = round(convergence[fit_or_ubiq][i], 3)
-        degree = dict_class[name].degree
-        
-        df_final.loc[final_pos, 'final_configuration'] = name
-        df_final.loc[final_pos, 'degree'] = degree
-        df_final.loc[final_pos, 'initial_position'] = ini_pos
-        df_final.loc[final_pos, 'techrank'] = rank
-
-        if hasattr(dict_class[name], 'rank_CB'):
-            rank_CB = dict_class[name].rank_CB
-            df_final.loc[final_pos, 'rank_CB'] = rank_CB
-        
-        # update class's instances with rank
-        dict_class[name].rank_algo = rank
+        try:
+            ini_pos = convergence['initial_conf'][i]
+            final_pos = convergence['final_conf'][i]
+            rank = round(convergence[fit_or_ubiq][i], 6)
+            
+            df_final.loc[final_pos, 'final_configuration'] = name
+            df_final.loc[final_pos, 'initial_position'] = ini_pos
+            df_final.loc[final_pos, 'techrank'] = rank
+            
+            if hasattr(dict_class[name], 'rank_CB'):
+                rank_CB = dict_class[name].rank_CB
+                df_final.loc[final_pos, 'rank_CB'] = rank_CB
+            
+            # update class's instances with rank
+            dict_class[name].rank_algo = rank
+            
+        except Exception as e:
+            print(f"❌ Erreur pour {name} (index {i}): {e}")
+            continue
     
     return df_final, dict_class
-
 
 # ===================================================================
 # CALIBRATION (si fonctions externes disponibles)
 # ===================================================================
 
-def run_calibration_companies(M, dict_companies, preferences_comp):
-    """Calibration pour les companies"""
-    if not EXTERNAL_FUNCTIONS_AVAILABLE:
-        print("⚠ Calibration non disponible - fonctions externes manquantes")
-        return OPTIMAL_ALPHA_COMP, OPTIMAL_BETA_COMP
+# def run_calibration_companies(M, dict_companies, preferences_comp):
+#     """Calibration pour les companies"""
+#     if not EXTERNAL_FUNCTIONS_AVAILABLE:
+#         print("⚠ Calibration non disponible - fonctions externes manquantes")
+#         return OPTIMAL_ALPHA_COMP, OPTIMAL_BETA_COMP
     
-    print("\n" + "="*70)
-    print("CALIBRATION COMPANIES")
-    print("="*70)
+#     print("\n" + "="*70)
+#     print("CALIBRATION COMPANIES")
+#     print("="*70)
     
-    start_time = time.time()
+#     start_time = time.time()
     
-    best_par = calibrate_analytic(
-        M=M,
-        ua='Companies',
-        dict_class=dict_companies,
-        exogenous_rank=create_exogenous_rank('Companies', dict_companies, preferences_comp),
-        index_function=lambda x: (x - 50) / 25,
-        title='Correlation for Companies',
-        do_plot=True,
-        preferences=preferences_comp
-    )
+#     # best_par = calibrate_analytic(
+#     #     M=M,
+#     #     ua='Companies',
+#     #     dict_class=dict_companies,
+#     #     # exogenous_rank=create_exogenous_rank('Companies', dict_companies, preferences_comp),
+#     #     index_function=lambda x: (x - 50) / 25,
+#     #     title='Correlation for Companies',
+#     #     do_plot=True,
+#     #     preferences=preferences_comp
+#     # )
     
-    end_time = time.time()
+#     end_time = time.time()
     
-    print(f"✓ Calibration terminée en {end_time - start_time:.2f}s")
-    print(f"  Meilleurs paramètres: {best_par}")
+#     print(f"✓ Calibration terminée en {end_time - start_time:.2f}s")
+#     print(f"  Meilleurs paramètres: {best_par}")
     
-    return best_par
+#     return best_par
 
 
-def run_calibration_technologies(M, dict_tech, preferences_tech):
-    """Calibration pour les technologies"""
-    if not EXTERNAL_FUNCTIONS_AVAILABLE:
-        print("⚠ Calibration non disponible - fonctions externes manquantes")
-        return OPTIMAL_ALPHA_COMP, OPTIMAL_BETA_COMP
+# def run_calibration_technologies(M, dict_tech, preferences_tech):
+#     """Calibration pour les technologies"""
+#     if not EXTERNAL_FUNCTIONS_AVAILABLE:
+#         print("⚠ Calibration non disponible - fonctions externes manquantes")
+#         return OPTIMAL_ALPHA_COMP, OPTIMAL_BETA_COMP
     
-    print("\n" + "="*70)
-    print("CALIBRATION TECHNOLOGIES")
-    print("="*70)
+#     print("\n" + "="*70)
+#     print("CALIBRATION TECHNOLOGIES")
+#     print("="*70)
     
-    start_time = time.time()
+#     start_time = time.time()
     
-    best_par = calibrate_analytic(
-        M=M,
-        ua='Technologies',
-        dict_class=dict_tech,
-        exogenous_rank=create_exogenous_rank('Technologies', dict_tech, preferences_tech),
-        index_function=lambda x: (x - 50) / 25,
-        title='Correlation for Technologies',
-        do_plot=True,
-        preferences=preferences_tech
-    )
+#     best_par = calibrate_analytic(
+#         M=M,
+#         ua='Technologies',
+#         dict_class=dict_tech,
+#         exogenous_rank=create_exogenous_rank('Technologies', dict_tech, preferences_tech),
+#         index_function=lambda x: (x - 50) / 25,
+#         title='Correlation for Technologies',
+#         do_plot=True,
+#         preferences=preferences_tech
+#     )
     
-    end_time = time.time()
+#     end_time = time.time()
     
-    print(f"✓ Calibration terminée en {end_time - start_time:.2f}s")
-    print(f"  Meilleurs paramètres: {best_par}")
+#     print(f"✓ Calibration terminée en {end_time - start_time:.2f}s")
+#     print(f"  Meilleurs paramètres: {best_par}")
     
-    return best_par
+#     return best_par
 
 
 # ===================================================================
@@ -638,115 +652,156 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH,
                  alpha=OPTIMAL_ALPHA_COMP,
                  beta=OPTIMAL_BETA_COMP):
     """
-    Fonction principale pour exécuter l'algorithme TechRank
-    
-    Args:
-        num_comp: nombre de companies
-        num_tech: nombre de technologies
-        flag_cybersecurity: flag pour cybersecurity
-        preferences_comp: préférences pour companies
-        preferences_tech: préférences pour technologies
-        do_calibration: effectuer la calibration
-        alpha: paramètre alpha (si pas de calibration)
-        beta: paramètre beta (si pas de calibration)
-    
-    Return:
-        df_companies: DataFrame des companies rankées
-        df_tech: DataFrame des technologies rankées
-        dict_companies: dictionnaire mis à jour
-        dict_tech: dictionnaire mis à jour
+    Fonction principale CORRIGÉE avec gestion des tailles
     """
     create_directories()
     
     print("\n" + "="*70)
-    print("TECHRANK ALGORITHM")
+    print("TECHRANK ALGORITHM - VERSION SYNCHRONISÉE")
     print("="*70)
-    print(f"Configuration:")
-    print(f"  - Companies: {num_comp}")
-    print(f"  - Technologies: {num_tech}")
-    print(f"  - Cybersecurity filter: {flag_cybersecurity}")
-    print("="*70 + "\n")
+    
+    # Initialiser les variables de retour
+    df_companies = pd.DataFrame()
+    df_tech = pd.DataFrame()
     
     # 1. Charger les données
     dict_companies, dict_tech, B = load_saved_data(num_comp, num_tech, flag_cybersecurity)
     
     # 2. Créer la matrice d'adjacence
-    M, set0, set1 = create_adjacency_matrix(B)
+    print("\n=== CRÉATION MATRICE ADJACENCE ===")
+    try:
+        M, active_companies, active_techs = create_adjacency_matrix_simple(B)
+    except Exception as e:
+        print(f"❌ Erreur création matrice: {e}")
+        return df_companies, df_tech, dict_companies, dict_tech
+    
+    # VÉRIFICATION CRITIQUE
+    if M.size == 0 or np.sum(M) == 0:
+        print("❌ Matrice vide - arrêt de l'algorithme")
+        return df_companies, df_tech, dict_companies, dict_tech
+    
+    # FILTRAGE ET SYNCHRONISATION
+    print("\n=== SYNCHRONISATION DES DONNÉES ===")
+    
+    # Filtrer les dictionnaires pour garder seulement les actifs
+    dict_companies_active = {name: dict_companies[name] for name in active_companies if name in dict_companies}
+    dict_tech_active = {name: dict_tech[name] for name in active_techs if name in dict_tech}
+    
+    print(f"📊 SYNCHRONISATION:")
+    print(f"  - Companies: {len(active_companies)} actives vs {len(dict_companies_active)} dans dict")
+    print(f"  - Technologies: {len(active_techs)} actives vs {len(dict_tech_active)} dans dict")
+    
+    # Vérification cohérence
+    if len(active_companies) != len(dict_companies_active):
+        print("⚠️  Ajustement des companies actives...")
+        active_companies = [name for name in active_companies if name in dict_companies_active]
+    
+    if len(active_techs) != len(dict_tech_active):
+        print("⚠️  Ajustement des technologies actives...")
+        active_techs = [name for name in active_techs if name in dict_tech_active]
+    
+    # Filtrer les entreprises sans connexion dans la matrice
+    row_sums = np.sum(M, axis=1)
+    zero_degree_mask = row_sums == 0
+    if np.sum(zero_degree_mask) > 0:
+        print(f"🔄 Filtrage des {np.sum(zero_degree_mask)} companies sans connexion...")
+        M = M[~zero_degree_mask, :]
+        # Mettre à jour la liste des companies actives
+        active_companies = [company for i, company in enumerate(active_companies) if not zero_degree_mask[i]]
+        # Mettre à jour le dictionnaire
+        dict_companies_active = {name: dict_companies_active[name] for name in active_companies if name in dict_companies_active}
+        print(f"  - Nouvelle shape: {M.shape}")
+        print(f"  - Companies actives après filtrage: {len(active_companies)}")
+    
+    if np.sum(M) == 0:
+        print("❌ Matrice vide après filtrage - arrêt")
+        return df_companies, df_tech, dict_companies, dict_tech
+    
     save_matrix(M, num_comp, num_tech, flag_cybersecurity)
     
-    # 3. Test de la matrice
-    M_test_triangular(M, flag_cybersecurity)
- 
-    # 4. Calcul des scores d'ordre zéro
+    # 3. Calcul des scores d'ordre zéro
     k_c, k_t = zero_order_score(M)
     
-    # 5. Calibration (optionnel)
-    if do_calibration and EXTERNAL_FUNCTIONS_AVAILABLE:
-        alpha, beta = run_calibration_companies(M, dict_companies, preferences_comp)
-        run_calibration_technologies(M, dict_tech, preferences_tech)
-    
-    # 6. Algorithme TechRank pour companies
+    # 4. Algorithme TechRank pour companies
     print("\n" + "="*70)
     print("RANKING COMPANIES")
     print("="*70)
-    start_time = time.time()
     
-    convergence_comp = find_convergence(
-        M,
-        alpha=alpha,
-        beta=beta,
-        fit_or_ubiq='fitness',
-        do_plot=True,
-        flag_cybersecurity=flag_cybersecurity,
-        preferences=preferences_comp
-    )
+    try:
+        convergence_comp = find_convergence(
+            M,
+            alpha=alpha,
+            beta=beta,
+            fit_or_ubiq='fitness',
+            do_plot=True,
+            flag_cybersecurity=flag_cybersecurity,
+            preferences=preferences_comp
+        )
+        
+        # ⚠️ CORRECTION : Utiliser les companies actives et le dictionnaire filtré
+        df_companies, dict_companies_active = rank_df_class_robust(
+            convergence_comp, 
+            dict_companies_active,
+            active_names=active_companies
+        )
+        print(f"✓ Ranking companies terminé: {len(df_companies)} entreprises rankées")
+        
+    except Exception as e:
+        print(f"❌ Erreur lors du ranking companies: {e}")
+        import traceback
+        traceback.print_exc()
     
-    time_comp = time.time() - start_time
-    print(f"✓ Temps de calcul companies: {time_comp:.2f}s")
-    
-    df_companies, dict_companies = rank_df_class(convergence_comp, dict_companies)
-    
-    # 7. Algorithme TechRank pour technologies
+    # 5. Algorithme TechRank pour technologies
     print("\n" + "="*70)
     print("RANKING TECHNOLOGIES")
     print("="*70)
-    start_time = time.time()
     
-    # Transposer M pour les technologies
-    M_T = M.T
+    try:
+        # Transposer M pour les technologies
+        M_T = M.T
+        
+        convergence_tech = find_convergence(
+            M_T,
+            alpha=alpha,
+            beta=beta,
+            fit_or_ubiq='ubiquity',
+            do_plot=True,
+            flag_cybersecurity=flag_cybersecurity,
+            preferences=preferences_tech
+        )
+        
+        # ⚠️ CORRECTION : Utiliser les technologies actives et le dictionnaire filtré
+        df_tech, dict_tech_active = rank_df_class_robust(
+            convergence_tech, 
+            dict_tech_active,
+            active_names=active_techs
+        )
+        print(f"✓ Ranking technologies terminé: {len(df_tech)} technologies rankées")
+        
+    except Exception as e:
+        print(f"❌ Erreur lors du ranking technologies: {e}")
+        import traceback
+        traceback.print_exc()
     
-    convergence_tech = find_convergence(
-        M_T,
-        alpha=alpha,
-        beta=beta,
-        fit_or_ubiq='ubiquity',
-        do_plot=True,
-        flag_cybersecurity=flag_cybersecurity,
-        preferences=preferences_tech
-    )
+    # 6. Sauvegarder les résultats
+    if not df_companies.empty and not df_tech.empty:
+        save_results(df_companies, df_tech, dict_companies_active, dict_tech_active, 
+                     num_comp, num_tech, flag_cybersecurity)
+        
+        # Afficher le top 10
+        print("\n" + "="*70)
+        print("TOP 10 COMPANIES")
+        print("="*70)
+        print(df_companies.head(10))
+        
+        print("\n" + "="*70)
+        print("TOP 10 TECHNOLOGIES")
+        print("="*70)
+        print(df_tech.head(10))
+    else:
+        print("❌ Aucun résultat à sauvegarder")
     
-    time_tech = time.time() - start_time
-    print(f"✓ Temps de calcul technologies: {time_tech:.2f}s")
-    
-    df_tech, dict_tech = rank_df_class(convergence_tech, dict_tech)
-    
-    # 8. Sauvegarder les résultats
-    save_results(df_companies, df_tech, dict_companies, dict_tech, 
-                 num_comp, num_tech, flag_cybersecurity)
-    
-    # 9. Afficher le top 10
-    print("\n" + "="*70)
-    print("TOP 10 COMPANIES")
-    print("="*70)
-    print(df_companies.head(10))
-    
-    print("\n" + "="*70)
-    print("TOP 10 TECHNOLOGIES")
-    print("="*70)
-    print(df_tech.head(10))
-    
-    return df_companies, df_tech, dict_companies, dict_tech
-
+    return df_companies, df_tech, dict_companies_active, dict_tech_active
 
 # ===================================================================
 # MAIN

@@ -7,6 +7,7 @@ class Company:
     id: str
     name: str
     technologies: list
+    degree: float =  0
     tot_previous_investments: int = 0
     num_previous_investments: int = 0
 
