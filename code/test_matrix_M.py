@@ -7,7 +7,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 from scipy.stats import powerlaw
+from networkx.algorithms.bipartite.matrix import biadjacency_matrix
 import warnings
+from typing import List
 warnings.filterwarnings('ignore')
 
 # ===================================================================
@@ -37,8 +39,9 @@ def load_graph_and_matrix(num_comp, num_tech, flag_cybersecurity):
         B = pickle.load(f)
     
     # Charger la matrice
-    matrix_path = f'{SAVE_DIR_M}/{prefix}comp_{num_comp}_tech_{num_tech}.npy'
-    M = np.load(matrix_path)
+    # matrix_path = f'{SAVE_DIR_M}/{prefix}comp_{num_comp}_tech_{num_tech}.npy'
+    # M = np.load(matrix_path)
+    M = create_biadjacency_matrix(B)
     
     # Charger les dictionnaires
     with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_companies_ranked_{num_comp}.pickle', 'rb') as f:
@@ -49,7 +52,7 @@ def load_graph_and_matrix(num_comp, num_tech, flag_cybersecurity):
     
     print(f"✓ Données chargées:")
     print(f"  - Graphe: {B.number_of_nodes()} nœuds, {B.number_of_edges()} arêtes")
-    print(f"  - Matrice: {M.shape}")
+    # print(f"  - Matrice: {M.shape}")
     print(f"  - Dictionnaires: {len(dict_companies)} companies, {len(dict_tech)} technologies")
     
     return B, M, dict_companies, dict_tech
@@ -58,6 +61,30 @@ def load_graph_and_matrix(num_comp, num_tech, flag_cybersecurity):
 # ===================================================================
 # ANALYSES STRUCTURELLES DU GRAPHE
 # ===================================================================
+def extract_nodes(G, bipartite_set) -> List:
+    """Extract nodes from the nodes of one of the bipartite sets
+
+    Args:
+        - G: graph
+        - bipartite_set: select one of the two sets (0 or 1)
+
+    Return:
+        - nodes: list of nodes of that set
+    """
+
+    nodes = [n for n, d in G.nodes(data=True) if d["bipartite"] == bipartite_set]
+
+    return nodes
+
+def create_biadjacency_matrix(B):    
+    set0 = extract_nodes(B, 0)
+    set1 = extract_nodes(B, 1)
+
+    # adjacency matrix of bipartite graph
+    adj_matrix = biadjacency_matrix(B, set0, set1)
+    adj_matrix_dense = adj_matrix.todense()
+    M = np.squeeze(np.asarray(adj_matrix_dense))
+    return M
 
 def analyze_graph_structure(B):
     """Analyse détaillée de la structure du graphe bipartite"""

@@ -202,21 +202,17 @@ def extract_classes_company_tech_all(df):
     Returns:
         dict_companies: dictionnaire {nom entreprise : Company}
         dict_tech: dictionnaire {nom technologie : Technology}
-        B: graphe bipartite NetworkX
+        B: graphe bipartite NetworkX (avec suppression des arêtes invalides)
     """
     
     dict_companies = {}
     dict_tech = {}
     B = nx.Graph()
+    # print("colonne name", row['name'])
     
     for index, row in df.iterrows():
         comp_name = row['name']
-
-        # # Convertir et nettoyer les technologies
-        # if isinstance(row['category_groups'], list):
-        #     tech_list = [str(tech).strip() for tech in row['category_groups'] if tech and str(tech).strip()]
-        # else:
-        #     tech_list = [str(row['category_groups']).strip()] if row['category_groups'] else []
+        print("colonne name", row['name'])
 
         # Création de l'objet Company
         c = classes.Company(
@@ -239,6 +235,25 @@ def extract_classes_company_tech_all(df):
                 dict_tech[tech] = classes.Technology(name=tech)
                 B.add_node(tech, bipartite=1)
             B.add_edge(comp_name, tech)
+
+    # # ======================
+    # # Vérification des arêtes invalides (même ensemble)
+    # # ======================
+    edges_to_remove = [(u, v) for u, v in B.edges() 
+                    if B.nodes[u]['bipartite'] == B.nodes[v]['bipartite']]
+
+    if edges_to_remove:
+        print(f"⚠ {len(edges_to_remove)} arêtes invalides détectées. Détails :")
+        for u, v in edges_to_remove:
+            type_u = 'Company' if B.nodes[u]['bipartite'] == 0 else 'Technology'
+            type_v = 'Company' if B.nodes[v]['bipartite'] == 0 else 'Technology'
+            # print(f"  - Arête invalide : {u} ({type_u}) ↔ {v} ({type_v})")
+        
+        B.remove_edges_from(edges_to_remove)
+        print("✅ Arêtes invalides supprimées")
+    else:
+        print("✓ Aucune arête invalide détectée")
+
     
     print(f"✅ Extraction terminée : {len(dict_companies)} entreprises et {len(dict_tech)} technologies.")
     
@@ -414,13 +429,13 @@ def main():
     # print("colonnes de df_comp_clean", df_comp_clean.head())
     df_comp_proc = process_category_groups(df_comp_clean)
 
-    df_comp_proc = filter_cybersecurity(df_comp_proc, CYBERSECURITY_KEYWORDS)
-    if len(df_comp_proc) == 0:
+    df_comp_filter = filter_cybersecurity(df_comp_proc, CYBERSECURITY_KEYWORDS)
+    if len(df_comp_filter) == 0:
         print("Aucune entreprise cybersécurité trouvée")
         return
 
     for limit in LIMITS:
-        dict_companies, dict_tech, B = extract_classes_company_tech_all(df_comp_proc)
+        dict_companies, dict_tech, B = extract_classes_company_tech_all(df_comp_filter)
 
         # 3. DIAGNOSTIC CRITIQUE
         if B.number_of_nodes() == 0:

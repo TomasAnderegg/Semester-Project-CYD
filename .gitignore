@@ -23,6 +23,7 @@ data/*.txt
 *.json
 *.txt
 *.pdf
+*.npy
 .DS_Store
 
 ### PyCharm ###
