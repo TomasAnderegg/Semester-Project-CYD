@@ -105,12 +105,17 @@ def clean_data(df):
 
 def process_category_groups(df):
     df_proc = df.copy()
+
     if "category_groups" not in df_proc.columns:
         raise ValueError(f"Colonne 'category_groups' introuvable")
+    
     if df_proc.columns.duplicated().any():
         df_proc = df_proc.loc[:, ~df_proc.columns.duplicated()]
+
     col_series = df_proc['category_groups']
+
     first_valid_idx = col_series.first_valid_index()
+
     if first_valid_idx is not None:
         first_valid = col_series.loc[first_valid_idx]
         if not isinstance(first_valid, list):
@@ -119,28 +124,67 @@ def process_category_groups(df):
     return df_proc
 
 
-def filter_cybersecurity(df, keywords):
-    print("\n========================== FILTRAGE CYBER ==========================")
-    df = df.reset_index(drop=True).copy()
+def filter_cybersecurity(df: pd.DataFrame, keywords: List[str] = ['cyber', 'security', 'cybersecurity']) -> pd.DataFrame:
+    """
+    Filtre les entreprises liées à la cybersécurité en se basant sur les colonnes
+    'category_groups' et 'short_description'.
 
-    def check_in_categories(lst):
-        if not isinstance(lst, list):
+    Paramètres
+    ----------
+    df : pd.DataFrame
+        DataFrame d'entreprises issu de Crunchbase.
+    keywords : list of str
+        Liste de mots-clés caractéristiques de la cybersécurité.
+
+    Retour
+    ------
+    df_filtered : pd.DataFrame
+        Sous-ensemble du DataFrame contenant uniquement les entreprises
+        identifiées comme appartenant au domaine de la cybersécurité.
+    """
+
+    print("\n========================== FILTRAGE CYBER ==========================")
+    df = df.copy().reset_index(drop=True)
+
+    # --- Vérification des colonnes nécessaires ---
+    required_cols = ['category_groups', 'short_description']
+    for col in required_cols:
+        if col not in df.columns:
+            raise ValueError(f"Colonne manquante dans le DataFrame : '{col}'")
+
+    # --- 1️⃣ Vérification dans category_groups ---
+    def match_in_category_groups(entry):
+        """Vérifie si un mot-clé est présent dans la liste de catégories."""
+        if isinstance(entry, list):
+            joined = ' '.join(map(str, entry)).lower()
+        elif isinstance(entry, str):
+            joined = entry.lower()
+        else:
             return False
-        flat_list = []
-        for item in lst:
-            if isinstance(item, list):
-                flat_list.extend([str(x) for x in item])
-            else:
-                flat_list.append(str(item))
-        return any(k.lower() in ' '.join(flat_list).lower() for k in keywords)
-    
-    mask_cat = df['category_groups'].apply(check_in_categories)
-    mask_desc = df['short_description'].astype(str).str.contains('|'.join(keywords), case=False, na=False)
+        return any(k in joined for k in keywords)
+
+    mask_cat = df['category_groups'].apply(match_in_category_groups) #donne une serie de booléens
+
+    # --- 2️⃣ Vérification dans short_description ---
+    pattern = '|'.join([f"\\b{k}\\b" for k in keywords])  # recherche par mot complet
+    mask_desc = df['short_description'].astype(str).str.contains(pattern, case=False, na=False, regex=True)
+
+    # --- 3️⃣ Combinaison des deux filtres ---
     mask_combined = mask_cat | mask_desc
-    df_filtered = df[mask_combined].reset_index(drop=True)
-    
-    print(f"✓ Total d'entreprises cybersécurité: {len(df_filtered):,}")
+    df_filtered = df.loc[mask_combined].reset_index(drop=True)
+
+    # --- 4️⃣ Statistiques ---
+    print(f"✓ Entreprises détectées dans category_groups : {mask_cat.sum():,}")
+    print(f"✓ Entreprises détectées dans short_description : {mask_desc.sum():,}")
+    print(f"➡️  Total unique d'entreprises cybersécurité : {len(df_filtered):,}")
+
+    # --- 5️⃣ Exemple de vérification visuelle ---
+    # if not df_filtered.empty:
+    #     print("\nExemples d'entreprises cybersécurité détectées :")
+    #     print(df_filtered[['name', 'category_groups', 'short_description']].head(5).to_string(index=False))
+
     return df_filtered
+
 
 
 # ===================================================================
@@ -379,13 +423,13 @@ def main(max_companies_plot=20, max_tech_plot=20):
     df_comp = load_data(use_duckdb=USE_DUCKDB, entity_name=ENTITY_NAME_1)
 
     df_comp_clean = clean_data(df_comp)
+    # print("colonnes de df_comp_clean", df_comp_clean.head())
     df_comp_proc = process_category_groups(df_comp_clean)
 
-    if FLAG_CYBERSECURITY:
-        df_comp_proc = filter_cybersecurity(df_comp_proc, CYBERSECURITY_KEYWORDS)
-        if len(df_comp_proc) == 0:
-            print("Aucune entreprise cybersécurité trouvée")
-            return
+    df_comp_proc = filter_cybersecurity(df_comp_proc, CYBERSECURITY_KEYWORDS)
+    if len(df_comp_proc) == 0:
+        print("Aucune entreprise cybersécurité trouvée")
+        return
 
     for limit in LIMITS:
         dict_companies, dict_tech, B = extract_classes_company_tech_cybersecurity_only(df_comp_proc)

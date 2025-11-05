@@ -275,17 +275,42 @@ def extract_classes_company_tech(df):
                 lat_c = location.latitude
                 lon_c = location.longitude"""
 
-            url = 'https://nominatim.openstreetmap.org/search/' + urllib.parse.quote(str_place) +'?format=json'
-            response = requests.get(url).json()
+            # url = 'https://nominatim.openstreetmap.org/search/' + urllib.parse.quote(str_place) +'?format=json'
+            # response = requests.get(url).json()
 
-            if len(response)>0: # not null
-                lat_c = response[0]["lat"]
-                lon_c = response[0]["lon"]
+            # if len(response)>0: # not null
+            #     lat_c = response[0]["lat"]
+            #     lon_c = response[0]["lon"]
             
-            else: # if None, we set some values very far away
-                print(f"{str_place} is not a good address")
-                lat_c = 90
-                lon_c = 180
+            # else: # if None, we set some values very far away
+            #     print(f"{str_place} is not a good address")
+            #     lat_c = 90
+            #     lon_c = 180
+
+            # url = f"https://nominatim.openstreetmap.org/search/{urllib.parse.quote(str_place)}?format=json"
+            # headers = {"User-Agent": "TechRankApp/1.0 (contact@epfl.ch)"}  # obligatoire selon Nominatim policy
+
+            # try:
+            #     r = requests.get(url, headers=headers, timeout=5)
+            #     if r.status_code == 200:
+            #         try:
+            #             data = r.json()
+            #             if len(data) > 0:
+            #                 lat_c = float(data[0]["lat"])
+            #                 lon_c = float(data[0]["lon"])
+            #             else:
+            #                 print(f"⚠️ Adresse introuvable: {str_place}")
+            #                 lat_c, lon_c = 90, 180
+            #         except ValueError:
+            #             print(f"⚠️ Réponse non JSON pour {str_place}: {r.text[:100]}")
+            #             lat_c, lon_c = 90, 180
+            #     else:
+            #         print(f"⚠️ Erreur HTTP {r.status_code} pour {str_place}")
+            #         lat_c, lon_c = 90, 180
+            # except requests.exceptions.RequestException as e:
+            #     print(f"⚠️ Erreur réseau pour {str_place}: {e}")
+            #     lat_c, lon_c = 90, 180
+
 
 
         # Companies:
@@ -296,8 +321,8 @@ def extract_classes_company_tech(df):
             name = comp_name,
             location = location_company,
             technologies = row['category_groups'],
-            lat = lat_c,
-            lon = lon_c
+            lat = 0.0,#lat_c,
+            lon = 0.0#lon_c
                    )
 
         # if CB rank

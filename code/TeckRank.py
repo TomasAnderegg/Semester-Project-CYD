@@ -318,7 +318,118 @@ def generator_order_w(M, alpha, beta):
         fitness_next, ubiquity_next = next_order_score(G_ct, G_tc, fitness_prev, ubiquity_prev)
         
         yield {'iteration': i, 'fitness': fitness_next, 'ubiquity': ubiquity_next}
+# ===================================================================
+# VALIDITY FUNCTIONS
+# ===================================================================
+def validate_graph_and_matrix(B, M, companies=None, technologies=None, do_plot=True):
+    """
+    Vérifie la cohérence entre le graphe bipartite B et la matrice d'adjacence M.
+    
+    Args:
+        B: graphe bipartite (NetworkX)
+        M: matrice d'adjacence (numpy array)
+        companies: liste des noeuds "companies" (bipartite=0)
+        technologies: liste des noeuds "technologies" (bipartite=1)
+        do_plot: affiche ou non les visualisations
+        
+    Returns:
+        dict contenant les résultats de validation
+    """
 
+    results = {}
+
+    # ----------------------------
+    # 1. Vérifications de base
+    # ----------------------------
+    if companies is None or technologies is None:
+        companies = [n for n, d in B.nodes(data=True) if d.get("bipartite") == 0]
+        technologies = [n for n, d in B.nodes(data=True) if d.get("bipartite") == 1]
+
+    n_comp, n_tech = len(companies), len(technologies)
+    results["num_companies"] = n_comp
+    results["num_technologies"] = n_tech
+
+    if M.shape != (n_comp, n_tech):
+        print(f"❌ Shape mismatch: M.shape={M.shape} vs ({n_comp}, {n_tech}) attendus")
+        results["shape_match"] = False
+    else:
+        results["shape_match"] = True
+        print(f"✓ Shape cohérente: {M.shape}")
+
+    # ----------------------------
+    # 2. Vérification du nombre d'arêtes
+    # ----------------------------
+    num_edges_graph = B.number_of_edges()
+    num_edges_matrix = int(np.sum(M))
+    results["edges_graph"] = num_edges_graph
+    results["edges_matrix"] = num_edges_matrix
+
+    if num_edges_graph != num_edges_matrix:
+        print(f"⚠️  Différence dans le nombre d'arêtes: Graphe={num_edges_graph}, Matrice={num_edges_matrix}")
+        results["edges_match"] = False
+    else:
+        print(f"✓ Nombre d'arêtes cohérent: {num_edges_graph}")
+        results["edges_match"] = True
+
+    # ----------------------------
+    # 3. Vérification de la bipartition
+    # ----------------------------
+    if nx.is_bipartite(B):
+        print("✓ Graphe confirmé bipartite")
+        results["is_bipartite"] = True
+    else:
+        print("❌ Graphe non bipartite")
+        results["is_bipartite"] = False
+
+    # ----------------------------
+    # 4. Vérification de la correspondance des arêtes
+    # ----------------------------
+    mismatches = 0
+    for i, c in enumerate(companies):
+        for j, t in enumerate(technologies):
+            if M[i, j] == 1 and not B.has_edge(c, t):
+                mismatches += 1
+    if mismatches == 0:
+        print("✓ Toutes les arêtes de M existent dans B")
+        results["edges_consistent"] = True
+    else:
+        print(f"⚠️  {mismatches} arêtes présentes dans M mais absentes dans B")
+        results["edges_consistent"] = False
+
+    # ----------------------------
+    # 5. Visualisations
+    # ----------------------------
+    if do_plot:
+        fig, axs = plt.subplots(1, 3, figsize=(18, 5))
+
+        # Heatmap de la matrice
+        axs[0].imshow(M, cmap="Greys", interpolation="nearest", aspect="auto")
+        axs[0].set_title("Matrice d'adjacence")
+        axs[0].set_xlabel("Technologies")
+        axs[0].set_ylabel("Companies")
+
+        # Distribution des degrés
+        deg_comp = [B.degree(n) for n in companies]
+        deg_tech = [B.degree(n) for n in technologies]
+        axs[1].hist(deg_comp, bins=20, alpha=0.7, label="Companies")
+        axs[1].hist(deg_tech, bins=20, alpha=0.7, label="Technologies")
+        axs[1].set_title("Distribution des degrés")
+        axs[1].legend()
+        axs[1].grid(alpha=0.3)
+
+        # Graphe simplifié (petit sous-échantillon)
+        sub_B = B.copy()
+        if sub_B.number_of_nodes() > 100:
+            nodes_sample = list(np.random.choice(list(B.nodes), size=100, replace=False))
+            sub_B = B.subgraph(nodes_sample)
+        pos = nx.spring_layout(sub_B, seed=42)
+        nx.draw(sub_B, pos, node_size=30, alpha=0.6, ax=axs[2])
+        axs[2].set_title("Visualisation du graphe")
+
+        plt.tight_layout()
+        plt.show()
+
+    return results
 
 # ===================================================================
 # TECHRANK ALGORITHM FUNCTIONS
@@ -671,6 +782,9 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH,
     print("\n=== CRÉATION MATRICE ADJACENCE ===")
     try:
         M, active_companies, active_techs = create_adjacency_matrix_simple(B)
+
+        validation_results = validate_graph_and_matrix(B, M, active_companies, active_techs)
+        print(json.dumps(validation_results, indent=4))
     except Exception as e:
         print(f"❌ Erreur création matrice: {e}")
         return df_companies, df_tech, dict_companies, dict_tech
