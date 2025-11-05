@@ -191,71 +191,59 @@ def filter_cybersecurity(df: pd.DataFrame, keywords: List[str] = ['cyber', 'secu
 # BIPARTITE CREATION FUNCTION
 # ===================================================================
 
-def extract_classes_company_tech_cybersecurity_only(df, cybersecurity_keywords=['cyber', 'security', 'cybersecurity']):
-    """Extrait uniquement les entreprises cybersecurity et leurs technologies cybersecurity"""
+def extract_classes_company_tech_all(df):
+    """
+    Extrait toutes les entreprises et leurs technologies à partir du dataset
+    et crée le graphe bipartite.
+    
+    Args:
+        df: pandas DataFrame contenant au moins ['uuid','name','category_groups','rank' ou 'rank_company']
+    
+    Returns:
+        dict_companies: dictionnaire {nom entreprise : Company}
+        dict_tech: dictionnaire {nom technologie : Technology}
+        B: graphe bipartite NetworkX
+    """
     
     dict_companies = {}
     dict_tech = {}
     B = nx.Graph()
-
-    cybersecurity_companies = 0
-    cybersecurity_techs_found = set()
-    total_techs_excluded = 0
     
     for index, row in df.iterrows():
         comp_name = row['name']
 
-        # Convertir et nettoyer les technologies
-        if isinstance(row['category_groups'], list):
-            tech_list = [str(tech).strip() for tech in row['category_groups'] if tech and str(tech).strip()]
-        else:
-            tech_list = [str(row['category_groups']).strip()] if row['category_groups'] else []
-        
-        # 🔥 FILTRE CRITIQUE : Garder UNIQUEMENT les technologies cybersecurity
-        cybersecurity_tech_list = []
-        for tech in tech_list:
-            tech_lower = tech.lower()
-            # Vérifier si la technologie contient un mot-clé cybersecurity
-            if any(keyword in tech_lower for keyword in cybersecurity_keywords):
-                cybersecurity_tech_list.append(tech)
-                cybersecurity_techs_found.add(tech)
-            else:
-                total_techs_excluded += 1
-        
-        # ⚠️ Ne garder que les entreprises avec AU MOINS une technologie cybersecurity
-        if not cybersecurity_tech_list:
-            continue  # Ignorer les entreprises sans technologie cybersecurity
-            
-        cybersecurity_companies += 1
-        
+        # # Convertir et nettoyer les technologies
+        # if isinstance(row['category_groups'], list):
+        #     tech_list = [str(tech).strip() for tech in row['category_groups'] if tech and str(tech).strip()]
+        # else:
+        #     tech_list = [str(row['category_groups']).strip()] if row['category_groups'] else []
+
+        # Création de l'objet Company
         c = classes.Company(
             id=row['uuid'],
             name=comp_name,
-            technologies=cybersecurity_tech_list,
+            technologies=row['category_groups']
         )
 
         if 'rank_company' in df.columns:
             c.rank_CB = row['rank_company']
         elif 'rank' in df.columns:
             c.rank_CB = row['rank']
-        
+
         dict_companies[comp_name] = c
         B.add_node(comp_name, bipartite=0)
-        
-        # 🔥 AJOUTER UNIQUEMENT LES TECHNOLOGIES CYBERSECURITY
-        for tech in cybersecurity_tech_list:
+
+        # Ajout des technologies au dictionnaire et au graphe
+        for tech in row['category_groups']:
             if tech not in dict_tech:
                 dict_tech[tech] = classes.Technology(name=tech)
                 B.add_node(tech, bipartite=1)
             B.add_edge(comp_name, tech)
-
-    print(f"🔒 FILTRAGE CYBERSECURITY STRICT:")
-    print(f"  - Entreprises avec technologies cybersecurity: {cybersecurity_companies}")
-    print(f"  - Technologies cybersecurity uniques: {len(cybersecurity_techs_found)}")
-    print(f"  - Technologies exclues (non-cybersecurity): {total_techs_excluded}")
-    print(f"  - Technologies cybersecurity trouvées: {sorted(cybersecurity_techs_found)}")
+    
+    print(f"✅ Extraction terminée : {len(dict_companies)} entreprises et {len(dict_tech)} technologies.")
     
     return dict_companies, dict_tech, B
+
 
 
 # ===================================================================
@@ -418,7 +406,7 @@ def save_graph_and_dicts(B, df_companies, dict_companies, dict_tech, limit, flag
 # MAIN
 # ===================================================================
 
-def main(max_companies_plot=20, max_tech_plot=20):
+def main():
     create_directories()
     df_comp = load_data(use_duckdb=USE_DUCKDB, entity_name=ENTITY_NAME_1)
 
@@ -432,7 +420,7 @@ def main(max_companies_plot=20, max_tech_plot=20):
         return
 
     for limit in LIMITS:
-        dict_companies, dict_tech, B = extract_classes_company_tech_cybersecurity_only(df_comp_proc)
+        dict_companies, dict_tech, B = extract_classes_company_tech_all(df_comp_proc)
 
         # 3. DIAGNOSTIC CRITIQUE
         if B.number_of_nodes() == 0:
@@ -454,6 +442,8 @@ def main(max_companies_plot=20, max_tech_plot=20):
             print(f"   Exemples: {isolated_companies[:3]}")
         else:
             print("✅ Toutes les entreprises ont au moins une connexion")
+        
+        analyze_graph_structure(B)
 
 
         # ✅ Appel corrigé
@@ -463,4 +453,4 @@ def main(max_companies_plot=20, max_tech_plot=20):
 
 
 if __name__ == "__main__":
-    main(max_companies_plot=10, max_tech_plot=15)
+    main()
