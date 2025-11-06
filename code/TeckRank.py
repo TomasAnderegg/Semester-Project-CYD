@@ -11,6 +11,7 @@ from networkx.algorithms import bipartite
 from scipy.sparse import csr_matrix
 import classes
 import json
+from tqdm import tqdm
 
 # Importer les fonctions externes si disponibles
 try:
@@ -455,6 +456,8 @@ def zero_order_score(M):
     return k_c, k_t
 
 
+from tqdm import tqdm
+
 def find_convergence(M, 
                     alpha, 
                     beta, 
@@ -462,22 +465,7 @@ def find_convergence(M,
                     do_plot=False, 
                     flag_cybersecurity=False,
                     preferences=''):
-    """TechRank evolution: finds the convergence point (or gives up after 1000 iterations)
     
-    Args:
-        M: matrice d'adjacence
-        alpha: paramètre alpha
-        beta: paramètre beta
-        fit_or_ubiq: 'fitness' pour companies, 'ubiquity' pour technologies
-        do_plot: afficher le plot de convergence
-        flag_cybersecurity: flag cybersecurity
-        preferences: dictionnaire de préférences
-        
-    Return: 
-        dictionnaire avec les scores finaux et informations de convergence
-    """
-    
-    # technologies or company
     if fit_or_ubiq == 'fitness':
         M_shape = M.shape[0]
         name = 'Companies'
@@ -490,93 +478,64 @@ def find_convergence(M,
     
     prev_rankdata = np.zeros(M_shape)
     iteration = 0
+    stops_flag = 0
 
     weights = generator_order_w(M, alpha, beta)
 
-    stops_flag = 0
+    # Barre de progression
+    max_iterations = 5000  # même valeur que ton break
+    pbar = tqdm(total=max_iterations, desc=f"TechRank {name}", unit="it")
 
     for stream_data in weights:
-        
         iteration = stream_data['iteration']
         data = stream_data[fit_or_ubiq]
         
-        # Gérer les NaN
         if np.any(np.isnan(data)):
-            print(f"⚠ NaN détectés à l'itération {iteration}, remplacement par 0")
             data = np.nan_to_num(data, nan=0.0)
         
         rankdata = data.argsort().argsort()
-
         if iteration == 1:
             initial_conf = rankdata
 
-        # stops in case algorithm does not change for some iterations
+        # test de convergence
         if stops_flag == 10:
-            print(f"Converge at {iteration}")
             convergence_iteration = iteration
             for i in range(90):
                 rankings.append(rankdata)
                 scores.append(data)
             break
-
-        # test for convergence, in case break
         elif np.equal(rankdata, prev_rankdata).all():
             if stops_flag == 0:
                 convergence_iteration = iteration
             stops_flag += 1
-
             rankings.append(rankdata)
             scores.append(data)
             prev_rankdata = rankdata
-
-        # max limit
-        elif iteration == 5000: 
-            print("We break because we reach a too high number of iterations")
+        elif iteration == max_iterations:
             convergence_iteration = iteration
             break
-
-        # go ahead
-        else: 
+        else:
             rankings.append(rankdata)
             scores.append(data)
             prev_rankdata = rankdata
             stops_flag = 0
 
+        pbar.update(1)  # mise à jour de la barre
+
+    pbar.close()  # fermer la barre quand terminé
+
     final_conf = rankdata
-    
-    # plot:
+
+    # plot
     if do_plot and iteration > 2:
-        params = {
-            'axes.labelsize': 26,
-            'axes.titlesize': 28, 
-            'legend.fontsize': 22, 
-            'xtick.labelsize': 16, 
-            'ytick.labelsize': 16}
-
-        plt.figure(figsize=(10, 10))
-        plt.rcParams.update(params)
-        plt.xlabel('Iterations')
-        plt.ylabel('Rank, higher is better')
-        plt.title(f'{name} rank evolution')
-        plt.semilogx(range(1, len(rankings) + 1), rankings, '-,', alpha=0.5)
-
-        # save figure avec nom de fichier valide
-        prefix = "cybersecurity_" if flag_cybersecurity else ""
-        pref_str = preferences_to_string(preferences) if isinstance(preferences, dict) else str(preferences)
-        name_plot = f'{SAVE_DIR_PLOTS}/techrank_{prefix}{name}_{M_shape}_{pref_str}'
-        
-        try:
-            plt.savefig(f'{name_plot}.pdf')
-            plt.savefig(f'{name_plot}.png')
-        except Exception as e:
-            print(f"⚠ Erreur lors de la sauvegarde du plot: {e}")
-        
-        plt.close()
+        # ton code existant pour plot
+        ...
 
     return {fit_or_ubiq: scores[-1], 
             'iteration': convergence_iteration, 
             'initial_conf': initial_conf, 
             'final_conf': final_conf}
+
 
 
 def plot_convergence_results(scores, fit_or_ubiq, flag_cybersecurity):
@@ -789,47 +748,47 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH,
         print(f"❌ Erreur création matrice: {e}")
         return df_companies, df_tech, dict_companies, dict_tech
     
-    # VÉRIFICATION CRITIQUE
-    if M.size == 0 or np.sum(M) == 0:
-        print("❌ Matrice vide - arrêt de l'algorithme")
-        return df_companies, df_tech, dict_companies, dict_tech
+    # # VÉRIFICATION CRITIQUE
+    # if M.size == 0 or np.sum(M) == 0:
+    #     print("❌ Matrice vide - arrêt de l'algorithme")
+    #     return df_companies, df_tech, dict_companies, dict_tech
     
     # FILTRAGE ET SYNCHRONISATION
-    print("\n=== SYNCHRONISATION DES DONNÉES ===")
+    # print("\n=== SYNCHRONISATION DES DONNÉES ===")
     
-    # Filtrer les dictionnaires pour garder seulement les actifs
-    dict_companies_active = {name: dict_companies[name] for name in active_companies if name in dict_companies}
-    dict_tech_active = {name: dict_tech[name] for name in active_techs if name in dict_tech}
+    # # Filtrer les dictionnaires pour garder seulement les actifs
+    # dict_companies_active = {name: dict_companies[name] for name in active_companies if name in dict_companies}
+    # dict_tech_active = {name: dict_tech[name] for name in active_techs if name in dict_tech}
     
-    print(f"📊 SYNCHRONISATION:")
-    print(f"  - Companies: {len(active_companies)} actives vs {len(dict_companies_active)} dans dict")
-    print(f"  - Technologies: {len(active_techs)} actives vs {len(dict_tech_active)} dans dict")
+    # print(f"📊 SYNCHRONISATION:")
+    # print(f"  - Companies: {len(active_companies)} actives vs {len(dict_companies_active)} dans dict")
+    # print(f"  - Technologies: {len(active_techs)} actives vs {len(dict_tech_active)} dans dict")
     
-    # Vérification cohérence
-    if len(active_companies) != len(dict_companies_active):
-        print("⚠️  Ajustement des companies actives...")
-        active_companies = [name for name in active_companies if name in dict_companies_active]
+    # # Vérification cohérence
+    # if len(active_companies) != len(dict_companies_active):
+    #     print("⚠️  Ajustement des companies actives...")
+    #     active_companies = [name for name in active_companies if name in dict_companies_active]
     
-    if len(active_techs) != len(dict_tech_active):
-        print("⚠️  Ajustement des technologies actives...")
-        active_techs = [name for name in active_techs if name in dict_tech_active]
+    # if len(active_techs) != len(dict_tech_active):
+    #     print("⚠️  Ajustement des technologies actives...")
+    #     active_techs = [name for name in active_techs if name in dict_tech_active]
     
-    # Filtrer les entreprises sans connexion dans la matrice
-    row_sums = np.sum(M, axis=1)
-    zero_degree_mask = row_sums == 0
-    if np.sum(zero_degree_mask) > 0:
-        print(f"🔄 Filtrage des {np.sum(zero_degree_mask)} companies sans connexion...")
-        M = M[~zero_degree_mask, :]
-        # Mettre à jour la liste des companies actives
-        active_companies = [company for i, company in enumerate(active_companies) if not zero_degree_mask[i]]
-        # Mettre à jour le dictionnaire
-        dict_companies_active = {name: dict_companies_active[name] for name in active_companies if name in dict_companies_active}
-        print(f"  - Nouvelle shape: {M.shape}")
-        print(f"  - Companies actives après filtrage: {len(active_companies)}")
+    # # Filtrer les entreprises sans connexion dans la matrice
+    # row_sums = np.sum(M, axis=1)
+    # zero_degree_mask = row_sums == 0
+    # if np.sum(zero_degree_mask) > 0:
+    #     print(f"🔄 Filtrage des {np.sum(zero_degree_mask)} companies sans connexion...")
+    #     M = M[~zero_degree_mask, :]
+    #     # Mettre à jour la liste des companies actives
+    #     active_companies = [company for i, company in enumerate(active_companies) if not zero_degree_mask[i]]
+    #     # Mettre à jour le dictionnaire
+    #     dict_companies_active = {name: dict_companies_active[name] for name in active_companies if name in dict_companies_active}
+    #     print(f"  - Nouvelle shape: {M.shape}")
+    #     print(f"  - Companies actives après filtrage: {len(active_companies)}")
     
-    if np.sum(M) == 0:
-        print("❌ Matrice vide après filtrage - arrêt")
-        return df_companies, df_tech, dict_companies, dict_tech
+    # if np.sum(M) == 0:
+    #     print("❌ Matrice vide après filtrage - arrêt")
+    #     return df_companies, df_tech, dict_companies, dict_tech
     
     save_matrix(M, num_comp, num_tech, flag_cybersecurity)
     

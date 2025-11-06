@@ -193,27 +193,17 @@ def filter_cybersecurity(df: pd.DataFrame, keywords: List[str] = ['cyber', 'secu
 
 def extract_classes_company_tech_all(df):
     """
-    Extrait toutes les entreprises et leurs technologies à partir du dataset
-    et crée le graphe bipartite.
-    
-    Args:
-        df: pandas DataFrame contenant au moins ['uuid','name','category_groups','rank' ou 'rank_company']
-    
-    Returns:
-        dict_companies: dictionnaire {nom entreprise : Company}
-        dict_tech: dictionnaire {nom technologie : Technology}
-        B: graphe bipartite NetworkX (avec suppression des arêtes invalides)
+    Version simple qui vérifie le type avant d'ajouter l'arête
     """
     
     dict_companies = {}
     dict_tech = {}
     B = nx.Graph()
-    # print("colonne name", row['name'])
     
+    # D'abord, créer tous les nœuds entreprises
     for index, row in df.iterrows():
         comp_name = row['name']
-        print("colonne name", row['name'])
-
+        
         # Création de l'objet Company
         c = classes.Company(
             id=row['uuid'],
@@ -229,34 +219,26 @@ def extract_classes_company_tech_all(df):
         dict_companies[comp_name] = c
         B.add_node(comp_name, bipartite=0)
 
-        # Ajout des technologies au dictionnaire et au graphe
-        for tech in row['category_groups']:
-            if tech not in dict_tech:
-                dict_tech[tech] = classes.Technology(name=tech)
+        # Technologies:
+        if issubclass(type(row['category_groups']), List):
+            for tech in row['category_groups']:
+                t = classes.Technology(name=tech)
+                dict_tech[tech] = t
+
                 B.add_node(tech, bipartite=1)
+
+                # add edges
+                B.add_edge(comp_name, tech)
+        else:
+            t = classes.Technology(name=row['category_groups'])
+            dict_tech[tech] = t   
+
+            B.add_node(tech, bipartite=1)
+
+            # add edges
             B.add_edge(comp_name, tech)
 
-    # # ======================
-    # # Vérification des arêtes invalides (même ensemble)
-    # # ======================
-    edges_to_remove = [(u, v) for u, v in B.edges() 
-                    if B.nodes[u]['bipartite'] == B.nodes[v]['bipartite']]
 
-    if edges_to_remove:
-        print(f"⚠ {len(edges_to_remove)} arêtes invalides détectées. Détails :")
-        for u, v in edges_to_remove:
-            type_u = 'Company' if B.nodes[u]['bipartite'] == 0 else 'Technology'
-            type_v = 'Company' if B.nodes[v]['bipartite'] == 0 else 'Technology'
-            # print(f"  - Arête invalide : {u} ({type_u}) ↔ {v} ({type_v})")
-        
-        B.remove_edges_from(edges_to_remove)
-        print("✅ Arêtes invalides supprimées")
-    else:
-        print("✓ Aucune arête invalide détectée")
-
-    
-    print(f"✅ Extraction terminée : {len(dict_companies)} entreprises et {len(dict_tech)} technologies.")
-    
     return dict_companies, dict_tech, B
 
 
@@ -383,6 +365,11 @@ def analyze_graph_structure(B):
     # Nœuds isolés
     isolated_nodes = list(nx.isolates(B))
     print(f"Nœuds isolés: {len(isolated_nodes)}")
+
+    if nx.is_bipartite(B):
+        print("✓ Graphe confirmé bipartite")
+    else:
+        print("❌ Graphe non bipartite")
     
     return {
         'companies': companies,

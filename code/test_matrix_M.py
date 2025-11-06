@@ -79,12 +79,34 @@ def extract_nodes(G, bipartite_set) -> List:
 def create_biadjacency_matrix(B):    
     set0 = extract_nodes(B, 0)
     set1 = extract_nodes(B, 1)
-
-    # adjacency matrix of bipartite graph
-    adj_matrix = biadjacency_matrix(B, set0, set1)
-    adj_matrix_dense = adj_matrix.todense()
-    M = np.squeeze(np.asarray(adj_matrix_dense))
-    return M
+    
+    # Vérifier que l'ordre est cohérent
+    print(f"Vérification: {len(set0)} companies, {len(set1)} technologies")
+    
+    # Créer un mapping des noms aux indices
+    company_to_idx = {company: i for i, company in enumerate(set0)}
+    tech_to_idx = {tech: i for i, tech in enumerate(set1)}
+    
+    # Construire la matrice manuellement pour vérifier
+    M_manual = np.zeros((len(set0), len(set1)), dtype=int)
+    
+    edges_counted = 0
+    for u, v in B.edges():
+        if u in company_to_idx and v in tech_to_idx:
+            i = company_to_idx[u]
+            j = tech_to_idx[v]
+            M_manual[i, j] = 1
+            edges_counted += 1
+        elif v in company_to_idx and u in tech_to_idx:
+            i = company_to_idx[v]
+            j = tech_to_idx[u]
+            M_manual[i, j] = 1
+            edges_counted += 1
+    
+    print(f"Arêtes comptées manuellement: {edges_counted}")
+    print(f"Arêtes dans le graphe: {B.number_of_edges()}")
+    
+    return M_manual
 
 def analyze_graph_structure(B):
     """Analyse détaillée de la structure du graphe bipartite"""
