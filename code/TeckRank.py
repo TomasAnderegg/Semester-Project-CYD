@@ -226,7 +226,8 @@ def find_convergence_debug(M, alpha, beta, fit_or_ubiq, do_plot=False, flag_cybe
             'initial_conf': initial_conf, 'final_conf': rankdata}
 
 def rank_df_class_corrected(convergence, dict_class):
-    """Version CORRIGÉE de rank_df_class"""
+    
+    """Version CORRIGÉE de rank_df_class avec ground truth"""
     fit_or_ubiq = 'fitness' if 'fitness' in convergence else 'ubiquity'
     list_names = list(dict_class.keys())
     n = len(list_names)
@@ -252,8 +253,58 @@ def rank_df_class_corrected(convergence, dict_class):
     # Ajouter le rang explicite
     df_final['TeckRank_int'] = df_final.index + 1
     
+    # AJOUT: Récupérer le ground truth depuis les objets si disponible
+    ground_truth_ranks = []
+    ground_truth_scores = []
+    
+    for name in list_names:
+        # Essayer différentes sources de ground truth
+        ground_truth = None
+        if hasattr(dict_class[name], 'rank_CB'):
+            ground_truth = getattr(dict_class[name], 'rank_CB')
+        elif hasattr(dict_class[name], 'rank_analytic'):
+            ground_truth = getattr(dict_class[name], 'rank_analytic')
+        elif hasattr(dict_class[name], 'true_rank'):
+            ground_truth = getattr(dict_class[name], 'true_rank')
+        
+        ground_truth_ranks.append(ground_truth)
+        
+        # Essayer de récupérer un score ground truth aussi
+        ground_score = None
+        if hasattr(dict_class[name], 'true_score'):
+            ground_score = getattr(dict_class[name], 'true_score')
+        elif hasattr(dict_class[name], 'score_CB'):
+            ground_score = getattr(dict_class[name], 'score_CB')
+        
+        ground_truth_scores.append(ground_score)
+    
+    # Ajouter les colonnes ground truth au DataFrame
+    df_final['ground_truth_rank'] = ground_truth_ranks
+    df_final['ground_truth_score'] = ground_truth_scores
+    
+    # Calculer la performance de l'algorithme
+    if any(rank is not None for rank in ground_truth_ranks):
+        valid_indices = [i for i, rank in enumerate(ground_truth_ranks) if rank is not None]
+        if len(valid_indices) > 10:  # Au moins 10 valeurs pour calculer une corrélation
+            techranks = df_final.iloc[valid_indices]['TeckRank_int'].values
+            ground_truths = [ground_truth_ranks[i] for i in valid_indices]
+            
+            # Calculer la corrélation de Spearman
+            from scipy.stats import spearmanr
+            correlation, p_value = spearmanr(techranks, ground_truths)
+            print(f"📊 Corrélation avec ground truth: {correlation:.3f} (p-value: {p_value:.3f})")
+            
+            # Ajouter la corrélation comme attribut
+            df_final.attrs['spearman_correlation'] = correlation
+            df_final.attrs['correlation_p_value'] = p_value
+    
     print(f"Debug - DataFrame créé: {len(df_final)} lignes")
     print(f"Debug - Scores dans DataFrame: min={df_final['techrank'].min():.6f}, max={df_final['techrank'].max():.6f}")
+    
+    # Afficher les statistiques sur le ground truth
+    valid_ground_truth = [r for r in ground_truth_ranks if r is not None]
+    if valid_ground_truth:
+        print(f"📈 Ground truth disponible pour {len(valid_ground_truth)} éléments")
     
     return df_final, dict_class
 
@@ -261,23 +312,30 @@ def save_corrected_results(df_companies, df_tech, num_comp, num_tech, flag_cyber
     pref_comp = preferences_to_string(preferences_comp)
     pref_tech = preferences_to_string(preferences_tech)
     
-    # Réorganiser les colonnes
-    company_columns = ['TeckRank_int', 'final_configuration', 'techrank', 'initial_position']
-    tech_columns = ['TeckRank_int', 'final_configuration', 'techrank', 'initial_position']
+    # Réorganiser les colonnes - AJOUT des colonnes ground truth
+    company_columns = ['TeckRank_int', 'final_configuration', 'techrank', 'ground_truth_rank', 'ground_truth_score', 'initial_position']
+    tech_columns = ['TeckRank_int', 'final_configuration', 'techrank', 'ground_truth_rank', 'ground_truth_score', 'initial_position']
     
     # Fichier entreprises
     companies_filename = f'{SAVE_DIR_RESULTS}/companies_rank_{num_comp}_{pref_comp}.csv'
-    df_companies[company_columns].to_csv(companies_filename, index=False)
+    # Garder seulement les colonnes qui existent
+    available_company_cols = [col for col in company_columns if col in df_companies.columns]
+    df_companies[available_company_cols].to_csv(companies_filename, index=False)
     print(f"✓ Fichier entreprises sauvegardé: {companies_filename}")
-    print(f"  Top 3 entreprises:")
-    print(df_companies[['TeckRank_int', 'final_configuration', 'techrank']].head(3).to_string(index=False))
     
     # Fichier technologies
     tech_filename = f'{SAVE_DIR_RESULTS}/technologies_rank_{num_tech}_{pref_tech}.csv'
-    df_tech[tech_columns].to_csv(tech_filename, index=False)
+    available_tech_cols = [col for col in tech_columns if col in df_tech.columns]
+    df_tech[available_tech_cols].to_csv(tech_filename, index=False)
     print(f"✓ Fichier technologies sauvegardé: {tech_filename}")
-    print(f"  Top 3 technologies:")
-    print(df_tech[['TeckRank_int', 'final_configuration', 'techrank']].head(3).to_string(index=False))
+    
+    # Afficher les corrélations si disponibles
+    if hasattr(df_companies, 'attrs') and 'spearman_correlation' in df_companies.attrs:
+        print(f"📊 Corrélation entreprises: {df_companies.attrs['spearman_correlation']:.3f}")
+    
+    if hasattr(df_tech, 'attrs') and 'spearman_correlation' in df_tech.attrs:
+        print(f"📊 Corrélation technologies: {df_tech.attrs['spearman_correlation']:.3f}")
+
 
 # ===================================================================
 # MAIN FUNCTION CORRIGÉE
