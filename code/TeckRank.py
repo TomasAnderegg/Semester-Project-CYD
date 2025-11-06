@@ -26,8 +26,8 @@ SAVE_DIR_M = "savings/bipartite_tech_comp/M"
 SAVE_DIR_RESULTS = "savings/csv_results"
 SAVE_DIR_PLOTS = "plots/rank_evolution"
 
-OPTIMAL_ALPHA_COMP = 1
-OPTIMAL_BETA_COMP = 1
+OPTIMAL_ALPHA_COMP = 0.5
+OPTIMAL_BETA_COMP = 0.5
 
 # ===================================================================
 # UTILS
@@ -62,7 +62,6 @@ def load_saved_data(num_comp, num_tech, flag_cybersecurity):
     with open(name_file_tech, 'rb') as f:
         dict_tech = pickle.load(f)
     
-    # B = nx.read_gpickle(name_file_graph)
     with open(name_file_graph, 'rb') as f:
         B = pickle.load(f)
     
@@ -82,77 +81,89 @@ def create_adjacency_matrix(B):
     print(f"✓ Matrice créée: Shape={adj_matrix.shape}, Arêtes={adj_matrix.sum()}")
     return adj_matrix, set0, set1
 
-def save_matrix(M, num_comp, num_tech, flag_cybersecurity):
-    name_file_M = f'{SAVE_DIR_M}/{"cybersecurity_" if flag_cybersecurity else ""}comp_{num_comp}_tech_{num_tech}.npy'
+def save_matrix(M, num_comp, num_tech, flag_cybersecurity, dict_companies, dict_tech):
+    if flag_cybersecurity == False: # all fields
+        name_file_M = f'{SAVE_DIR_M}/comp_{len(dict_companies)}_tech_{len(dict_tech)}.npy'                                     
+    else: # only companies in cybersecurity
+        name_file_M = f'{SAVE_DIR_M}/cybersecurity_comp_{len(dict_companies)}_tech_{len(dict_tech)}.npy'
+    
     np.save(name_file_M, M)
     print(f"✓ Matrice sauvegardée: {name_file_M}")
 
-def M_test_triangular(M):
-    if hasattr(M, "toarray"):
-        M = M.toarray()
-    user_edits_sum = M.sum(axis=1).flatten()
-    article_edits_sum = M.sum(axis=0).flatten()
-    user_order = user_edits_sum.argsort()
-    article_order = article_edits_sum.argsort()
-    M_sorted = M[user_order, :][:, article_order]
-    plt.figure(figsize=(10,10))
-    plt.imshow(M_sorted, cmap=plt.cm.bone, interpolation='nearest')
-    plt.xlabel("Companies")
-    plt.ylabel("Technologies")
-    plt.show()
-
 # ===================================================================
-# TECHRANK FUNCTIONS
+# TECHRANK FUNCTIONS - CORRIGÉES
 # ===================================================================
 
 def zero_order_score(M):
     """Calcule le degré des companies et technologies"""
-    if isinstance(M, csr_matrix):
-        k_c = np.array(M.sum(axis=1)).flatten()
-        k_t = np.array(M.sum(axis=0)).flatten()
-    else:  # numpy array
-        k_c = M.sum(axis=1)
-        k_t = M.sum(axis=0)
+    k_c = M.sum(axis=1)
+    k_t = M.sum(axis=0)
     print(f"✓ Scores ordre zéro: deg_companies={np.mean(k_c):.2f}, deg_tech={np.mean(k_t):.2f}")
     return k_c, k_t
 
 def make_G_hat(M, alpha=1, beta=1, eps=1e-12):
-    k_c = np.array(M.sum(axis=1)).flatten().astype(float)
-    k_t = np.array(M.sum(axis=0)).flatten().astype(float)
-    k_c_safe = np.where(k_c>0, k_c, eps)
-    k_t_safe = np.where(k_t>0, k_t, eps)
+    """Version avec debug"""
+    k_c = M.sum(axis=1).astype(float)
+    k_t = M.sum(axis=0).astype(float)
     
-    G_ct = M.multiply((k_c_safe ** (-beta))[:, None])
-    # Normalisation colonnes
-    col_sums = np.array(G_ct.sum(axis=0)).flatten()
-    col_sums_safe = np.where(col_sums>0, col_sums, eps)
+    # Éviter division par zéro
+    k_c_safe = np.where(k_c > eps, k_c, eps)
+    k_t_safe = np.where(k_t > eps, k_t, eps)
+    
+    # Calcul G_ct
+    G_ct = M * (k_c_safe ** (-beta))[:, np.newaxis]
+    
+    # Normalisation
+    col_sums = G_ct.sum(axis=0)
+    col_sums_safe = np.where(col_sums > eps, col_sums, eps)
     G_ct = G_ct / col_sums_safe
     
-    G_tc = M.T.multiply((k_t_safe ** (-alpha))[:, None])
-    col_sums_tc = np.array(G_tc.sum(axis=0)).flatten()
-    col_sums_tc_safe = np.where(col_sums_tc>0, col_sums_tc, eps)
+    # Même chose pour G_tc
+    G_tc = M.T * (k_t_safe ** (-alpha))[:, np.newaxis]
+    col_sums_tc = G_tc.sum(axis=0)
+    col_sums_tc_safe = np.where(col_sums_tc > eps, col_sums_tc, eps)
     G_tc = G_tc / col_sums_tc_safe
     
     return {'G_ct': G_ct, 'G_tc': G_tc}
 
 def next_order_score(G_ct, G_tc, fitness_prev, ubiquity_prev):
+    """Version pour numpy arrays"""
     fitness_next = G_ct.dot(ubiquity_prev)
     ubiquity_next = G_tc.dot(fitness_prev)
     return fitness_next, ubiquity_next
 
-def generator_order_w(M, alpha, beta):
+def generator_order_w(M, alpha, beta, normalize=True):
+    """Générateur adapté pour numpy arrays"""
     G_hat = make_G_hat(M, alpha, beta)
     G_ct, G_tc = G_hat['G_ct'], G_hat['G_tc']
     fitness_0, ubiquity_0 = zero_order_score(M)
+    
+    # Normalisation initiale
+    if normalize:
+        fitness_0 = fitness_0 / (np.linalg.norm(fitness_0) + 1e-12)
+        ubiquity_0 = ubiquity_0 / (np.linalg.norm(ubiquity_0) + 1e-12)
+    
     fitness_next, ubiquity_next = fitness_0, ubiquity_0
     i = 0
+    
     while True:
         i += 1
         fitness_prev, ubiquity_prev = fitness_next, ubiquity_next
         fitness_next, ubiquity_next = next_order_score(G_ct, G_tc, fitness_prev, ubiquity_prev)
+        
+        # NORMALISATION CRITIQUE pour éviter l'explosion/implosion
+        if normalize:
+            fitness_norm = np.linalg.norm(fitness_next)
+            ubiquity_norm = np.linalg.norm(ubiquity_next)
+            
+            if fitness_norm > 1e-12:
+                fitness_next = fitness_next / fitness_norm
+            if ubiquity_norm > 1e-12:
+                ubiquity_next = ubiquity_next / ubiquity_norm
+        
         yield {'iteration': i, 'fitness': fitness_next, 'ubiquity': ubiquity_next}
 
-def find_convergence(M, alpha, beta, fit_or_ubiq, do_plot=False, flag_cybersecurity=False, preferences=''):
+def find_convergence_debug(M, alpha, beta, fit_or_ubiq, do_plot=False, flag_cybersecurity=False, preferences=''):
     if fit_or_ubiq=='fitness':
         name='Companies'; M_shape=M.shape[0]
     else:
@@ -161,84 +172,115 @@ def find_convergence(M, alpha, beta, fit_or_ubiq, do_plot=False, flag_cybersecur
     rankings=[]; scores=[]
     prev_rankdata = np.zeros(M_shape)
     stops_flag=0
-    weights = generator_order_w(M, alpha, beta)
-    max_iterations = 5000
-    pbar = tqdm(total=max_iterations, desc=f"TechRank {name}", unit="it")
-    convergence_iteration = 0
+    weights = generator_order_w(M, alpha, beta, normalize=True)
+    max_iterations = 1000
+    
+    print(f"=== TECHRANK {name} ===")
+    print(f"Matrice: {M.shape}, Alpha={alpha}, Beta={beta}")
     
     for stream_data in weights:
         iteration = stream_data['iteration']
         data = stream_data[fit_or_ubiq]
         data = np.nan_to_num(data, nan=0.0)
         rankdata = data.argsort().argsort()
+        
+        # Debug détaillé
+        if iteration <= 10 or iteration % 100 == 0:
+            unique_vals = len(np.unique(np.round(data, 6)))
+            print(f"Iter {iteration:3d}: min={np.min(data):8.6f}, max={np.max(data):8.6f}, "
+                  f"unique={unique_vals:5d}, changes={np.sum(rankdata != prev_rankdata) if iteration > 1 else M_shape}")
+        
         if iteration==1:
             initial_conf = rankdata
-        if stops_flag==10:
-            convergence_iteration=iteration
-            for _ in range(90):
-                rankings.append(rankdata)
-                scores.append(data)
-            break
-        elif np.equal(rankdata, prev_rankdata).all():
-            if stops_flag==0: convergence_iteration=iteration
-            stops_flag+=1
-            rankings.append(rankdata)
-            scores.append(data)
+            
+        # Critère de convergence basé sur les changements de rang
+        rank_changes = np.sum(rankdata != prev_rankdata) if iteration > 1 else M_shape
+        rank_stability = (rank_changes / M_shape) < 0.01  # Moins de 1% de changements
+        
+        if rank_stability:
+            stops_flag += 1
+            if stops_flag >= 20:  # 20 itérations stables
+                convergence_iteration = iteration
+                print(f"✓ CONVERGENCE à l'itération {iteration} (stabilité des rangs)")
+                break
         else:
-            stops_flag=0
-            rankings.append(rankdata)
-            scores.append(data)
-            prev_rankdata=rankdata
-        if iteration>=max_iterations: break
-        pbar.update(1)
-    pbar.close()
+            stops_flag = 0
+            
+        rankings.append(rankdata)
+        scores.append(data)
+        prev_rankdata = rankdata
+        
+        if iteration >= max_iterations:
+            convergence_iteration = iteration
+            print(f"⏹️  Maximum d'itérations atteint: {iteration}")
+            break
     
-    if do_plot and iteration>2:
-        plt.figure(figsize=(10,10))
-        plt.semilogx(range(1,len(rankings)+1), rankings, '-,', alpha=0.5)
-        plt.xlabel("Iterations"); plt.ylabel("Rank, higher is better")
-        plt.title(f"{name} rank evolution")
-        name_plot = f'{SAVE_DIR_PLOTS}/techrank_{"cybersecurity_" if flag_cybersecurity else ""}{name}_{M_shape}_{preferences}'
-        plt.savefig(f'{name_plot}.pdf'); plt.savefig(f'{name_plot}.png')
-        plt.show()
+    final_data = scores[-1]
+    print(f"\n=== RÉSULTATS FINAUX {name} ===")
+    print(f"Itérations: {convergence_iteration}")
+    print(f"Scores: min={np.min(final_data):.6f}, max={np.max(final_data):.6f}")
+    print(f"Valeurs uniques: {len(np.unique(np.round(final_data, 6)))}")
+    print(f"Écart-type: {np.std(final_data):.6f}")
     
-    return {fit_or_ubiq: scores[-1], 'iteration': convergence_iteration, 'initial_conf': initial_conf, 'final_conf': rankdata}
+    return {fit_or_ubiq: final_data, 'iteration': convergence_iteration, 
+            'initial_conf': initial_conf, 'final_conf': rankdata}
 
-def rank_df_class(convergence, dict_class):
+def rank_df_class_corrected(convergence, dict_class):
+    """Version CORRIGÉE de rank_df_class"""
     fit_or_ubiq = 'fitness' if 'fitness' in convergence else 'ubiquity'
     list_names = list(dict_class.keys())
     n = len(list_names)
-    df_final = pd.DataFrame(columns=['initial_position','final_configuration','degree','techrank','rank_CB','rank_analytic'], index=range(n))
-    for i,name in enumerate(list_names):
-        ini_pos = convergence['initial_conf'][i]
-        final_pos = convergence['final_conf'][i]
-        rank = round(convergence[fit_or_ubiq][i],3)
-        degree = getattr(dict_class[name],'degree',0)
-        df_final.loc[final_pos,'final_configuration']=name
-        df_final.loc[final_pos,'initial_position']=ini_pos
-        df_final.loc[final_pos,'techrank']=rank
-        df_final.loc[final_pos,'degree']=degree
-        df_final.loc[final_pos,'rank_CB']=getattr(dict_class[name],'rank_CB',None)
-        df_final.loc[final_pos,'rank_analytic']=getattr(dict_class[name],'rank_analytic',None)
-        dict_class[name].rank_algo=rank
+    
+    print(f"Debug rank_df_class: {n} éléments, scores range: [{np.min(convergence[fit_or_ubiq]):.6f}, {np.max(convergence[fit_or_ubiq]):.6f}]")
+    
+    # Vérifier que nous avons assez de données
+    if len(convergence[fit_or_ubiq]) < n:
+        print(f"ATTENTION: {len(convergence[fit_or_ubiq])} scores pour {n} éléments")
+        n = len(convergence[fit_or_ubiq])
+        list_names = list_names[:n]
+    
+    # Créer le DataFrame avec les bonnes données
+    df_final = pd.DataFrame({
+        'final_configuration': list_names,
+        'initial_position': convergence['initial_conf'][:n],
+        'techrank': convergence[fit_or_ubiq][:n]
+    })
+    
+    # Trier par techrank (ordre décroissant - meilleur score en premier)
+    df_final = df_final.sort_values('techrank', ascending=False).reset_index(drop=True)
+    
+    # Ajouter le rang explicite
+    df_final['TeckRank_int'] = df_final.index + 1
+    
+    print(f"Debug - DataFrame créé: {len(df_final)} lignes")
+    print(f"Debug - Scores dans DataFrame: min={df_final['techrank'].min():.6f}, max={df_final['techrank'].max():.6f}")
+    
     return df_final, dict_class
 
-def save_results(df_companies, df_tech, num_comp, num_tech, flag_cybersecurity, preferences_comp, preferences_tech):
+def save_corrected_results(df_companies, df_tech, num_comp, num_tech, flag_cybersecurity, preferences_comp, preferences_tech):
     pref_comp = preferences_to_string(preferences_comp)
     pref_tech = preferences_to_string(preferences_tech)
-    df_companies.to_csv(f'{SAVE_DIR_RESULTS}/complete_companies_{num_comp}_{pref_comp}.csv', index=False)
-    df_tech.to_csv(f'{SAVE_DIR_RESULTS}/complete_tech_{num_tech}_{pref_tech}.csv', index=False)
     
-    # Global CSV pour suivre les expériences
-    df_all = pd.DataFrame([{
-        'num_comp': num_comp, 'num_tech': num_tech, 'flag_cybersecurity': flag_cybersecurity,
-        'preferences_comp': pref_comp, 'preferences_tech': pref_tech
-    }])
-    df_all.to_csv(f'{SAVE_DIR_RESULTS}/df_rank_evolu.csv', index=False)
-    print("✓ Résultats sauvegardés")
+    # Réorganiser les colonnes
+    company_columns = ['TeckRank_int', 'final_configuration', 'techrank', 'initial_position']
+    tech_columns = ['TeckRank_int', 'final_configuration', 'techrank', 'initial_position']
+    
+    # Fichier entreprises
+    companies_filename = f'{SAVE_DIR_RESULTS}/companies_rank_{num_comp}_{pref_comp}.csv'
+    df_companies[company_columns].to_csv(companies_filename, index=False)
+    print(f"✓ Fichier entreprises sauvegardé: {companies_filename}")
+    print(f"  Top 3 entreprises:")
+    print(df_companies[['TeckRank_int', 'final_configuration', 'techrank']].head(3).to_string(index=False))
+    
+    # Fichier technologies
+    tech_filename = f'{SAVE_DIR_RESULTS}/technologies_rank_{num_tech}_{pref_tech}.csv'
+    df_tech[tech_columns].to_csv(tech_filename, index=False)
+    print(f"✓ Fichier technologies sauvegardé: {tech_filename}")
+    print(f"  Top 3 technologies:")
+    print(df_tech[['TeckRank_int', 'final_configuration', 'techrank']].head(3).to_string(index=False))
 
 # ===================================================================
-# MAIN FUNCTION
+# MAIN FUNCTION CORRIGÉE
 # ===================================================================
 
 def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_CYBERSECURITY,
@@ -247,27 +289,60 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_C
     
     create_directories()
     dict_companies, dict_tech, B = load_saved_data(num_comp, num_tech, flag_cybersecurity)
-    M, _, _ = create_adjacency_matrix(B)
-    save_matrix(M, num_comp, num_tech, flag_cybersecurity)
     
-    # Triangularité optionnelle
-    # M_test_triangular(M)
+    # Création de la matrice
+    set0 = extract_nodes(B, 0)
+    set1 = extract_nodes(B, 1)
+    adj_matrix = bipartite.biadjacency_matrix(B, set0, set1)
+    adj_matrix_dense = adj_matrix.todense()
+    M = np.squeeze(np.asarray(adj_matrix_dense))
+    
+    print(f"✓ Matrice M créée: {M.shape}")
     
     # Ranking Companies
-    convergence_comp = find_convergence(M, alpha, beta, 'fitness', do_plot, flag_cybersecurity, preferences_to_string(preferences_comp))
-    df_companies, dict_companies = rank_df_class(convergence_comp, dict_companies)
+    print("\n" + "="*60)
+    print("CLASSEMENT DES ENTREPRISES")
+    print("="*60)
+    start_time = time.time()
+    convergence_comp = find_convergence_debug(M, alpha, beta, 'fitness', do_plot=do_plot)
+    time_conv_comp = time.time() - start_time
     
-    # Ranking Technologies
-    convergence_tech = find_convergence(M, alpha, beta, 'ubiquity', do_plot, flag_cybersecurity, preferences_to_string(preferences_tech))
-    df_tech, dict_tech = rank_df_class(convergence_tech, dict_tech)
+    df_final_companies, dict_companies = rank_df_class_corrected(convergence_comp, dict_companies)
     
-    # Sauvegarde
-    save_results(df_companies, df_tech, num_comp, num_tech, flag_cybersecurity, preferences_comp, preferences_tech)
+    # Ranking Technologies  
+    print("\n" + "="*60)
+    print("CLASSEMENT DES TECHNOLOGIES")
+    print("="*60)
+    start_time = time.time()
+    convergence_tech = find_convergence_debug(M, alpha, beta, 'ubiquity', do_plot=do_plot)
+    time_conv_tech = time.time() - start_time
     
-    print("TOP 10 Companies:\n", df_companies.head(10))
-    print("TOP 10 Technologies:\n", df_tech.head(10))
+    df_final_tech, dict_tech = rank_df_class_corrected(convergence_tech, dict_tech)
     
-    return df_companies, df_tech, dict_companies, dict_tech
+    # Sauvegarde des résultats
+    save_corrected_results(df_final_companies, df_final_tech, num_comp, num_tech, flag_cybersecurity, preferences_comp, preferences_tech)
+    
+    # Affichage des résultats - CORRECTION ICI : utiliser df_final_tech au lieu de df_tech
+    print("\n" + "="*60)
+    print("RÉSULTATS FINAUX - TOP 10")
+    print("="*60)
+    
+    print("\n🏆 TOP 10 ENTREPRISES (par influence technologique):")
+    top_comp = df_final_companies[['TeckRank_int', 'final_configuration', 'techrank']].head(10)
+    for _, row in top_comp.iterrows():
+        print(f"#{int(row['TeckRank_int']):2d} {row['final_configuration']:30} → Score: {row['techrank']:.6f}")
+    
+    print("\n💡 TOP 10 TECHNOLOGIES (par adoption stratégique):")
+    top_tech = df_final_tech[['TeckRank_int', 'final_configuration', 'techrank']].head(10)  # CORRECTION : df_final_tech
+    for _, row in top_tech.iterrows():
+        print(f"#{int(row['TeckRank_int']):2d} {row['final_configuration']:30} → Score: {row['techrank']:.6f}")
+    
+    print(f"\n⏱️  Temps d'exécution:")
+    print(f"   Entreprises: {time_conv_comp:.1f}s")
+    print(f"   Technologies: {time_conv_tech:.1f}s")
+    print(f"   Total: {time_conv_comp + time_conv_tech:.1f}s")
+    
+    return df_final_companies, df_final_tech, dict_companies, dict_tech
 
 # ===================================================================
 # EXECUTION
