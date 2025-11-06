@@ -248,7 +248,178 @@ def check_matrix_graph_consistency(B, M):
 
 
 # ===================================================================
-# VISUALISATIONS
+# VISUALISATIONS DU GRAPHE - NOUVELLES FONCTIONS
+# ===================================================================
+
+def filter_nodes_by_degree(G, percentage=10, set1=None, set2=None):
+    """Filtre les nœuds avec faible degré"""
+    if set1 is None:
+        set1 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 0]
+    if set2 is None:
+        set2 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 1]
+    
+    # Calculer les degrés
+    company_degrees = dict(G.degree(set1))
+    tech_degrees = dict(G.degree(set2))
+    
+    # Trouver les seuils
+    comp_threshold = np.percentile(list(company_degrees.values()), percentage)
+    tech_threshold = np.percentile(list(tech_degrees.values()), percentage)
+    
+    # Nœuds à supprimer
+    to_delete = []
+    to_delete.extend([node for node in set1 if company_degrees[node] <= comp_threshold])
+    to_delete.extend([node for node in set2 if tech_degrees[node] <= tech_threshold])
+    
+    print(f"Filtrage: suppression de {len(to_delete)} nœuds (degré < {percentage}ème percentile)")
+    return to_delete
+
+def plot_bipartite_graph(G, small_degree=True, percentage=10, circular=False, figsize=(20, 15)):
+    """Plot le graphe bipartite avec options de filtrage"""
+    
+    set1 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 0]
+    set2 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 1]
+
+    if not small_degree:  # Filtrer les nœuds avec faible degré
+        to_delete = filter_nodes_by_degree(G, percentage, set1, set2)
+        
+        G_filtered = G.copy()
+        G_filtered.remove_nodes_from(to_delete)
+        G_filtered.remove_nodes_from(list(nx.isolates(G_filtered)))
+        
+        print(f"Graphe filtré: {G_filtered.number_of_nodes()} nœuds, {G_filtered.number_of_edges()} arêtes")
+        G = G_filtered
+        set1 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 0]
+        set2 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 1]
+
+    if circular:
+        pos = nx.circular_layout(G)
+    else:
+        pos = nx.spring_layout(G, k=3/np.sqrt(G.number_of_nodes()), iterations=50)
+
+    # Créer la figure avec une taille adaptative
+    plt.figure(figsize=figsize)
+    plt.axis('off')
+
+    # Calculer les degrés pour la taille des nœuds
+    company_degree = dict(G.degree(set1))
+    tech_degree = dict(G.degree(set2))
+
+    # Nœuds - Companies (rouge)
+    nx.draw_networkx_nodes(G, pos, nodelist=set1,
+                          node_color='red', node_size=[v * 50 + 100 for v in company_degree.values()],
+                          alpha=0.7, edgecolors='darkred', linewidths=1)
+
+    # Nœuds - Technologies (bleu)
+    nx.draw_networkx_nodes(G, pos, nodelist=set2,
+                          node_color='blue', node_size=[v * 30 + 100 for v in tech_degree.values()],
+                          alpha=0.7, edgecolors='darkblue', linewidths=1)
+
+    # Labels - seulement pour les nœuds importants
+    important_companies = [node for node in set1 if company_degree[node] > np.percentile(list(company_degree.values()), 70)]
+    important_techs = [node for node in set2 if tech_degree[node] > np.percentile(list(tech_degree.values()), 70)]
+    
+    nx.draw_networkx_labels(G, pos, {n: n for n in important_companies}, 
+                           font_size=8, font_color='darkred', font_weight='bold')
+    nx.draw_networkx_labels(G, pos, {n: n for n in important_techs}, 
+                           font_size=8, font_color='darkblue', font_weight='bold')
+
+    # Arêtes
+    nx.draw_networkx_edges(G, pos, width=0.5, alpha=0.3, edge_color='gray')
+
+    # Légende
+    plt.legend(['Companies', 'Technologies'], loc='upper right')
+
+    plt.title(f'Graphe Bipartite Companies-Technologies\n'
+              f'{len(set1)} companies, {len(set2)} technologies, {G.number_of_edges()} connexions',
+              fontsize=14, pad=20)
+    
+    plt.tight_layout()
+    return pos, G
+
+def plot_interactive_bipartite(B, max_nodes_for_detailed=100):
+    """Crée plusieurs visualisations avec différents niveaux de détail"""
+    
+    total_nodes = B.number_of_nodes()
+    
+    if total_nodes <= max_nodes_for_detailed:
+        # Graphe complet détaillé
+        print("\n📊 Visualisation du graphe complet (détaillé)")
+        pos, _ = plot_bipartite_graph(B, small_degree=True, circular=False, figsize=(20, 15))
+        plt.savefig(f'{SAVE_DIR_ANALYSIS}/bipartite_graph_detailed.png', dpi=300, bbox_inches='tight')
+        plt.show()
+        
+    else:
+        # Graphe filtré (seulement nœuds importants)
+        print("\n📊 Visualisation du graphe filtré (nœuds importants seulement)")
+        pos, filtered_G = plot_bipartite_graph(B, small_degree=False, percentage=30, circular=False, figsize=(20, 15))
+        plt.savefig(f'{SAVE_DIR_ANALYSIS}/bipartite_graph_filtered.png', dpi=300, bbox_inches='tight')
+        plt.show()
+        
+        # Graphe très filtré pour voir la structure centrale
+        print("\n📊 Visualisation du cœur du graphe (nœuds très connectés)")
+        pos, core_G = plot_bipartite_graph(B, small_degree=False, percentage=50, circular=False, figsize=(15, 10))
+        plt.savefig(f'{SAVE_DIR_ANALYSIS}/bipartite_graph_core.png', dpi=300, bbox_inches='tight')
+        plt.show()
+
+def create_zoomable_plot(B, region='center', focus_nodes=None, figsize=(15, 10)):
+    """Crée un plot zoomable sur une région spécifique"""
+    
+    if focus_nodes is None:
+        # Sélectionner automatiquement des nœuds focus
+        if region == 'center':
+            # Nœuds les plus centraux
+            centrality = nx.degree_centrality(B)
+            focus_nodes = sorted(centrality.items(), key=lambda x: x[1], reverse=True)[:20]
+            focus_nodes = [node for node, _ in focus_nodes]
+        elif region == 'high_degree':
+            # Nœuds avec haut degré
+            degrees = dict(B.degree())
+            focus_nodes = sorted(degrees.items(), key=lambda x: x[1], reverse=True)[:15]
+            focus_nodes = [node for node, _ in focus_nodes]
+    
+    # Créer un sous-graphe avec les nœuds focus et leurs voisins
+    neighbors = set()
+    for node in focus_nodes:
+        neighbors.update(B.neighbors(node))
+    
+    subgraph_nodes = set(focus_nodes).union(neighbors)
+    H = B.subgraph(subgraph_nodes)
+    
+    print(f"Sous-graphe de zoom: {H.number_of_nodes()} nœuds, {H.number_of_edges()} arêtes")
+    
+    # Plot du sous-graphe
+    plt.figure(figsize=figsize)
+    pos = nx.spring_layout(H, k=1.5/np.sqrt(H.number_of_nodes()), iterations=100)
+    
+    set1 = [node for node in H.nodes() if H.nodes[node]['bipartite'] == 0]
+    set2 = [node for node in H.nodes() if H.nodes[node]['bipartite'] == 1]
+    
+    # Nœuds
+    nx.draw_networkx_nodes(H, pos, nodelist=set1, node_color='red', 
+                          node_size=500, alpha=0.8, edgecolors='darkred')
+    nx.draw_networkx_nodes(H, pos, nodelist=set2, node_color='blue', 
+                          node_size=500, alpha=0.8, edgecolors='darkblue')
+    
+    # Labels pour tous les nœuds (puisque c'est un sous-ensemble)
+    nx.draw_networkx_labels(H, pos, font_size=8, font_weight='bold')
+    
+    # Arêtes
+    nx.draw_networkx_edges(H, pos, width=1.0, alpha=0.5, edge_color='gray')
+    
+    plt.title(f'Zoom sur {region}\n{H.number_of_nodes()} nœuds, {H.number_of_edges()} connexions', 
+              fontsize=12)
+    plt.axis('on')  # Garder les axes pour le contexte
+    plt.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(f'{SAVE_DIR_ANALYSIS}/bipartite_zoom_{region}.png', dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    return H, pos
+
+# ===================================================================
+# VISUALISATIONS EXISTANTES (gardées pour compatibilité)
 # ===================================================================
 
 def plot_degree_distributions(graph_data, matrix_data):
@@ -298,7 +469,6 @@ def plot_degree_distributions(graph_data, matrix_data):
     print(f"✓ Graphique sauvegardé: {SAVE_DIR_ANALYSIS}/degree_distributions.png")
     plt.show()
 
-
 def plot_matrix_visualization(M):
     """Visualise la matrice d'adjacence triée"""
     fig, axes = plt.subplots(1, 2, figsize=(16, 7))
@@ -327,7 +497,6 @@ def plot_matrix_visualization(M):
     plt.savefig(f'{SAVE_DIR_ANALYSIS}/matrix_visualization.png', dpi=300, bbox_inches='tight')
     print(f"✓ Graphique sauvegardé: {SAVE_DIR_ANALYSIS}/matrix_visualization.png")
     plt.show()
-
 
 def plot_connectivity_heatmap(matrix_data):
     """Heatmap de la connectivité"""
@@ -361,7 +530,6 @@ def plot_connectivity_heatmap(matrix_data):
     plt.savefig(f'{SAVE_DIR_ANALYSIS}/connectivity_heatmap.png', dpi=300, bbox_inches='tight')
     print(f"✓ Graphique sauvegardé: {SAVE_DIR_ANALYSIS}/connectivity_heatmap.png")
     plt.show()
-
 
 # ===================================================================
 # ANALYSE POUR TECHRANK
@@ -444,7 +612,6 @@ def assess_techrank_readiness(B, M, graph_data, matrix_data):
     
     return len(issues) == 0
 
-
 # ===================================================================
 # RAPPORT COMPLET
 # ===================================================================
@@ -472,10 +639,19 @@ def generate_analysis_report(B, M, dict_companies, dict_tech):
     plot_matrix_visualization(M)
     plot_connectivity_heatmap(matrix_data)
     
-    # 5. Évaluation TechRank
+    # 5. NOUVEAU: Visualisations du graphe
+    print("\n🎨 Génération des visualisations du graphe...")
+    plot_interactive_bipartite(B)
+    
+    # Zoom sur les régions intéressantes
+    print("\n🔍 Génération des vues zoomées...")
+    create_zoomable_plot(B, region='high_degree')
+    create_zoomable_plot(B, region='center')
+    
+    # 6. Évaluation TechRank
     is_ready = assess_techrank_readiness(B, M, graph_data, matrix_data)
     
-    # 6. Sauvegarder un résumé textuel
+    # 7. Sauvegarder un résumé textuel
     summary_path = f'{SAVE_DIR_ANALYSIS}/analysis_summary.txt'
     with open(summary_path, 'w', encoding='utf-8') as f:
         f.write("="*70 + "\n")
@@ -501,7 +677,6 @@ def generate_analysis_report(B, M, dict_companies, dict_tech):
     print(f"\n✓ Résumé sauvegardé: {summary_path}")
     print(f"\n✅ ANALYSE COMPLÈTE TERMINÉE")
     print(f"   Tous les résultats sont dans: {SAVE_DIR_ANALYSIS}/")
-
 
 # ===================================================================
 # MAIN
