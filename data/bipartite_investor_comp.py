@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import List, Dict
 import math
+import classes
 import matplotlib
 matplotlib.use('Qt5Agg')  # ou 'TkAgg' selon ton installation
 
@@ -24,12 +25,16 @@ DATA_PATH_FUNDING_CSV = r"data/data_cb/funding_rounds.csv"
 
 TABLE_NAME_INVESTMENTS = "investments"
 TABLE_NAME_FUNDING = "funding_rounds"
+TABLE_NAME_ORGA = "organizations"
 
 SAVE_DIR_NETWORKS = "savings/bipartite_invest/networks"
 
+SAVE_DIR_CLASSES = "savings/bipartite_invest_comp/classes"
+SAVE_DIR_NETWORKS = "savings/bipartite_invest_comp/networks"
+
 FLAG_FILTER = False  # Mettre True si tu veux filtrer
 FILTER_KEYWORDS = ['quantum computing']  # Keywords pour filtrage optionnel
-LIMITS = [100, 500, 1000]  # Nombre d'entrées à traiter
+LIMITS = [500]  # Nombre d'entrées à traiter
 
 # ===================================================================
 # UTILS
@@ -64,6 +69,29 @@ def load_data(use_duckdb=True, table_name=""):
             return load_data_from_csv(DATA_PATH_FUNDING_CSV)
         else:
             raise ValueError(f"Table name {table_name} non reconnue")
+        
+def save_graph_and_dicts(B, df_companies, dict_companies, dict_tech, limit, flag_cybersecurity):
+    """Sauvegarde le graphe et les dictionnaires associés."""
+    prefix = "cybersecurity_" if flag_cybersecurity else ""
+
+    os.makedirs(SAVE_DIR_CLASSES, exist_ok=True)
+    os.makedirs(SAVE_DIR_NETWORKS, exist_ok=True)
+
+    # Sauvegarder les dictionnaires
+    with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_companies_ranked_{limit}.pickle', 'wb') as f:
+        pickle.dump(dict_companies, f)
+
+    with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_tech_ranked_{limit}.pickle', 'wb') as f:
+        pickle.dump(dict_tech, f)
+
+    # ✅ Sauvegarder le graphe avec pickle directement (évite tout bug NetworkX)
+    with open(f"{SAVE_DIR_NETWORKS}/{prefix}bipartite_graph_{limit}.gpickle", "wb") as f:
+        pickle.dump(B, f)
+
+    # Sauvegarder le DataFrame
+    df_companies.to_csv(f'{SAVE_DIR_CLASSES}/{prefix}companies_ranked_{limit}.csv', index=False)
+
+    print(f"\n✓ Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
 
 
 # ===================================================================
@@ -158,19 +186,39 @@ def clean_funding_data(df):
     
     return CB_data_cleaning(df, to_drop, to_rename, to_check_double, drop_if_nan, sort_by)
 
+def clean_data_comp(df):
+    df_clean = df.copy()
+    columns_to_drop = [
+        'type','permalink','cb_url','domain','address','state_code',
+        'updated_at','legal_name','roles','postal_code','homepage_url','num_funding_rounds',
+        'total_funding_currency_code','phone','email','num_exits','alias1','alias2','alias3',
+        'logo_url','last_funding_on','twitter_url','facebook_url','linkedin_url','crunchbase_url',
+        'overview','acquisitions','city','primary_role','region','founded_on','ipo','milestones',
+        'news_articles','status','country_code','investment_type','post_money_valuation_usd',
+        'pre_money_valuation_usd','closed_on'
+    ]
+    cols_to_drop = [c for c in columns_to_drop if c in df_clean.columns]
+    df_clean = df_clean.drop(columns=cols_to_drop)
+
+    rename_mapping = {'category_list':'category_groups','category_groups_list':'category_groups'}
+    actual_renames = {k:v for k,v in rename_mapping.items() if k in df_clean.columns}
+    df_clean = df_clean.rename(columns=actual_renames)
+
+    required_columns = ['category_groups','rank','short_description']
+    missing_cols = [col for col in required_columns if col not in df_clean.columns]
+    if missing_cols:
+        raise ValueError(f"Colonnes requises manquantes: {missing_cols}")
+
+    df_clean = df_clean.dropna(subset=required_columns)
+    df_clean = df_clean.sort_values('rank').reset_index(drop=True)
+    return df_clean
+
 
 def merge_and_clean_final(df_funding, df_investments):
     """Merge funding and investments data, then clean"""
     df_merged = pd.merge(df_funding, df_investments, on='funding_round_uuid')
     
-    to_drop = [
-        'funding_round_uuid',
-        'name_x',
-        'org_uuid',   
-        'lead_investor_uuids',
-        'name_y',
-        'investor_uuid',
-    ]
+    to_drop = [ ]
     to_rename = {}
     drop_if_nan = []
     to_check_double = {}
@@ -206,27 +254,46 @@ def nx_dip_graph_from_pandas(df):
     df_columns = list(df.columns)
     df_columns = df_columns[0]
 
+    dict_companies = {}
+    dict_invest = {}
+
     B = nx.Graph()
     
-    for name, value in df.iterrows():
-        value = value[df_columns]
-        
-        if not isinstance(value, float) or not pd.isna(value):
-            B.add_node(name, bipartite=0)
+    for index, row in df.iterrows():
+        # row = row[df_columns]
 
-            if isinstance(value, str):  # if only one value
-                B.add_node(value, bipartite=1)
-                B.add_edge(name, value)
-            elif isinstance(value, (list, pd.Series)):  # if value has more values
-                for x in value:
-                    if pd.notna(x):
-                        B.add_node(x, bipartite=1)
-                        B.add_edge(name, x)
+        # Investor informations
+        invest_name = row['investor_name']
 
-    return B
+        i = classes.Investor(
+            id=row['uuid'],
+            name=invest_name,
+            raised_amount_usd=row['raised_amount_usd'],
+            num_investments=row['num_investments']
+        )
+
+        dict_invest[invest_name] = i
+                    
+        B.add_node(invest_name, bipartite=0)
+
+        # Company informations
+        comp_name = row['org_name']
+
+        c = classes.Company(
+            id=row['org_uuid'],
+            name=comp_name,
+        )
+        dict_companies[comp_name] = c
+
+        B.add_node(comp_name, bipartite=1)
+
+        B.add_edge(comp_name, invest_name)
 
 
-def create_bipartite_from_dataframe(df):
+    return B, dict_companies, dict_invest
+
+
+def create_bipartite_from_dataframe(df, df_comp_clean):
     """Create bipartite graph from org_name and investor_name columns"""
     B = nx.Graph()
     
@@ -320,18 +387,20 @@ def main(max_companies_plot=20, max_investors_plot=20):
     print("\n========================== LOADING DATA ==========================")
     df_investments = load_data(use_duckdb=USE_DUCKDB, table_name=TABLE_NAME_INVESTMENTS)
     df_funding = load_data(use_duckdb=USE_DUCKDB, table_name=TABLE_NAME_FUNDING)
+    df_comp = load_data(use_duckdb=USE_DUCKDB, table_name=TABLE_NAME_ORGA)
     
     print("✓ Données chargées")
     
     print("\n========================== CLEANING DATA ==========================")
     df_investments_clean = clean_investments_data(df_investments)
     df_funding_clean = clean_funding_data(df_funding)
+    df_comp_clean = clean_data_comp(df_comp)
     
     print("✓ Données nettoyées")
     
     print("\n========================== MERGING DATA ==========================")
-    df_graph_full = merge_and_clean_final(df_funding_clean, df_investments_clean)
-    print(f"✓ Données mergées : {len(df_graph_full):,} lignes")
+    # df_graph_full = merge_and_clean_final(df_funding_clean, df_investments_clean)
+    # print(f"✓ Données mergées : {len(df_graph_full):,} lignes")
     
     for limit in LIMITS:
         print(f"\n{'='*70}")
@@ -339,10 +408,12 @@ def main(max_companies_plot=20, max_investors_plot=20):
         print(f"{'='*70}")
         
         # Limiter les données
-        df_graph = df_graph_full.head(limit).copy()
+        # df_graph = df_graph_full.head(limit).copy()
+        df_graph = df_funding_clean.head(limit).copy()
         
         # Créer le graphe bipartite
-        B = create_bipartite_from_dataframe(df_graph)
+        # B = create_bipartite_from_dataframe(df_graph, df_comp_clean)
+        B, dict_companies, dict_investors = nx_dip_graph_from_pandas(df_graph)
         
         companies = [n for n, d in B.nodes(data=True) if d['bipartite'] == 0]
         investors = [n for n, d in B.nodes(data=True) if d['bipartite'] == 1]
