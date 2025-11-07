@@ -21,7 +21,7 @@ all_funding_data = []
 
 for company_name in df_companies["final_configuration"]:
     try:
-        # 1️⃣ Vérifier que l'entreprise existe et récupérer son UUID
+        # 1️⃣ Récupérer l'UUID de l'entreprise
         query_uuid = f"""
             SELECT uuid, name
             FROM main.organizations
@@ -36,9 +36,12 @@ for company_name in df_companies["final_configuration"]:
         company_uuid = df_company['uuid'].iloc[0]
         print(f"'{company_name}' existe avec UUID : {company_uuid}")
 
-        # 2️⃣ Récupérer les levées de fonds
+        # 2️⃣ Récupérer les levées de fonds avec UUID et nom
         query_funding = f"""
-            SELECT '{company_name}' AS company_name, announced_on
+            SELECT 
+                '{company_name}' AS company_name,
+                '{company_uuid}' AS company_uuid,
+                announced_on
             FROM main.funding_rounds
             WHERE org_uuid = '{company_uuid}'
             ORDER BY announced_on
@@ -62,8 +65,8 @@ if all_funding_data:
     print(f"\n💾 CSV global sauvegardé : {csv_all_path}")
 
     # 🔹 Filtrer entreprises avec >=5 levées de fonds
-    df_counts = df_all_funding.groupby("company_name").size().reset_index(name="announced_on")
-    df_5plus = df_counts[df_counts["announced_on"] >= MINIMUM_NUM_FUNDING].sort_values(by="announced_on", ascending=False)
+    df_counts = df_all_funding.groupby(["company_name", "company_uuid"]).size().reset_index(name="funding_rounds_count")
+    df_5plus = df_counts[df_counts["funding_rounds_count"] >= MINIMUM_NUM_FUNDING].sort_values(by="funding_rounds_count", ascending=False)
 
     csv_5plus_path = output_dir / "companies_5plus_funding.csv"
     df_5plus.to_csv(csv_5plus_path, index=False)
