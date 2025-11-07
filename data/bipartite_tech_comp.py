@@ -30,7 +30,7 @@ SAVE_DIR_NETWORKS = "savings/bipartite_tech_comp/networks"
 
 FLAG_CYBERSECURITY = True
 LIMITS = [500]
-CYBERSECURITY_KEYWORDS = ['cyber', 'security', 'cybersecurity']
+CYBERSECURITY_KEYWORDS = ['quantum computing', 'quantum encryption', 'quantum key distribution',]
 
 # ===================================================================
 # UTILS
