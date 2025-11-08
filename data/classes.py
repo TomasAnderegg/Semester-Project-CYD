@@ -13,10 +13,10 @@ class Company:
 
 @dataclasses.dataclass
 class Investor:
-    funding_round_id : str
+    investor_id : str
     name: str
     raised_amount_usd: int = 0
-    num_investments: int = 0
+    num_investors: int = 0
 
 
 

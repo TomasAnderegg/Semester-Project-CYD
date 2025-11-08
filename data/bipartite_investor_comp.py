@@ -31,6 +31,7 @@ SAVE_DIR_NETWORKS = "savings/bipartite_invest/networks"
 
 SAVE_DIR_CLASSES = "savings/bipartite_invest_comp/classes"
 SAVE_DIR_NETWORKS = "savings/bipartite_invest_comp/networks"
+SAVE_DIR_CSV = "savings/bipartite_invest_comp/csv_exports"  # ✅ NOUVEAU: dossier pour les CSV
 
 FLAG_FILTER = False  # Mettre True si tu veux filtrer
 FILTER_KEYWORDS = ['quantum computing']  # Keywords pour filtrage optionnel
@@ -42,6 +43,7 @@ LIMITS = [500]  # Nombre d'entrées à traiter
 
 def create_directories():
     Path(SAVE_DIR_NETWORKS).mkdir(parents=True, exist_ok=True)
+    Path(SAVE_DIR_CSV).mkdir(parents=True, exist_ok=True)  # ✅ NOUVEAU
 
 
 def load_data_from_duckdb(filepath, table_name):
@@ -150,6 +152,10 @@ def clean_investments_data(df):
         'created_at',
         'updated_at',   
         'rank',
+        'country_code',
+        'state_code',
+        'region',
+        'city'
     ]
     to_rename = {}
     drop_if_nan = []
@@ -175,6 +181,10 @@ def clean_funding_data(df):
         'post_money_valuation_usd',                                      
         'post_money_valuation',                                    
         'post_money_valuation_currency_code',
+        'country_code',
+        'state_code',
+        'region',
+        'city',
     ]
     to_rename = {
         'category_list': 'category_groups',
@@ -186,53 +196,42 @@ def clean_funding_data(df):
     
     return CB_data_cleaning(df, to_drop, to_rename, to_check_double, drop_if_nan, sort_by)
 
-def clean_data_comp(df):
-    df_clean = df.copy()
-    columns_to_drop = [
-        'type','permalink','cb_url','domain','address','state_code',
-        'updated_at','legal_name','roles','postal_code','homepage_url','num_funding_rounds',
-        'total_funding_currency_code','phone','email','num_exits','alias1','alias2','alias3',
-        'logo_url','last_funding_on','twitter_url','facebook_url','linkedin_url','crunchbase_url',
-        'overview','acquisitions','city','primary_role','region','founded_on','ipo','milestones',
-        'news_articles','status','country_code','investment_type','post_money_valuation_usd',
-        'pre_money_valuation_usd','closed_on'
-    ]
-    cols_to_drop = [c for c in columns_to_drop if c in df_clean.columns]
-    df_clean = df_clean.drop(columns=cols_to_drop)
-
-    rename_mapping = {'category_list':'category_groups','category_groups_list':'category_groups'}
-    actual_renames = {k:v for k,v in rename_mapping.items() if k in df_clean.columns}
-    df_clean = df_clean.rename(columns=actual_renames)
-
-    required_columns = ['category_groups','rank','short_description']
-    missing_cols = [col for col in required_columns if col not in df_clean.columns]
-    if missing_cols:
-        raise ValueError(f"Colonnes requises manquantes: {missing_cols}")
-
-    df_clean = df_clean.dropna(subset=required_columns)
-    df_clean = df_clean.sort_values('rank').reset_index(drop=True)
-    return df_clean
-
 
 def merge_and_clean_final(df_funding, df_investments):
     """Merge funding and investments data, then clean"""
+    # ✅ MERGE COMME TU LE VEUX
     df_merged = pd.merge(df_funding, df_investments, on='funding_round_uuid')
     
-    to_drop = [ ]
-    to_rename = {}
-    drop_if_nan = []
-    to_check_double = {}
-    sort_by = ""
+    # ✅ SAUVEGARDER LE RÉSULTAT DU MERGE COMPLET
+    csv_path = f"{SAVE_DIR_CSV}/merged_funding_investments_full.csv"
+    df_merged.to_csv(csv_path, index=False)
+    print(f"✓ CSV du merge complet sauvegardé : {csv_path}")
+    print(f"  Colonnes: {list(df_merged.columns)}")
+    print(f"  Shape: {df_merged.shape}")
     
-    df_clean = CB_data_cleaning(df_merged, to_drop, to_rename, to_check_double, drop_if_nan, sort_by)
+    # to_drop = [ ]
+    # to_rename = {}
+    # drop_if_nan = []
+    # to_check_double = {}
+    # sort_by = ""
     
-    # Keep only relevant columns for graph
-    if 'org_name' in df_clean.columns and 'investor_name' in df_clean.columns:
-        df_graph = df_clean[["org_name", "investor_name"]].copy()
-        df_graph = df_graph.dropna()
-        return df_graph
-    else:
-        raise ValueError("Colonnes 'org_name' ou 'investor_name' manquantes")
+    # df_clean = CB_data_cleaning(df_merged, to_drop, to_rename, to_check_double, drop_if_nan, sort_by)
+    
+    # # Keep only relevant columns for graph
+    # if 'org_name' in df_clean.columns and 'investor_name' in df_clean.columns:
+    #     df_graph = df_clean[["org_name", "investor_name"]].copy()
+    #     df_graph = df_graph.dropna()
+        
+    #     # ✅ SAUVEGARDER AUSSI LE RÉSULTAT FILTRÉ
+    #     csv_path_graph = f"{SAVE_DIR_CSV}/merged_for_graph.csv"
+    #     df_graph.to_csv(csv_path_graph, index=False)
+    #     print(f"✓ CSV pour le graphe sauvegardé : {csv_path_graph}")
+        
+    #     print("----------en tete de df_graph--------:", df_graph.head())
+    return df_merged
+    # else:
+    #     raise ValueError("Colonnes 'org_name' ou 'investor_name' manquantes")
+        
 
 
 # ===================================================================
@@ -266,10 +265,10 @@ def nx_dip_graph_from_pandas(df):
         invest_name = row['investor_name']
 
         i = classes.Investor(
-            id=row['uuid'],
+            investor_id=row['investor_uuid'],
             name=invest_name,
             raised_amount_usd=row['raised_amount_usd'],
-            num_investments=row['num_investments']
+            num_investors=row['investor_count']
         )
 
         dict_invest[invest_name] = i
@@ -282,6 +281,7 @@ def nx_dip_graph_from_pandas(df):
         c = classes.Company(
             id=row['org_uuid'],
             name=comp_name,
+            technologies=[]
         )
         dict_companies[comp_name] = c
 
@@ -387,20 +387,18 @@ def main(max_companies_plot=20, max_investors_plot=20):
     print("\n========================== LOADING DATA ==========================")
     df_investments = load_data(use_duckdb=USE_DUCKDB, table_name=TABLE_NAME_INVESTMENTS)
     df_funding = load_data(use_duckdb=USE_DUCKDB, table_name=TABLE_NAME_FUNDING)
-    df_comp = load_data(use_duckdb=USE_DUCKDB, table_name=TABLE_NAME_ORGA)
     
     print("✓ Données chargées")
     
     print("\n========================== CLEANING DATA ==========================")
     df_investments_clean = clean_investments_data(df_investments)
     df_funding_clean = clean_funding_data(df_funding)
-    df_comp_clean = clean_data_comp(df_comp)
     
     print("✓ Données nettoyées")
     
     print("\n========================== MERGING DATA ==========================")
-    # df_graph_full = merge_and_clean_final(df_funding_clean, df_investments_clean)
-    # print(f"✓ Données mergées : {len(df_graph_full):,} lignes")
+    df_graph_full = merge_and_clean_final(df_funding_clean, df_investments_clean)
+    print(f"✓ Données mergées : {len(df_graph_full):,} lignes")
     
     for limit in LIMITS:
         print(f"\n{'='*70}")
@@ -408,11 +406,9 @@ def main(max_companies_plot=20, max_investors_plot=20):
         print(f"{'='*70}")
         
         # Limiter les données
-        # df_graph = df_graph_full.head(limit).copy()
-        df_graph = df_funding_clean.head(limit).copy()
+        df_graph = df_graph_full.head(limit).copy()
         
         # Créer le graphe bipartite
-        # B = create_bipartite_from_dataframe(df_graph, df_comp_clean)
         B, dict_companies, dict_investors = nx_dip_graph_from_pandas(df_graph)
         
         companies = [n for n, d in B.nodes(data=True) if d['bipartite'] == 0]
