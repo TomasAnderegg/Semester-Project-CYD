@@ -20,9 +20,12 @@ NUM_TECH = 500
 
 FLAG_CYBERSECURITY = False
 
-SAVE_DIR_CLASSES = "savings/bipartite_tech_comp/classes"
-SAVE_DIR_NETWORKS = "savings/bipartite_tech_comp/networks"
-SAVE_DIR_M = "savings/bipartite_tech_comp/M"
+# SAVE_DIR_CLASSES = "savings/bipartite_tech_comp/classes"
+# SAVE_DIR_NETWORKS = "savings/bipartite_tech_comp/networks"
+# SAVE_DIR_M = "savings/bipartite_tech_comp/M"
+SAVE_DIR_CLASSES = "savings/bipartite_invest_comp/classes"
+SAVE_DIR_NETWORKS = "savings/bipartite_invest_comp/networks"
+SAVE_DIR_M = "savings/bipartite_invest_comp/M"
 SAVE_DIR_RESULTS = "savings/csv_results"
 SAVE_DIR_PLOTS = "plots/rank_evolution"
 
@@ -52,9 +55,13 @@ def preferences_to_string(preferences):
 def load_saved_data(num_comp, num_tech, flag_cybersecurity):
     prefix = "cybersecurity_" if flag_cybersecurity else ""
     
-    name_file_com = f'{SAVE_DIR_CLASSES}/{prefix}dict_companies_ranked_cybersecurity_{num_comp}.pickle'
-    name_file_tech = f'{SAVE_DIR_CLASSES}/{prefix}dict_tech_ranked_cybersecurity_{num_tech}.pickle'
-    name_file_graph = f'{SAVE_DIR_NETWORKS}/{prefix}cybersecurity_bipartite_graph_{num_comp}.gpickle'
+    # name_file_com = f'{SAVE_DIR_CLASSES}/{prefix}dict_companies_ranked_cybersecurity_{num_comp}.pickle'
+    # name_file_tech = f'{SAVE_DIR_CLASSES}/{prefix}dict_tech_ranked_cybersecurity_{num_tech}.pickle'
+    # name_file_graph = f'{SAVE_DIR_NETWORKS}/{prefix}cybersecurity_bipartite_graph_{num_comp}.gpickle'
+    
+    name_file_com = f'{SAVE_DIR_CLASSES}/{prefix}dict_companies_{num_comp}.pickle'
+    name_file_tech = f'{SAVE_DIR_CLASSES}/{prefix}dict_investors_{num_tech}.pickle'
+    name_file_graph = f'{SAVE_DIR_NETWORKS}/{prefix}bipartite_graph_{num_comp}.gpickle'
     
     with open(name_file_com, 'rb') as f:
         dict_companies = pickle.load(f)

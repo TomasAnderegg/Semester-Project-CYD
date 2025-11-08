@@ -152,10 +152,6 @@ def clean_investments_data(df):
         'created_at',
         'updated_at',   
         'rank',
-        'country_code',
-        'state_code',
-        'region',
-        'city'
     ]
     to_rename = {}
     drop_if_nan = []
@@ -181,10 +177,6 @@ def clean_funding_data(df):
         'post_money_valuation_usd',                                      
         'post_money_valuation',                                    
         'post_money_valuation_currency_code',
-        'country_code',
-        'state_code',
-        'region',
-        'city',
     ]
     to_rename = {
         'category_list': 'category_groups',
@@ -217,21 +209,28 @@ def merge_and_clean_final(df_funding, df_investments):
     
     # df_clean = CB_data_cleaning(df_merged, to_drop, to_rename, to_check_double, drop_if_nan, sort_by)
     
-    # # Keep only relevant columns for graph
+    # # ✅ Garder TOUTES les colonnes nécessaires pour le graphe
+    # required_cols = ["org_name", "investor_name", "org_uuid", "investor_uuid", 
+    #                  "raised_amount_usd", "num_investments"]
+    
+    # # Vérifier quelles colonnes existent
+    # existing_cols = [col for col in required_cols if col in df_clean.columns]
+    
     # if 'org_name' in df_clean.columns and 'investor_name' in df_clean.columns:
-    #     df_graph = df_clean[["org_name", "investor_name"]].copy()
-    #     df_graph = df_graph.dropna()
+    #     df_graph = df_clean[existing_cols].copy()
+    #     df_graph = df_graph.dropna(subset=['org_name', 'investor_name'])
         
     #     # ✅ SAUVEGARDER AUSSI LE RÉSULTAT FILTRÉ
     #     csv_path_graph = f"{SAVE_DIR_CSV}/merged_for_graph.csv"
     #     df_graph.to_csv(csv_path_graph, index=False)
     #     print(f"✓ CSV pour le graphe sauvegardé : {csv_path_graph}")
+    #     print(f"  Colonnes gardées: {list(df_graph.columns)}")
         
-    #     print("----------en tete de df_graph--------:", df_graph.head())
+    #     print("----------en tete de df_graph--------:")
+    #     print(df_graph.head())
     return df_merged
     # else:
     #     raise ValueError("Colonnes 'org_name' ou 'investor_name' manquantes")
-        
 
 
 # ===================================================================
@@ -241,54 +240,49 @@ def merge_and_clean_final(df_funding, df_investments):
 def nx_dip_graph_from_pandas(df):
     """Creates the bipartite graph from the dataset
 
-    bipartite = 0 => company (org_name)
-    bipartite = 1 => investor (investor_name)
+    bipartite = 0 => investor (investor_name)
+    bipartite = 1 => company (org_name)
 
     Args:
-        - df: DataFrame with org_name as index and investor_name as column
+        - df: DataFrame with necessary columns
 
     Return:
         - B: bipartite graph 
     """
-    df_columns = list(df.columns)
-    df_columns = df_columns[0]
-
     dict_companies = {}
     dict_invest = {}
 
     B = nx.Graph()
     
     for index, row in df.iterrows():
-        # row = row[df_columns]
-
         # Investor informations
         invest_name = row['investor_name']
-
+        
+        # Créer l'investisseur selon la structure de classes.Investor
         i = classes.Investor(
-            investor_id=row['investor_uuid'],
+            investor_id=row['funding_round_uuid'],
             name=invest_name,
             raised_amount_usd=row['raised_amount_usd'],
             num_investors=row['investor_count']
         )
-
+        
         dict_invest[invest_name] = i
-                    
         B.add_node(invest_name, bipartite=0)
 
         # Company informations
         comp_name = row['org_name']
-
+        
+        # Créer la company selon la structure de classes.Company
         c = classes.Company(
-            id=row['org_uuid'],
+            id=row.get('org_uuid', f'org_{comp_name}'),
             name=comp_name,
-            technologies=[]
+            technologies=[]  # Liste vide par défaut
         )
+        
         dict_companies[comp_name] = c
-
         B.add_node(comp_name, bipartite=1)
 
         B.add_edge(comp_name, invest_name)
-
 
     return B, dict_companies, dict_invest
 
@@ -377,6 +371,28 @@ def save_graph(B, limit):
     print(f"✓ Graphe sauvegardé : {file_graph}")
 
 
+def save_graph_and_dicts(B, dict_companies, dict_investors, limit):
+    """Sauvegarde le graphe et les dictionnaires associés"""
+    os.makedirs(SAVE_DIR_CLASSES, exist_ok=True)
+    os.makedirs(SAVE_DIR_NETWORKS, exist_ok=True)
+
+    # Sauvegarder les dictionnaires
+    with open(f'{SAVE_DIR_CLASSES}/dict_companies_{limit}.pickle', 'wb') as f:
+        pickle.dump(dict_companies, f)
+    print(f"✓ Dictionnaire companies sauvegardé : {SAVE_DIR_CLASSES}/dict_companies_{limit}.pickle")
+
+    with open(f'{SAVE_DIR_CLASSES}/dict_investors_{limit}.pickle', 'wb') as f:
+        pickle.dump(dict_investors, f)
+    print(f"✓ Dictionnaire investors sauvegardé : {SAVE_DIR_CLASSES}/dict_investors_{limit}.pickle")
+
+    # Sauvegarder le graphe avec pickle directement
+    with open(f"{SAVE_DIR_NETWORKS}/bipartite_graph_{limit}.gpickle", "wb") as f:
+        pickle.dump(B, f)
+    print(f"✓ Graphe sauvegardé : {SAVE_DIR_NETWORKS}/bipartite_graph_{limit}.gpickle")
+
+    print(f"\n✓ Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
+
+
 # ===================================================================
 # MAIN
 # ===================================================================
@@ -428,8 +444,8 @@ def main(max_companies_plot=20, max_investors_plot=20):
         # Plot
         pos = plot_bipartite_graph(B_sub)
         
-        # Save
-        save_graph(B_sub, limit)
+        # Save - avec dictionnaires
+        save_graph_and_dicts(B_sub, dict_companies, dict_investors, limit)
 
 
 if __name__ == "__main__":
