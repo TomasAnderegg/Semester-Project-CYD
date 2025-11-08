@@ -20,8 +20,8 @@ NUM_COMP = 500
 NUM_TECH = 500
 FLAG_CYBERSECURITY = True
 
-SAVE_DIR_CLASSES = "savings/bipartite_tech_comp/classes"
-SAVE_DIR_NETWORKS = "savings/bipartite_tech_comp/networks"
+SAVE_DIR_CLASSES = "savings/bipartite_invest_comp/classes"
+SAVE_DIR_NETWORKS = "savings/bipartite_invest_comp/networks"
 SAVE_DIR_M = "savings/bipartite_tech_comp/M"
 SAVE_DIR_ANALYSIS = "analysis/graph_quality"
 
@@ -34,7 +34,8 @@ def load_graph_and_matrix(num_comp, num_tech, flag_cybersecurity):
     prefix = "cybersecurity_" if flag_cybersecurity else ""
     
     # Charger le graphe
-    graph_path = f'{SAVE_DIR_NETWORKS}/{prefix}bipartite_graph_{num_comp}.gpickle'
+    # graph_path = f'{SAVE_DIR_NETWORKS}/{prefix}bipartite_graph_{num_comp}.gpickle'
+    graph_path = f'{SAVE_DIR_NETWORKS}/bipartite_graph_{num_comp}.gpickle'
     with open(graph_path, 'rb') as f:
         B = pickle.load(f)
     
@@ -44,10 +45,16 @@ def load_graph_and_matrix(num_comp, num_tech, flag_cybersecurity):
     M = create_biadjacency_matrix(B)
     
     # Charger les dictionnaires
-    with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_companies_ranked_{num_comp}.pickle', 'rb') as f:
+    # with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_companies_ranked_{num_comp}.pickle', 'rb') as f:
+    #     dict_companies = pickle.load(f)
+    
+    # with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_tech_ranked_{num_tech}.pickle', 'rb') as f:
+    #     dict_tech = pickle.load(f)
+
+    with open(f'{SAVE_DIR_CLASSES}/dict_companies_{num_comp}.pickle', 'rb') as f:
         dict_companies = pickle.load(f)
     
-    with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_tech_ranked_{num_tech}.pickle', 'rb') as f:
+    with open(f'{SAVE_DIR_CLASSES}/dict_investors_{num_tech}.pickle', 'rb') as f:
         dict_tech = pickle.load(f)
     
     print(f"✓ Données chargées:")
