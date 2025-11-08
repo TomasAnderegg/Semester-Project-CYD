@@ -29,8 +29,8 @@ SAVE_DIR_M = "savings/bipartite_invest_comp/M"
 SAVE_DIR_RESULTS = "savings/csv_results"
 SAVE_DIR_PLOTS = "plots/rank_evolution"
 
-OPTIMAL_ALPHA_COMP = 0.5
-OPTIMAL_BETA_COMP = 0.5
+OPTIMAL_ALPHA_COMP = 0.8
+OPTIMAL_BETA_COMP = -0.6
 
 # ===================================================================
 # UTILS
@@ -147,8 +147,10 @@ def generator_order_w(M, alpha, beta, normalize=True):
     
     # Normalisation initiale
     if normalize:
-        fitness_0 = fitness_0 / (np.linalg.norm(fitness_0) + 1e-12)
-        ubiquity_0 = ubiquity_0 / (np.linalg.norm(ubiquity_0) + 1e-12)
+        # fitness_0 = fitness_0 / (np.linalg.norm(fitness_0) + 1e-12)
+        # ubiquity_0 = ubiquity_0 / (np.linalg.norm(ubiquity_0) + 1e-12)
+        fitness_0 = fitness_0 / (np.linalg.norm(fitness_0))
+        ubiquity_0 = ubiquity_0 / (np.linalg.norm(ubiquity_0))
     
     fitness_next, ubiquity_next = fitness_0, ubiquity_0
     i = 0
