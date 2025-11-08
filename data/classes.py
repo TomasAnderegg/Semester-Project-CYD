@@ -15,6 +15,7 @@ class Company:
 class Investor:
     investor_id : str
     name: str
+    announced_on: str
     raised_amount_usd: int = 0
     num_investors: int = 0
 

@@ -201,36 +201,36 @@ def merge_and_clean_final(df_funding, df_investments):
     print(f"  Colonnes: {list(df_merged.columns)}")
     print(f"  Shape: {df_merged.shape}")
     
-    # to_drop = [ ]
-    # to_rename = {}
-    # drop_if_nan = []
-    # to_check_double = {}
-    # sort_by = ""
+    to_drop = [ ]
+    to_rename = {}
+    drop_if_nan = []
+    to_check_double = {}
+    sort_by = ""
     
-    # df_clean = CB_data_cleaning(df_merged, to_drop, to_rename, to_check_double, drop_if_nan, sort_by)
+    df_clean = CB_data_cleaning(df_merged, to_drop, to_rename, to_check_double, drop_if_nan, sort_by)
     
-    # # ✅ Garder TOUTES les colonnes nécessaires pour le graphe
-    # required_cols = ["org_name", "investor_name", "org_uuid", "investor_uuid", 
-    #                  "raised_amount_usd", "num_investments"]
+    # ✅ Garder TOUTES les colonnes nécessaires pour le graphe
+    required_cols = ["org_name", "investor_name", "org_uuid", "investor_uuid", 
+                     "raised_amount_usd", "num_investments"]
     
-    # # Vérifier quelles colonnes existent
-    # existing_cols = [col for col in required_cols if col in df_clean.columns]
+    # Vérifier quelles colonnes existent
+    existing_cols = [col for col in required_cols if col in df_clean.columns]
     
-    # if 'org_name' in df_clean.columns and 'investor_name' in df_clean.columns:
-    #     df_graph = df_clean[existing_cols].copy()
-    #     df_graph = df_graph.dropna(subset=['org_name', 'investor_name'])
+    if 'org_name' in df_clean.columns and 'investor_name' in df_clean.columns:
+        df_graph = df_clean[existing_cols].copy()
+        df_graph = df_graph.dropna(subset=['org_name', 'investor_name'])
         
-    #     # ✅ SAUVEGARDER AUSSI LE RÉSULTAT FILTRÉ
-    #     csv_path_graph = f"{SAVE_DIR_CSV}/merged_for_graph.csv"
-    #     df_graph.to_csv(csv_path_graph, index=False)
-    #     print(f"✓ CSV pour le graphe sauvegardé : {csv_path_graph}")
-    #     print(f"  Colonnes gardées: {list(df_graph.columns)}")
+        # ✅ SAUVEGARDER AUSSI LE RÉSULTAT FILTRÉ
+        csv_path_graph = f"{SAVE_DIR_CSV}/merged_for_graph.csv"
+        df_graph.to_csv(csv_path_graph, index=False)
+        print(f"✓ CSV pour le graphe sauvegardé : {csv_path_graph}")
+        print(f"  Colonnes gardées: {list(df_graph.columns)}")
         
-    #     print("----------en tete de df_graph--------:")
-    #     print(df_graph.head())
-    return df_merged
-    # else:
-    #     raise ValueError("Colonnes 'org_name' ou 'investor_name' manquantes")
+        print("----------en tete de df_graph--------:")
+        print(df_graph.head())
+        return df_graph
+    else:
+        raise ValueError("Colonnes 'org_name' ou 'investor_name' manquantes")
 
 
 # ===================================================================
@@ -247,44 +247,101 @@ def nx_dip_graph_from_pandas(df):
         - df: DataFrame with necessary columns
 
     Return:
-        - B: bipartite graph 
+        - B: bipartite graph with funding info on edges
     """
+    import pandas as pd
     dict_companies = {}
     dict_invest = {}
 
     B = nx.Graph()
-    
+
+    # helper to safely convert numbers
+    def safe_int(x, default=0):
+        try:
+            if pd.isna(x):
+                return default
+            return int(x)
+        except Exception:
+            return default
+
+    def safe_float(x, default=0.0):
+        try:
+            if pd.isna(x):
+                return default
+            return float(x)
+        except Exception:
+            return default
+
     for index, row in df.iterrows():
         # Investor informations
-        invest_name = row['investor_name']
-        
-        # Créer l'investisseur selon la structure de classes.Investor
+        invest_name = row.get('investor_name', '') or ''
+        # Use announced_on from the row if present (could be funding round announced date)
+        announced_on = row.get('announced_on', '') or ''
+
+        # Create the investor according to classes.Investor (provide announced_on)
         i = classes.Investor(
-            investor_id=row['funding_round_uuid'],
+            investor_id=row.get('funding_round_uuid', row.get('investor_uuid', f'inv_{invest_name}')),
             name=invest_name,
-            raised_amount_usd=row['raised_amount_usd'],
-            num_investors=row['investor_count']
+            announced_on=announced_on,  # <-- FIX: now provided
+            raised_amount_usd=safe_int(row.get('raised_amount_usd', 0)),
+            num_investors=safe_int(row.get('investor_count', row.get('num_investors', 0)))
         )
-        
+
         dict_invest[invest_name] = i
         B.add_node(invest_name, bipartite=0)
 
         # Company informations
-        comp_name = row['org_name']
-        
-        # Créer la company selon la structure de classes.Company
+        comp_name = row.get('org_name', '') or ''
+
         c = classes.Company(
             id=row.get('org_uuid', f'org_{comp_name}'),
             name=comp_name,
-            technologies=[]  # Liste vide par défaut
+            technologies=[]
         )
-        
+
         dict_companies[comp_name] = c
         B.add_node(comp_name, bipartite=1)
 
-        B.add_edge(comp_name, invest_name)
+        # Edge / funding info
+        edge_key = (comp_name, invest_name)
+        raised_amt = safe_float(row.get('raised_amount_usd', 0))
+
+        if B.has_edge(comp_name, invest_name):
+            existing_data = B[comp_name][invest_name]
+            existing_data['funding_rounds'].append({
+                'funding_round_uuid': row.get('funding_round_uuid', ''),
+                'announced_on': announced_on,
+                'raised_amount_usd': raised_amt,
+                'investment_type': row.get('investment_type', '')
+            })
+            existing_data['total_raised_amount_usd'] = safe_float(existing_data.get('total_raised_amount_usd', 0)) + raised_amt
+            existing_data['num_funding_rounds'] = existing_data.get('num_funding_rounds', 0) + 1
+        else:
+            B.add_edge(comp_name, invest_name,
+                      funding_rounds=[{
+                          'funding_round_uuid': row.get('funding_round_uuid', ''),
+                          'announced_on': announced_on,
+                          'raised_amount_usd': raised_amt,
+                          'investment_type': row.get('investment_type', '')
+                      }],
+                      total_raised_amount_usd=raised_amt,
+                      num_funding_rounds=1
+                      )
+
+    # Stats
+    print(f"\n📊 Statistiques des levées de fonds:")
+    total_funding_rounds = sum([B[u][v].get('num_funding_rounds', 0) for u, v in B.edges()])
+    print(f"  - Total levées de fonds: {total_funding_rounds}")
+
+    multi_funding = [(u, v, B[u][v].get('num_funding_rounds', 0)) for u, v in B.edges() if B[u][v].get('num_funding_rounds', 0) > 1]
+    if multi_funding:
+        print(f"  - Paires avec plusieurs levées: {len(multi_funding)}")
+        print(f"  - Top 5 paires (par nombre de levées):")
+        for u, v, count in sorted(multi_funding, key=lambda x: x[2], reverse=True)[:5]:
+            print(f"    • {u} ← {v}: {count} levées")
 
     return B, dict_companies, dict_invest
+
 
 
 def create_bipartite_from_dataframe(df, df_comp_clean):
@@ -389,6 +446,22 @@ def save_graph_and_dicts(B, dict_companies, dict_investors, limit):
     with open(f"{SAVE_DIR_NETWORKS}/bipartite_graph_{limit}.gpickle", "wb") as f:
         pickle.dump(B, f)
     print(f"✓ Graphe sauvegardé : {SAVE_DIR_NETWORKS}/bipartite_graph_{limit}.gpickle")
+    
+    # ✅ NOUVEAU: Sauvegarder un CSV avec les informations des arêtes
+    edge_data = []
+    for u, v in B.edges():
+        edge_info = B[u][v]
+        edge_data.append({
+            'company': u,
+            'investor': v,
+            'num_funding_rounds': edge_info.get('num_funding_rounds', 1),
+            'total_raised_amount_usd': edge_info.get('total_raised_amount_usd', 0)
+        })
+    
+    df_edges = pd.DataFrame(edge_data)
+    csv_edges_path = f"{SAVE_DIR_CSV}/edge_funding_info_{limit}.csv"
+    df_edges.to_csv(csv_edges_path, index=False)
+    print(f"✓ Informations des arêtes sauvegardées : {csv_edges_path}")
 
     print(f"\n✓ Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
 
