@@ -149,7 +149,7 @@ for i in range(args.n_runs):
             n_layers=NUM_LAYER,
             n_heads=NUM_HEADS, dropout=DROP_OUT, use_memory=USE_MEMORY,
             message_dimension=MESSAGE_DIM, memory_dimension=MEMORY_DIM,
-            memory_update_at_start=not args.memory_update_at_end,
+            memory_update_at_start=False,#not args.memory_update_at_end, ajoute par Moi lol
             embedding_module_type=args.embedding_module,
             message_function=args.message_function,
             aggregator_type=args.aggregator,
@@ -180,6 +180,9 @@ for i in range(args.n_runs):
   early_stopper = EarlyStopMonitor(max_round=args.patience)
   for epoch in range(NUM_EPOCH):
     start_epoch = time.time()
+    tgn.memory.__init_memory__()  # réinitialise la mémoire   #ajouté par Moi lol
+ 
+
     ### Training
 
     # Reinitialize memory of the model at the start of each epoch

@@ -51,9 +51,14 @@ def get_data_node_classification(dataset_name, use_validation=False):
 
 def get_data(dataset_name, different_new_nodes_between_val_and_test=False, randomize_features=False):
   ### Load data and train val test split
-  graph_df = pd.read_csv('./data/ml_{}.csv'.format(dataset_name))
-  edge_features = np.load('./data/ml_{}.npy'.format(dataset_name))
-  node_features = np.load('./data/ml_{}_node.npy'.format(dataset_name)) 
+  # graph_df = pd.read_csv('./data/ml_{}.csv'.format(dataset_name))
+  # edge_features = np.load('./data/ml_{}.npy'.format(dataset_name))
+  # node_features = np.load('./data/ml_{}_node.npy'.format(dataset_name))
+
+  graph_df = pd.read_csv('./data/{}_tgn.csv'.format(dataset_name))
+  edge_features = np.load('./data/{}_tgn.npy'.format(dataset_name))
+  node_features = np.load('./data/{}_tgn_node.npy'.format(dataset_name))  
+  
     
   if randomize_features:
     node_features = np.random.rand(node_features.shape[0], node_features.shape[1])

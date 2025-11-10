@@ -10,6 +10,7 @@ from typing import List, Dict
 import math
 import classes
 import matplotlib
+from datetime import datetime 
 matplotlib.use('Qt5Agg')  # ou 'TkAgg' selon ton installation
 
 
@@ -94,6 +95,77 @@ def save_graph_and_dicts(B, df_companies, dict_companies, dict_tech, limit, flag
     df_companies.to_csv(f'{SAVE_DIR_CLASSES}/{prefix}companies_ranked_{limit}.csv', index=False)
 
     print(f"\n✓ Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
+
+def prepare_tgn_input(B, output_prefix="investment_bipartite"):
+    """
+    Convertit ton graphe bipartite NetworkX en fichiers compatibles TGN.
+    """
+    rows = []
+    feats = []
+    user_map, item_map = {}, {}
+
+
+    for idx, (u, v, data) in enumerate(B.edges(data=True)):
+        # 1️⃣ Identifiants entiers pour TGN
+        if u not in user_map:
+         user_map[u] = len(user_map)
+        if v not in item_map:
+            item_map[v] = len(item_map)
+        u_id = user_map[u]
+        v_id = item_map[v]
+        
+        # # 2️⃣ Timestamp (si disponible)
+        # print("funding_rounds existe ?", "funding_rounds" in data)
+        # if "funding_rounds" in data:
+        #     print("type de funding_rounds :", type(data["funding_rounds"]))
+        #     if len(data["funding_rounds"]) > 0:
+        #         print("type du premier élément :", type(data["funding_rounds"][0]))
+        #         print("announced_on existe ?", "announced_on" in data["funding_rounds"][0])
+        #         if "announced_on" in data["funding_rounds"][0]:
+        #             print("type de announced_on :", type(data["funding_rounds"][0]["announced_on"]))
+        #             print("valeur de announced_on :", data["funding_rounds"][0]["announced_on"])
+
+        if data.get('funding_rounds') and data['funding_rounds'][0].get('announced_on'):
+            try:
+                ts = datetime.strptime(
+                    data['funding_rounds'][0]['announced_on'], "%Y-%m-%d"
+                ).timestamp()
+            except Exception:
+                ts = 0.0
+        else:
+            ts = 0.0
+
+        # 3️⃣ Label : ici on peut mettre 1 si l’investissement a eu lieu
+        label = 1.0
+
+        # 4️⃣ Features : par exemple, montant total et nombre de tours
+        feat = np.array([
+            data.get('total_raised_amount_usd', 0.0),
+            data.get('num_funding_rounds', 0.0)
+        ])
+        
+        rows.append((u_id, v_id, ts, label))
+        feats.append(feat)
+
+    # === Conversion en DataFrame ===
+    df = pd.DataFrame(rows, columns=['u', 'i', 'ts', 'label'])
+    feats = np.array(feats)
+
+    # === Sauvegarde ===
+    Path("data").mkdir(exist_ok=True)
+
+    df['idx'] = np.arange(len(df))
+
+    df.to_csv(f"data/{output_prefix}.csv", index=False)
+    np.save(f"data/{output_prefix}.npy", feats)
+
+    # === Node features (aléatoires ou nulles) ===
+    max_node_id = max(df.u.max(), df.i.max())
+    node_feats = np.zeros((max_node_id + 1, feats.shape[1]))  # ou 172 colonnes si tu veux
+    np.save(f"data/{output_prefix}_node.npy", node_feats)
+
+    print(f"✓ Données TGN prêtes : data/{output_prefix}.csv, .npy et _node.npy")
+    print(df.head())
 
 
 # ===================================================================
@@ -211,7 +283,7 @@ def merge_and_clean_final(df_funding, df_investments):
     
     # ✅ Garder TOUTES les colonnes nécessaires pour le graphe
     required_cols = ["org_name", "investor_name", "org_uuid", "investor_uuid", 
-                     "raised_amount_usd", "num_investments"]
+                     "raised_amount_usd", "num_investments", "announced_on"]
     
     # Vérifier quelles colonnes existent
     existing_cols = [col for col in required_cols if col in df_clean.columns]
@@ -276,7 +348,11 @@ def nx_dip_graph_from_pandas(df):
         # Investor informations
         invest_name = row.get('investor_name', '') or ''
         # Use announced_on from the row if present (could be funding round announced date)
-        announced_on = row.get('announced_on', '') or ''
+        announced_on = row.get('announced_on', '')
+        if pd.notna(announced_on):
+            announced_on = str(announced_on.date())  # <--- convertit le Timestamp en string "YYYY-MM-DD"
+        else:
+            announced_on = ''
 
         # Create the investor according to classes.Investor (provide announced_on)
         i = classes.Investor(
@@ -496,9 +572,23 @@ def main(max_companies_plot=20, max_investors_plot=20):
         
         # Limiter les données
         df_graph = df_graph_full.head(limit).copy()
-        
+
+        # ✅ Sauvegarde temporaire pour inspection
+        df_graph.to_csv("debug_df_graph.csv", index=False)
+        print("✓ Fichier debug_df_graph.csv sauvegardé, tu peux l'ouvrir dans Excel ou VSCode pour vérifier.")
+        print("Colonnes :", df_graph.columns.tolist())
+        print(df_graph.head(5))
+
+
+        print("=== Vérification de announced_on ===")
+        print(df_graph['announced_on'].head(10))
+        print("Nb de dates manquantes :", df_graph['announced_on'].isna().sum())
+        print("Nb de lignes totales :", len(df_graph))
+
         # Créer le graphe bipartite
         B, dict_companies, dict_investors = nx_dip_graph_from_pandas(df_graph)
+
+        prepare_tgn_input(B, output_prefix="crunchbase_tgn")
         
         companies = [n for n, d in B.nodes(data=True) if d['bipartite'] == 0]
         investors = [n for n, d in B.nodes(data=True) if d['bipartite'] == 1]

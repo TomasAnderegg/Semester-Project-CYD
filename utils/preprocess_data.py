@@ -63,6 +63,7 @@ def run(data_name, bipartite=True):
   OUT_DF = './data/ml_{}.csv'.format(data_name)
   OUT_FEAT = './data/ml_{}.npy'.format(data_name)
   OUT_NODE_FEAT = './data/ml_{}_node.npy'.format(data_name)
+  print('on est dedans')
 
   df, feat = preprocess(PATH)
   new_df = reindex(df, bipartite)

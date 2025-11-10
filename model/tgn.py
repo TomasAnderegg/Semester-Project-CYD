@@ -105,6 +105,7 @@ class TGN(torch.nn.Module):
 
     source_nodes [batch_size]: source ids.
     :param destination_nodes [batch_size]: destination ids
+
     :param negative_nodes [batch_size]: ids of negative sampled destination
     :param edge_times [batch_size]: timestamp of interaction
     :param edge_idxs [batch_size]: index of interaction
