@@ -3,6 +3,7 @@ import logging
 import torch
 import numpy as np
 from pathlib import Path
+import networkx as nx
 
 from evaluation.evaluation import eval_edge_prediction
 from model.tgn import TGN
@@ -13,33 +14,40 @@ torch.manual_seed(0)
 np.random.seed(0)
 
 ### Argument parser
-parser = argparse.ArgumentParser('TGN model evaluation')
-parser.add_argument('-d', '--data', type=str, help='Dataset name',
+### Argument and global variables
+parser = argparse.ArgumentParser('TGN self-supervised training')
+parser.add_argument('-d', '--data', type=str, help='Dataset name (eg. wikipedia or reddit)',
                     default='crunchbase')
-parser.add_argument('--model_path', type=str, help='Path to saved model',
-                    default='./saved_models/-crunchbase.pth')
-parser.add_argument('--prefix', type=str, default='', help='Prefix used during training')
+parser.add_argument('--bs', type=int, default=200, help='Batch_size')
+parser.add_argument('--prefix', type=str, default='', help='Prefix to name the checkpoints')
 parser.add_argument('--n_degree', type=int, default=10, help='Number of neighbors to sample')
 parser.add_argument('--n_head', type=int, default=2, help='Number of heads used in attention layer')
+parser.add_argument('--n_epoch', type=int, default=50, help='Number of epochs')
 parser.add_argument('--n_layer', type=int, default=1, help='Number of network layers')
+parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate')
+parser.add_argument('--patience', type=int, default=5, help='Patience for early stopping')
+parser.add_argument('--n_runs', type=int, default=1, help='Number of runs') 
 parser.add_argument('--drop_out', type=float, default=0.1, help='Dropout probability')
 parser.add_argument('--gpu', type=int, default=0, help='Idx for the gpu to use')
 parser.add_argument('--node_dim', type=int, default=100, help='Dimensions of the node embedding')
 parser.add_argument('--time_dim', type=int, default=100, help='Dimensions of the time embedding')
+parser.add_argument('--backprop_every', type=int, default=1, help='Every how many batches to '
+                                                                  'backprop')
 parser.add_argument('--use_memory', action='store_true',
                     help='Whether to augment the model with a node memory')
-parser.add_argument('--embedding_module', type=str, default="graph_attention", 
-                    choices=["graph_attention", "graph_sum", "identity", "time"],
-                    help='Type of embedding module')
-parser.add_argument('--message_function', type=str, default="identity",
-                    choices=["mlp", "identity"], help='Type of message function')
-parser.add_argument('--memory_updater', type=str, default="gru",
-                    choices=["gru", "rnn"], help='Type of memory updater')
-parser.add_argument('--aggregator', type=str, default="last",
-                    help='Type of message aggregator')
+parser.add_argument('--embedding_module', type=str, default="graph_attention", choices=[
+  "graph_attention", "graph_sum", "identity", "time"], help='Type of embedding module')
+parser.add_argument('--message_function', type=str, default="identity", choices=[
+  "mlp", "identity"], help='Type of message function')
+parser.add_argument('--memory_updater', type=str, default="gru", choices=[
+  "gru", "rnn"], help='Type of memory updater')
+parser.add_argument('--aggregator', type=str, default="last", help='Type of message '
+                                                                        'aggregator')
+parser.add_argument('--memory_update_at_end', action='store_true',
+                    help='Whether to update memory at the end or at the start of the batch')
 parser.add_argument('--message_dim', type=int, default=100, help='Dimensions of the messages')
-parser.add_argument('--memory_dim', type=int, default=172,
-                    help='Dimensions of the memory for each user')
+parser.add_argument('--memory_dim', type=int, default=172, help='Dimensions of the memory for '
+                                                                'each user')
 parser.add_argument('--different_new_nodes', action='store_true',
                     help='Whether to use disjoint set of new nodes for train and val')
 parser.add_argument('--uniform', action='store_true',
@@ -52,194 +60,181 @@ parser.add_argument('--use_source_embedding_in_message', action='store_true',
                     help='Whether to use the embedding of the source node as part of the message')
 parser.add_argument('--dyrep', action='store_true',
                     help='Whether to run the dyrep model')
+parser.add_argument('--model_path', type=str, default='', help='Path to the trained model')
+
 
 args = parser.parse_args()
 
-# Parameters
-DATA = args.data
+BATCH_SIZE = args.bs
 NUM_NEIGHBORS = args.n_degree
+NUM_NEG = 1
+NUM_EPOCH = args.n_epoch
 NUM_HEADS = args.n_head
 DROP_OUT = args.drop_out
 GPU = args.gpu
+DATA = args.data
 NUM_LAYER = args.n_layer
+LEARNING_RATE = args.lr
 NODE_DIM = args.node_dim
 TIME_DIM = args.time_dim
 USE_MEMORY = args.use_memory
 MESSAGE_DIM = args.message_dim
 MEMORY_DIM = args.memory_dim
 
-### Set up logger
+# Device
+device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
+
+# Logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logger.info(f"Evaluating TGN model on dataset: {args.data}")
 
-logger.info(f"Evaluating model on dataset: {DATA}")
-logger.info(f"Model path: {args.model_path}")
-
-### Load data
+# Load data
 node_features, edge_features, full_data, train_data, val_data, test_data, \
 new_node_val_data, new_node_test_data = get_data(
-    DATA,
+    args.data,
     different_new_nodes_between_val_and_test=args.different_new_nodes,
     randomize_features=args.randomize_features
 )
 
-# Initialize neighbor finder with full data
-full_ngh_finder = get_neighbor_finder(full_data, args.uniform)
+# Neighbor finders
 train_ngh_finder = get_neighbor_finder(train_data, args.uniform)
+full_ngh_finder = get_neighbor_finder(full_data, args.uniform)
 
-# Initialize negative samplers with same seeds as training
+# Negative samplers
 val_rand_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=0)
-nn_val_rand_sampler = RandEdgeSampler(
-    new_node_val_data.sources, new_node_val_data.destinations, seed=1
-)
+nn_val_rand_sampler = RandEdgeSampler(new_node_val_data.sources, new_node_val_data.destinations, seed=1)
 test_rand_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=2)
-nn_test_rand_sampler = RandEdgeSampler(
-    new_node_test_data.sources, new_node_test_data.destinations, seed=3
-)
-
-# Set device
-device_string = 'cuda:{}'.format(GPU) if torch.cuda.is_available() else 'cpu'
-device = torch.device(device_string)
-logger.info(f"Using device: {device}")
+nn_test_rand_sampler = RandEdgeSampler(new_node_test_data.sources, new_node_test_data.destinations, seed=3)
 
 # Compute time statistics
 mean_time_shift_src, std_time_shift_src, mean_time_shift_dst, std_time_shift_dst = \
     compute_time_statistics(full_data.sources, full_data.destinations, full_data.timestamps)
 
-### Initialize model with same architecture as training
-tgn = TGN(
-    neighbor_finder=train_ngh_finder,
-    node_features=node_features,
-    edge_features=edge_features,
-    device=device,
-    n_layers=NUM_LAYER,
-    n_heads=NUM_HEADS,
-    dropout=DROP_OUT,
-    use_memory=USE_MEMORY,
-    message_dimension=MESSAGE_DIM,
-    memory_dimension=MEMORY_DIM,
-    memory_update_at_start=False,
-    embedding_module_type=args.embedding_module,
-    message_function=args.message_function,
-    aggregator_type=args.aggregator,
-    memory_updater_type=args.memory_updater,
-    n_neighbors=NUM_NEIGHBORS,
-    mean_time_shift_src=mean_time_shift_src,
-    std_time_shift_src=std_time_shift_src,
-    mean_time_shift_dst=mean_time_shift_dst,
-    std_time_shift_dst=std_time_shift_dst,
-    use_destination_embedding_in_message=args.use_destination_embedding_in_message,
-    use_source_embedding_in_message=args.use_source_embedding_in_message,
-    dyrep=args.dyrep
-)
+# Initialize model
+tgn = TGN(neighbor_finder=train_ngh_finder, node_features=node_features,
+            edge_features=edge_features, device=device,
+            n_layers=NUM_LAYER,
+            n_heads=NUM_HEADS, dropout=DROP_OUT, use_memory=USE_MEMORY,
+            message_dimension=MESSAGE_DIM, memory_dimension=MEMORY_DIM,
+            memory_update_at_start=not args.memory_update_at_end,#False,#not args.memory_update_at_end, ajoute par Moi lol
+            embedding_module_type=args.embedding_module,
+            message_function=args.message_function,
+            aggregator_type=args.aggregator,
+            memory_updater_type=args.memory_updater,
+            n_neighbors=NUM_NEIGHBORS,
+            mean_time_shift_src=mean_time_shift_src, std_time_shift_src=std_time_shift_src,
+            mean_time_shift_dst=mean_time_shift_dst, std_time_shift_dst=std_time_shift_dst,
+            use_destination_embedding_in_message=args.use_destination_embedding_in_message,
+            use_source_embedding_in_message=args.use_source_embedding_in_message,
+            dyrep=args.dyrep)
 
-### Load trained model weights
+# Load model weights
 if Path(args.model_path).exists():
     logger.info(f"Loading model from {args.model_path}")
     tgn.load_state_dict(torch.load(args.model_path, map_location=device))
-    logger.info("Model loaded successfully")
 else:
     logger.error(f"Model file not found: {args.model_path}")
     exit(1)
 
-tgn = tgn.to(device)
+tgn.to(device)
 tgn.eval()
 
-### Evaluation on different datasets
+# ---------------- Evaluation ---------------- #
+logger.info("Starting evaluation...")
 
-logger.info("\n" + "="*50)
-logger.info("Starting Evaluation")
-logger.info("="*50)
+# if args.use_memory:
+#     tgn.memory.__init_memory__()
 
-# If using memory, initialize it
-if USE_MEMORY:
-    tgn.memory.__init_memory__()
-
-# Set neighbor finder to full graph
+# 1️⃣ Validation - Seen nodes
 tgn.set_neighbor_finder(full_ngh_finder)
-
-# 1. Validation set (seen nodes)
-logger.info("\n[1/4] Evaluating on Validation Set (Seen Nodes)...")
-val_ap, val_auc = eval_edge_prediction(
-    model=tgn,
-    negative_edge_sampler=val_rand_sampler,
-    data=val_data,
-    n_neighbors=NUM_NEIGHBORS
-)
-logger.info(f"Validation - AUC: {val_auc:.4f}, AP: {val_ap:.4f}")
-
-if USE_MEMORY:
+val_ap, val_auc = eval_edge_prediction(tgn, val_rand_sampler, val_data, args.n_degree)
+logger.info(f"Validation (seen nodes) - AUC: {val_auc:.4f}, AP: {val_ap:.4f}")
+if args.use_memory:
     val_memory_backup = tgn.memory.backup_memory()
 
-# 2. Validation set (new nodes)
-logger.info("\n[2/4] Evaluating on Validation Set (New Nodes)...")
-if USE_MEMORY:
-    tgn.memory.__init_memory__()
-    
-nn_val_ap, nn_val_auc = eval_edge_prediction(
-    model=tgn,
-    negative_edge_sampler=nn_val_rand_sampler,
-    data=new_node_val_data,
-    n_neighbors=NUM_NEIGHBORS
-)
-logger.info(f"New Node Validation - AUC: {nn_val_auc:.4f}, AP: {nn_val_ap:.4f}")
-
-if USE_MEMORY:
+# 2️⃣ Validation - New nodes
+tgn.set_neighbor_finder(train_ngh_finder)  # Important: only neighbors seen in train
+# if args.use_memory:
+#     tgn.memory.__init_memory__()
+nn_val_ap, nn_val_auc = eval_edge_prediction(tgn, nn_val_rand_sampler, new_node_val_data, args.n_degree)
+logger.info(f"Validation (new nodes) - AUC: {nn_val_auc:.4f}, AP: {nn_val_ap:.4f}")
+if args.use_memory:
     tgn.memory.restore_memory(val_memory_backup)
 
-# 3. Test set (seen nodes)
-logger.info("\n[3/4] Evaluating on Test Set (Seen Nodes)...")
-test_ap, test_auc = eval_edge_prediction(
-    model=tgn,
-    negative_edge_sampler=test_rand_sampler,
-    data=test_data,
-    n_neighbors=NUM_NEIGHBORS
-)
-logger.info(f"Test - AUC: {test_auc:.4f}, AP: {test_ap:.4f}")
-
-if USE_MEMORY:
+# 3️⃣ Test - Seen nodes
+tgn.set_neighbor_finder(full_ngh_finder)
+test_ap, test_auc = eval_edge_prediction(tgn, test_rand_sampler, test_data, args.n_degree)
+logger.info(f"Test (seen nodes) - AUC: {test_auc:.4f}, AP: {test_ap:.4f}")
+if args.use_memory:
     test_memory_backup = tgn.memory.backup_memory()
 
-# 4. Test set (new nodes)
-logger.info("\n[4/4] Evaluating on Test Set (New Nodes)...")
-if USE_MEMORY:
+# 4️⃣ Test - New nodes
+tgn.set_neighbor_finder(train_ngh_finder)
+if args.use_memory:
     tgn.memory.restore_memory(val_memory_backup)
-    
-nn_test_ap, nn_test_auc = eval_edge_prediction(
-    model=tgn,
-    negative_edge_sampler=nn_test_rand_sampler,
-    data=new_node_test_data,
-    n_neighbors=NUM_NEIGHBORS
-)
-logger.info(f"New Node Test - AUC: {nn_test_auc:.4f}, AP: {nn_test_ap:.4f}")
+nn_test_ap, nn_test_auc = eval_edge_prediction(tgn, nn_test_rand_sampler, new_node_test_data, args.n_degree)
+logger.info(f"Test (new nodes) - AUC: {nn_test_auc:.4f}, AP: {nn_test_ap:.4f}")
 
-### Summary
-logger.info("\n" + "="*50)
-logger.info("EVALUATION SUMMARY")
-logger.info("="*50)
-logger.info("\nSeen Nodes (Transductive):")
-logger.info(f"  Validation - AUC: {val_auc:.4f}, AP: {val_ap:.4f}")
-logger.info(f"  Test       - AUC: {test_auc:.4f}, AP: {test_ap:.4f}")
-logger.info("\nNew Nodes (Inductive):")
-logger.info(f"  Validation - AUC: {nn_val_auc:.4f}, AP: {nn_val_ap:.4f}")
-logger.info(f"  Test       - AUC: {nn_test_auc:.4f}, AP: {nn_test_ap:.4f}")
-logger.info("="*50)
+# ---------------- Summary ---------------- #
+logger.info("Generating predicted graph...")
 
-### Save results
-results = {
-    'val_auc': val_auc,
-    'val_ap': val_ap,
-    'nn_val_auc': nn_val_auc,
-    'nn_val_ap': nn_val_ap,
-    'test_auc': test_auc,
-    'test_ap': test_ap,
-    'nn_test_auc': nn_test_auc,
-    'nn_test_ap': nn_test_ap,
-}
+# Création du graphe (graph non orienté pour TGN, orienté si dyrep)
+pred_graph = nx.DiGraph() if args.dyrep else nx.Graph()
 
-# Print in a format easy to copy-paste
-logger.info("\nResults (CSV format):")
-logger.info("metric,seen_val,seen_test,new_val,new_test")
-logger.info(f"AUC,{val_auc:.4f},{test_auc:.4f},{nn_val_auc:.4f},{nn_test_auc:.4f}")
-logger.info(f"AP,{val_ap:.4f},{test_ap:.4f},{nn_val_ap:.4f},{nn_test_ap:.4f}")
+sources = full_data.sources
+destinations = full_data.destinations
+edge_times = full_data.timestamps
+edge_idxs = full_data.edge_idxs
+
+# Sampler négatif avec 1 négatif par arête
+neg_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=42)
+
+batch_size = 200
+num_edges = len(sources)
+
+for start in range(0, num_edges, batch_size):
+    end = min(start + batch_size, num_edges)
+
+    src_batch = sources[start:end]
+    dst_batch = destinations[start:end]
+    times_batch = edge_times[start:end]
+    idx_batch = edge_idxs[start:end]
+
+    # Negative sampling (1 négatif par source)
+    neg_tuple = neg_sampler.sample(len(src_batch))  # retourne un tuple
+    neg_batch = neg_tuple[1]  # on prend les destinations négatives
+
+    # s'assurer que c'est 1D
+    if isinstance(neg_batch, list):
+        neg_batch = np.array(neg_batch)
+    elif len(neg_batch.shape) > 1:
+        neg_batch = neg_batch[:, 0]
+
+    # Conversion en tenseurs CPU Long
+    src_tensor = torch.tensor(src_batch, dtype=torch.long, device='cpu')
+    dst_tensor = torch.tensor(dst_batch, dtype=torch.long, device='cpu')
+    neg_tensor = torch.tensor(neg_batch, dtype=torch.long, device='cpu')
+    times_tensor = torch.tensor(times_batch, dtype=torch.long, device='cpu')
+    idx_tensor = torch.tensor(idx_batch, dtype=torch.long, device='cpu')
+
+    # Calcul des probabilités sans gradient
+    with torch.no_grad():
+        pos_prob, _ = tgn.compute_edge_probabilities(
+            source_nodes=src_tensor,
+            destination_nodes=dst_tensor,
+            negative_nodes=neg_tensor,
+            edge_times=times_tensor,
+            edge_idxs=idx_tensor,
+            n_neighbors=args.n_degree
+        )
+
+    # Ajouter les arêtes avec leur poids dans le graphe
+    for s, d, p in zip(src_batch, dst_batch, pos_prob.cpu().numpy()):
+        pred_graph.add_edge(int(s), int(d), weight=float(p))
+
+logger.info(f"Predicted graph has {pred_graph.number_of_nodes()} nodes and {pred_graph.number_of_edges()} edges.")
+
+# Sauvegarde du graphe prédit
+nx.write_gpickle(pred_graph, f"predicted_graph_{args.data}.gpickle")
+logger.info(f"Predicted graph saved to predicted_graph_{args.data}.gpickle")

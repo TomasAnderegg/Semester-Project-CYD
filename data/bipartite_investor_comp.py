@@ -99,32 +99,22 @@ def save_graph_and_dicts(B, df_companies, dict_companies, dict_tech, limit, flag
 def prepare_tgn_input(B, output_prefix="investment_bipartite"):
     """
     Convertit ton graphe bipartite NetworkX en fichiers compatibles TGN.
+    FIXE: Gère les timestamps dupliqués en ajoutant un epsilon.
     """
     rows = []
     feats = []
     user_map, item_map = {}, {}
 
-
     for idx, (u, v, data) in enumerate(B.edges(data=True)):
         # 1️⃣ Identifiants entiers pour TGN
         if u not in user_map:
-         user_map[u] = len(user_map)
+            user_map[u] = len(user_map)
         if v not in item_map:
             item_map[v] = len(item_map)
         u_id = user_map[u]
         v_id = item_map[v]
         
-        # # 2️⃣ Timestamp (si disponible)
-        # print("funding_rounds existe ?", "funding_rounds" in data)
-        # if "funding_rounds" in data:
-        #     print("type de funding_rounds :", type(data["funding_rounds"]))
-        #     if len(data["funding_rounds"]) > 0:
-        #         print("type du premier élément :", type(data["funding_rounds"][0]))
-        #         print("announced_on existe ?", "announced_on" in data["funding_rounds"][0])
-        #         if "announced_on" in data["funding_rounds"][0]:
-        #             print("type de announced_on :", type(data["funding_rounds"][0]["announced_on"]))
-        #             print("valeur de announced_on :", data["funding_rounds"][0]["announced_on"])
-
+        # 2️⃣ Timestamp
         if data.get('funding_rounds') and data['funding_rounds'][0].get('announced_on'):
             try:
                 ts = datetime.strptime(
@@ -135,10 +125,10 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
         else:
             ts = 0.0
 
-        # 3️⃣ Label : ici on peut mettre 1 si l’investissement a eu lieu
+        # 3️⃣ Label
         label = 1.0
 
-        # 4️⃣ Features : par exemple, montant total et nombre de tours
+        # 4️⃣ Features
         feat = np.array([
             data.get('total_raised_amount_usd', 0.0),
             data.get('num_funding_rounds', 0.0)
@@ -151,21 +141,86 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
     df = pd.DataFrame(rows, columns=['u', 'i', 'ts', 'label'])
     feats = np.array(feats)
 
+    # ✅ Filtrer les timestamps invalides (= 0)
+    print(f"📊 Avant filtrage: {len(df)} interactions")
+    if (df.ts == 0).any():
+        print(f"   Suppression de {(df.ts == 0).sum()} interactions sans timestamp")
+        valid_mask = df.ts > 0
+        df = df[valid_mask].reset_index(drop=True)
+        feats = feats[valid_mask]
+    print(f"   Après filtrage: {len(df)} interactions")
+    
+    if len(df) == 0:
+        raise ValueError("❌ Aucune interaction avec timestamp valide!")
+
+    # ✅ Tri par timestamp
+    sort_indices = df.ts.argsort()
+    df = df.iloc[sort_indices].reset_index(drop=True)
+    feats = feats[sort_indices]
+    
+    print(f"✓ Données triées par timestamp")
+    
+    # ✅ SOLUTION PRINCIPALE: Briser les égalités de timestamps
+    # Pour chaque groupe de timestamps identiques, ajouter un petit epsilon
+    print(f"\n🔧 Traitement des timestamps dupliqués...")
+    duplicates_before = df.ts.duplicated().sum()
+    print(f"   Timestamps dupliqués avant: {duplicates_before}")
+    
+    if duplicates_before > 0:
+        # Méthode 1: Ajouter un epsilon croissant pour chaque occurrence
+        epsilon = 1e-6  # 1 microseconde
+        
+        # Grouper par timestamp et ajouter un offset dans chaque groupe
+        df['ts_original'] = df['ts'].copy()
+        df['group'] = df.groupby('ts').cumcount()
+        df['ts'] = df['ts'] + df['group'] * epsilon
+        
+        # Nettoyer les colonnes temporaires
+        df = df.drop(['ts_original', 'group'], axis=1)
+        
+        duplicates_after = df.ts.duplicated().sum()
+        print(f"   Timestamps dupliqués après: {duplicates_after}")
+        print(f"   ✓ {duplicates_before - duplicates_after} timestamps rendus uniques")
+    
+    # ✅ Vérification finale stricte
+    is_strictly_increasing = (df.ts.diff().dropna() > 0).all()
+    if not is_strictly_increasing:
+        print("❌ ERREUR: Les timestamps ne sont pas strictement croissants!")
+        # Debug: trouver les problèmes
+        problems = df[df.ts.diff() <= 0]
+        print(f"Problèmes détectés à ces indices: {problems.index.tolist()[:10]}")
+        print(problems.head())
+        raise ValueError("Timestamps pas strictement croissants après correction!")
+    
+    print(f"✓ Vérification: timestamps strictement croissants")
+    
+    # ✅ Statistiques
+    print(f"\n📈 Statistiques temporelles:")
+    print(f"   Premier timestamp: {datetime.fromtimestamp(df.ts.min()).strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   Dernier timestamp: {datetime.fromtimestamp(df.ts.max()).strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   Durée totale: {(df.ts.max() - df.ts.min()) / (365.25 * 24 * 3600):.1f} ans")
+    print(f"   Timestamps uniques: {df.ts.nunique()} / {len(df)}")
+
     # === Sauvegarde ===
     Path("data").mkdir(exist_ok=True)
 
     df['idx'] = np.arange(len(df))
-
     df.to_csv(f"data/{output_prefix}.csv", index=False)
     np.save(f"data/{output_prefix}.npy", feats)
 
-    # === Node features (aléatoires ou nulles) ===
+    # === Node features ===
     max_node_id = max(df.u.max(), df.i.max())
-    node_feats = np.zeros((max_node_id + 1, feats.shape[1]))  # ou 172 colonnes si tu veux
+    MEMORY_DIM = 172
+    node_feats = np.zeros((max_node_id + 1, MEMORY_DIM))
     np.save(f"data/{output_prefix}_node.npy", node_feats)
 
-    print(f"✓ Données TGN prêtes : data/{output_prefix}.csv, .npy et _node.npy")
-    print(df.head())
+    print(f"\n✅ Données TGN prêtes : data/{output_prefix}.csv, .npy et _node.npy")
+    print(f"   {len(df)} interactions")
+    print(f"   {max_node_id + 1} nœuds uniques")
+    print(f"\n📋 Aperçu des premières interactions:")
+    print(df.head(10))
+    
+    return df  # Retourner pour inspection si besoin
 
 
 # ===================================================================

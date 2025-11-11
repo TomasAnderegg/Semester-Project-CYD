@@ -19,7 +19,7 @@ np.random.seed(0)
 ### Argument and global variables
 parser = argparse.ArgumentParser('TGN self-supervised training')
 parser.add_argument('-d', '--data', type=str, help='Dataset name (eg. wikipedia or reddit)',
-                    default='wikipedia')
+                    default='crunchbase')
 parser.add_argument('--bs', type=int, default=200, help='Batch_size')
 parser.add_argument('--prefix', type=str, default='', help='Prefix to name the checkpoints')
 parser.add_argument('--n_degree', type=int, default=10, help='Number of neighbors to sample')
@@ -28,7 +28,7 @@ parser.add_argument('--n_epoch', type=int, default=50, help='Number of epochs')
 parser.add_argument('--n_layer', type=int, default=1, help='Number of network layers')
 parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate')
 parser.add_argument('--patience', type=int, default=5, help='Patience for early stopping')
-parser.add_argument('--n_runs', type=int, default=1, help='Number of runs')
+parser.add_argument('--n_runs', type=int, default=1, help='Number of runs') 
 parser.add_argument('--drop_out', type=float, default=0.1, help='Dropout probability')
 parser.add_argument('--gpu', type=int, default=0, help='Idx for the gpu to use')
 parser.add_argument('--node_dim', type=int, default=100, help='Dimensions of the node embedding')
@@ -149,7 +149,7 @@ for i in range(args.n_runs):
             n_layers=NUM_LAYER,
             n_heads=NUM_HEADS, dropout=DROP_OUT, use_memory=USE_MEMORY,
             message_dimension=MESSAGE_DIM, memory_dimension=MEMORY_DIM,
-            memory_update_at_start=False,#not args.memory_update_at_end, ajoute par Moi lol
+            memory_update_at_start=not args.memory_update_at_end,#False,#not args.memory_update_at_end, ajoute par Moi lol
             embedding_module_type=args.embedding_module,
             message_function=args.message_function,
             aggregator_type=args.aggregator,
@@ -180,7 +180,7 @@ for i in range(args.n_runs):
   early_stopper = EarlyStopMonitor(max_round=args.patience)
   for epoch in range(NUM_EPOCH):
     start_epoch = time.time()
-    tgn.memory.__init_memory__()  # réinitialise la mémoire   #ajouté par Moi lol
+    #tgn.memory.__init_memory__()  # réinitialise la mémoire   #ajouté par Moi lol
  
 
     ### Training

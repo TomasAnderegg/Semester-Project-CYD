@@ -157,6 +157,34 @@ def get_data(dataset_name, different_new_nodes_between_val_and_test=False, rando
     new_node_test_data.n_interactions, new_node_test_data.n_unique_nodes))
   print("{} nodes were used for the inductive testing, i.e. are never seen during training".format(
     len(new_test_node_set)))
+  
+  #----------------ajouté par Tomas---------------------------
+  # Fonction utilitaire pour trier les objets Data selon le temps
+  def sort_data_by_time(data_obj):
+      idx = np.argsort(data_obj.timestamps)
+      data_obj.sources = data_obj.sources[idx]
+      data_obj.destinations = data_obj.destinations[idx]
+      data_obj.timestamps = data_obj.timestamps[idx]
+      data_obj.edge_idxs = data_obj.edge_idxs[idx]
+      data_obj.labels = data_obj.labels[idx]
+      return data_obj
+
+  # Appliquer le tri chronologique sur chaque split
+  train_data = sort_data_by_time(train_data)
+  val_data = sort_data_by_time(val_data)
+  test_data = sort_data_by_time(test_data)
+  new_node_val_data = sort_data_by_time(new_node_val_data)
+  new_node_test_data = sort_data_by_time(new_node_test_data)
+
+  # Tri aussi sur full_data pour cohérence globale
+  idx = np.argsort(full_data.timestamps)
+  full_data.sources = full_data.sources[idx]
+  full_data.destinations = full_data.destinations[idx]
+  full_data.timestamps = full_data.timestamps[idx]
+  full_data.edge_idxs = full_data.edge_idxs[idx]
+  full_data.labels = full_data.labels[idx]
+
+#----------------------------------------------------------
 
   return node_features, edge_features, full_data, train_data, val_data, test_data, \
          new_node_val_data, new_node_test_data
