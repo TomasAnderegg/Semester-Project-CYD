@@ -87,7 +87,7 @@ def save_graph_and_dicts(B, df_companies, dict_companies, dict_tech, limit, flag
     with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_tech_ranked_{limit}.pickle', 'wb') as f:
         pickle.dump(dict_tech, f)
 
-    # ✅ Sauvegarder le graphe avec pickle directement (évite tout bug NetworkX)
+    # Sauvegarder le graphe avec pickle directement (évite tout bug NetworkX)
     with open(f"{SAVE_DIR_NETWORKS}/{prefix}bipartite_graph_{limit}.gpickle", "wb") as f:
         pickle.dump(B, f)
 
@@ -106,7 +106,7 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
     user_map, item_map = {}, {}
 
     for idx, (u, v, data) in enumerate(B.edges(data=True)):
-        # 1️⃣ Identifiants entiers pour TGN
+        # Identifiants entiers pour TGN
         if u not in user_map:
             user_map[u] = len(user_map)
         if v not in item_map:
@@ -114,7 +114,7 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
         u_id = user_map[u]
         v_id = item_map[v]
         
-        # 2️⃣ Timestamp
+        # Timestamp
         if data.get('funding_rounds') and data['funding_rounds'][0].get('announced_on'):
             try:
                 ts = datetime.strptime(
@@ -125,10 +125,10 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
         else:
             ts = 0.0
 
-        # 3️⃣ Label
+        # Label
         label = 1.0
 
-        # 4️⃣ Features
+        # Features
         feat = np.array([
             data.get('total_raised_amount_usd', 0.0),
             data.get('num_funding_rounds', 0.0)
@@ -141,8 +141,8 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
     df = pd.DataFrame(rows, columns=['u', 'i', 'ts', 'label'])
     feats = np.array(feats)
 
-    # ✅ Filtrer les timestamps invalides (= 0)
-    print(f"📊 Avant filtrage: {len(df)} interactions")
+    # Filtrer les timestamps invalides (= 0)
+    print(f"Avant filtrage: {len(df)} interactions")
     if (df.ts == 0).any():
         print(f"   Suppression de {(df.ts == 0).sum()} interactions sans timestamp")
         valid_mask = df.ts > 0
@@ -151,18 +151,18 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
     print(f"   Après filtrage: {len(df)} interactions")
     
     if len(df) == 0:
-        raise ValueError("❌ Aucune interaction avec timestamp valide!")
+        raise ValueError("Aucune interaction avec timestamp valide!")
 
-    # ✅ Tri par timestamp
+    # Tri par timestamp
     sort_indices = df.ts.argsort()
     df = df.iloc[sort_indices].reset_index(drop=True)
     feats = feats[sort_indices]
     
     print(f"✓ Données triées par timestamp")
     
-    # ✅ SOLUTION PRINCIPALE: Briser les égalités de timestamps
+    # SOLUTION PRINCIPALE: Briser les égalités de timestamps
     # Pour chaque groupe de timestamps identiques, ajouter un petit epsilon
-    print(f"\n🔧 Traitement des timestamps dupliqués...")
+    print(f"\n Traitement des timestamps dupliqués...")
     duplicates_before = df.ts.duplicated().sum()
     print(f"   Timestamps dupliqués avant: {duplicates_before}")
     
@@ -182,10 +182,10 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
         print(f"   Timestamps dupliqués après: {duplicates_after}")
         print(f"   ✓ {duplicates_before - duplicates_after} timestamps rendus uniques")
     
-    # ✅ Vérification finale stricte
+    #  Vérification finale stricte
     is_strictly_increasing = (df.ts.diff().dropna() > 0).all()
     if not is_strictly_increasing:
-        print("❌ ERREUR: Les timestamps ne sont pas strictement croissants!")
+        print(" ERREUR: Les timestamps ne sont pas strictement croissants!")
         # Debug: trouver les problèmes
         problems = df[df.ts.diff() <= 0]
         print(f"Problèmes détectés à ces indices: {problems.index.tolist()[:10]}")
@@ -194,8 +194,8 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
     
     print(f"✓ Vérification: timestamps strictement croissants")
     
-    # ✅ Statistiques
-    print(f"\n📈 Statistiques temporelles:")
+    #  Statistiques
+    print(f"\ Statistiques temporelles:")
     print(f"   Premier timestamp: {datetime.fromtimestamp(df.ts.min()).strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"   Dernier timestamp: {datetime.fromtimestamp(df.ts.max()).strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"   Durée totale: {(df.ts.max() - df.ts.min()) / (365.25 * 24 * 3600):.1f} ans")
@@ -214,10 +214,10 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
     node_feats = np.zeros((max_node_id + 1, MEMORY_DIM))
     np.save(f"data/{output_prefix}_node.npy", node_feats)
 
-    print(f"\n✅ Données TGN prêtes : data/{output_prefix}.csv, .npy et _node.npy")
+    print(f"\n Données TGN prêtes : data/{output_prefix}.csv, .npy et _node.npy")
     print(f"   {len(df)} interactions")
     print(f"   {max_node_id + 1} nœuds uniques")
-    print(f"\n📋 Aperçu des premières interactions:")
+    print(f"\n Aperçu des premières interactions:")
     print(df.head(10))
     
     return df  # Retourner pour inspection si besoin
@@ -318,10 +318,10 @@ def clean_funding_data(df):
 
 def merge_and_clean_final(df_funding, df_investments):
     """Merge funding and investments data, then clean"""
-    # ✅ MERGE COMME TU LE VEUX
+    # MERGE COMME TU LE VEUX
     df_merged = pd.merge(df_funding, df_investments, on='funding_round_uuid')
     
-    # ✅ SAUVEGARDER LE RÉSULTAT DU MERGE COMPLET
+    #  SAUVEGARDER LE RÉSULTAT DU MERGE COMPLET
     csv_path = f"{SAVE_DIR_CSV}/merged_funding_investments_full.csv"
     df_merged.to_csv(csv_path, index=False)
     print(f"✓ CSV du merge complet sauvegardé : {csv_path}")
@@ -336,7 +336,7 @@ def merge_and_clean_final(df_funding, df_investments):
     
     df_clean = CB_data_cleaning(df_merged, to_drop, to_rename, to_check_double, drop_if_nan, sort_by)
     
-    # ✅ Garder TOUTES les colonnes nécessaires pour le graphe
+    #  Garder TOUTES les colonnes nécessaires pour le graphe
     required_cols = ["org_name", "investor_name", "org_uuid", "investor_uuid", 
                      "raised_amount_usd", "num_investments", "announced_on"]
     
@@ -347,7 +347,7 @@ def merge_and_clean_final(df_funding, df_investments):
         df_graph = df_clean[existing_cols].copy()
         df_graph = df_graph.dropna(subset=['org_name', 'investor_name'])
         
-        # ✅ SAUVEGARDER AUSSI LE RÉSULTAT FILTRÉ
+        #  SAUVEGARDER AUSSI LE RÉSULTAT FILTRÉ
         csv_path_graph = f"{SAVE_DIR_CSV}/merged_for_graph.csv"
         df_graph.to_csv(csv_path_graph, index=False)
         print(f"✓ CSV pour le graphe sauvegardé : {csv_path_graph}")
@@ -376,7 +376,6 @@ def nx_dip_graph_from_pandas(df):
     Return:
         - B: bipartite graph with funding info on edges
     """
-    import pandas as pd
     dict_companies = {}
     dict_invest = {}
 
@@ -437,7 +436,7 @@ def nx_dip_graph_from_pandas(df):
         edge_key = (comp_name, invest_name)
         raised_amt = safe_float(row.get('raised_amount_usd', 0))
 
-        if B.has_edge(comp_name, invest_name):
+        if B.has_edge(comp_name, invest_name): # Returns True if the edge (u, v) is in the graph.
             existing_data = B[comp_name][invest_name]
             existing_data['funding_rounds'].append({
                 'funding_round_uuid': row.get('funding_round_uuid', ''),
@@ -460,7 +459,7 @@ def nx_dip_graph_from_pandas(df):
                       )
 
     # Stats
-    print(f"\n📊 Statistiques des levées de fonds:")
+    print(f"\ Statistiques des levées de fonds:")
     total_funding_rounds = sum([B[u][v].get('num_funding_rounds', 0) for u, v in B.edges()])
     print(f"  - Total levées de fonds: {total_funding_rounds}")
 
@@ -475,20 +474,20 @@ def nx_dip_graph_from_pandas(df):
 
 
 
-def create_bipartite_from_dataframe(df, df_comp_clean):
-    """Create bipartite graph from org_name and investor_name columns"""
-    B = nx.Graph()
+# def create_bipartite_from_dataframe(df, df_comp_clean):
+#     """Create bipartite graph from org_name and investor_name columns"""
+#     B = nx.Graph()
     
-    for _, row in df.iterrows():
-        org = row['org_name']
-        investor = row['investor_name']
+#     for _, row in df.iterrows():
+#         org = row['org_name']
+#         investor = row['investor_name']
         
-        if pd.notna(org) and pd.notna(investor):
-            B.add_node(org, bipartite=0)
-            B.add_node(investor, bipartite=1)
-            B.add_edge(org, investor)
+#         if pd.notna(org) and pd.notna(investor):
+#             B.add_node(org, bipartite=0)
+#             B.add_node(investor, bipartite=1)
+#             B.add_edge(org, investor)
     
-    return B
+#     return B
 
 
 # ===================================================================
@@ -578,7 +577,7 @@ def save_graph_and_dicts(B, dict_companies, dict_investors, limit):
         pickle.dump(B, f)
     print(f"✓ Graphe sauvegardé : {SAVE_DIR_NETWORKS}/bipartite_graph_{limit}.gpickle")
     
-    # ✅ NOUVEAU: Sauvegarder un CSV avec les informations des arêtes
+    # NOUVEAU: Sauvegarder un CSV avec les informations des arêtes
     edge_data = []
     for u, v in B.edges():
         edge_info = B[u][v]
@@ -628,7 +627,7 @@ def main(max_companies_plot=20, max_investors_plot=20):
         # Limiter les données
         df_graph = df_graph_full.head(limit).copy()
 
-        # ✅ Sauvegarde temporaire pour inspection
+        # Sauvegarde temporaire pour inspection
         df_graph.to_csv("debug_df_graph.csv", index=False)
         print("✓ Fichier debug_df_graph.csv sauvegardé, tu peux l'ouvrir dans Excel ou VSCode pour vérifier.")
         print("Colonnes :", df_graph.columns.tolist())
