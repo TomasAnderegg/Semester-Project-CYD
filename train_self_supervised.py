@@ -228,6 +228,7 @@ for i in range(args.n_runs):
       loss /= args.backprop_every
 
       loss.backward()
+      torch.nn.utils.clip_grad_norm_(tgn.parameters(), max_norm=0.5) #Ajouté par Moi 
       optimizer.step()
       m_loss.append(loss.item())
 

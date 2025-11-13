@@ -6,6 +6,7 @@ from pathlib import Path
 import networkx as nx
 import pickle
 import matplotlib.pyplot as plt
+import csv
 
 from evaluation.evaluation import eval_edge_prediction
 from model.tgn import TGN
@@ -27,7 +28,7 @@ parser.add_argument('--n_epoch', type=int, default=50, help='Number of epochs')
 parser.add_argument('--n_layer', type=int, default=1, help='Number of network layers')
 parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate')
 parser.add_argument('--patience', type=int, default=5, help='Patience for early stopping')
-parser.add_argument('--n_runs', type=int, default=1, help='Number of runs') 
+parser.add_argument('--n_runs', type=int, default=1, help='Number of runs')
 parser.add_argument('--drop_out', type=float, default=0.1, help='Dropout probability')
 parser.add_argument('--gpu', type=int, default=0, help='Idx for the gpu to use')
 parser.add_argument('--node_dim', type=int, default=100, help='Dimensions of the node embedding')
@@ -61,6 +62,10 @@ parser.add_argument('--dyrep', action='store_true',
 parser.add_argument('--model_path', type=str, default='', help='Path to the trained model')
 parser.add_argument('--circular', action='store_true',
                     help='Use circular layout for bipartite graph')
+parser.add_argument('--mapping_dir', type=str, default='data/mappings',
+                    help='Directory where company/investor mapping .pickle files are stored')
+parser.add_argument('--top_k_export', type=int, default=100,
+                    help='Export top-k predictions to CSV for inspection (0 to disable)')
 
 args = parser.parse_args()
 
@@ -180,28 +185,42 @@ if args.use_memory:
 # Set to full neighbor finder for graph generation
 tgn.set_neighbor_finder(full_ngh_finder)
 
-# Create empty graph
-pred_graph = nx.DiGraph() if args.dyrep else nx.Graph()
+# Create empty graph (undirected bipartite)
+pred_graph = nx.Graph()
 
-# Get all edges and sort by timestamp
+# ---------------- Add all nodes first ---------------- #
+# Use mappings if available, else keep numeric prefixed IDs
+for node in set(full_data.sources).union(full_data.destinations):
+    if 'id_to_investor' in locals() and node in id_to_investor:
+        pred_graph.add_node(id_to_investor[node], bipartite=0)
+    elif 'id_to_company' in locals() and node in id_to_company:
+        pred_graph.add_node(id_to_company[node], bipartite=1)
+    else:
+        # fallback numeric prefixed
+        if node in full_data.sources:
+            pred_graph.add_node(f"investor_{node}", bipartite=0)
+        else:
+            pred_graph.add_node(f"company_{node}", bipartite=1)
+
+# ---------------- Prepare edge batches ---------------- #
 sources = np.array(full_data.sources)
 destinations = np.array(full_data.destinations)
 edge_times = np.array(full_data.timestamps)
 edge_idxs = np.array(full_data.edge_idxs)
 
-# Sort by timestamp to maintain temporal order
 sorted_indices = np.argsort(edge_times)
 sources = sources[sorted_indices]
 destinations = destinations[sorted_indices]
 edge_times = edge_times[sorted_indices]
 edge_idxs = edge_idxs[sorted_indices]
 
-# Negative sampler
 neg_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=42)
 
 batch_size = 200
 num_edges = len(sources)
+predictions = []  # tuples (investor_id, company_id, prob)
 
+# ---------------- Compute edge probabilities and add edges ---------------- #
 for start in range(0, num_edges, batch_size):
     end = min(start + batch_size, num_edges)
 
@@ -212,8 +231,6 @@ for start in range(0, num_edges, batch_size):
 
     neg_tuple = neg_sampler.sample(len(src_batch))
     neg_batch = np.array(neg_tuple[1])
-
-    # Ensure 1D array
     if len(neg_batch.shape) > 1:
         neg_batch = neg_batch[:, 0]
 
@@ -226,43 +243,149 @@ for start in range(0, num_edges, batch_size):
             idx_batch
         )
 
-    # Add edges to graph with probabilities
+    # Add edges using mapped names if available
     for s, d, p in zip(src_batch, dst_batch, pos_prob.cpu().numpy()):
-        pred_graph.add_edge(int(s), int(d), weight=float(p))
-    
-    # Log progress
+        if 'id_to_investor' in locals() and s in id_to_investor:
+            investor_node = id_to_investor[s]
+        else:
+            investor_node = f"investor_{s}"
+
+        if 'id_to_company' in locals() and d in id_to_company:
+            company_node = id_to_company[d]
+        else:
+            company_node = f"company_{d}"
+
+        pred_graph.add_edge(investor_node, company_node, weight=float(p))
+        predictions.append((s, d, float(p)))
+
     if (start // batch_size) % 10 == 0:
         logger.info(f"Processed {end}/{num_edges} edges...")
 
 logger.info(f"Predicted graph has {pred_graph.number_of_nodes()} nodes and {pred_graph.number_of_edges()} edges.")
 
-# Save graph
-with open(f'predicted_graph_{args.data}.pkl', 'wb') as f:
+
+# Save numeric/prefixed graph (before remapping to names)
+numeric_graph_path = Path(f'predicted_graph_{args.data}_numeric.pkl')
+with open(numeric_graph_path, 'wb') as f:
     pickle.dump(pred_graph, f, pickle.HIGHEST_PROTOCOL)
-logger.info(f"Predicted graph saved to predicted_graph_{args.data}.pkl")
+logger.info(f"Numeric (prefixed) predicted graph saved to {numeric_graph_path}")
+
+#---------------- Correspondance avec Companies/Investors ----------------#
+logger.info("Attempting to remap node IDs to company and investor names...")
+
+mapping_dir = Path(args.mapping_dir)
+mapping_dir.mkdir(parents=True, exist_ok=True)
+
+# Candidate filenames to try (flexible)
+candidate_company_names = [
+    f"{DATA}_company_id_map.pickle",
+    f"{DATA}_tgn_company_id_map.pickle",
+    f"{DATA}_company_id_map.pkl",
+    f"{DATA}_tgn_company_id_map.pkl",
+    f"investment_bipartite_company_id_map.pickle",
+    f"investment_bipartite_company_id_map.pkl",
+]
+candidate_investor_names = [
+    f"{DATA}_investor_id_map.pickle",
+    f"{DATA}_tgn_investor_id_map.pickle",
+    f"{DATA}_investor_id_map.pkl",
+    f"{DATA}_tgn_investor_id_map.pkl",
+    f"investment_bipartite_investor_id_map.pickle",
+    f"investment_bipartite_investor_id_map.pkl",
+]
+
+company_map_path = None
+investor_map_path = None
+
+for cand in candidate_company_names:
+    p = mapping_dir / cand
+    if p.exists():
+        company_map_path = p
+        break
+
+for cand in candidate_investor_names:
+    p = mapping_dir / cand
+    if p.exists():
+        investor_map_path = p
+        break
+
+if company_map_path is None or investor_map_path is None:
+    logger.warning(f"Mapping files not found in {mapping_dir}. "
+                   "Predicted graph will keep numeric prefixed node IDs.")
+    remapped_graph = pred_graph  # remain with prefixed numeric nodes
+else:
+    logger.info(f"Found mappings:\n - company: {company_map_path}\n - investor: {investor_map_path}")
+    with open(company_map_path, "rb") as f:
+        company_map = pickle.load(f)
+    with open(investor_map_path, "rb") as f:
+        investor_map = pickle.load(f)
+
+    # Create inverse mapping (id -> name)
+    id_to_company = {int(v): k for k, v in company_map.items()}
+    id_to_investor = {int(v): k for k, v in investor_map.items()}
+
+    # Build remapped graph with real names preserved and bipartite attr
+    remapped_graph = nx.Graph()
+    for u, v, data in pred_graph.edges(data=True):
+        # extract numeric id from prefixed node names if present
+        u_raw = str(u)
+        v_raw = str(v)
+        # For investor node
+        if u_raw.startswith("investor_"):
+            try:
+                uid = int(u_raw.split("_", 1)[1])
+                u_name_real = id_to_investor.get(uid, f"investor_{uid}")
+            except Exception:
+                u_name_real = u_raw
+        else:
+            u_name_real = u_raw
+
+        # For company node
+        if v_raw.startswith("company_"):
+            try:
+                vid = int(v_raw.split("_", 1)[1])
+                v_name_real = id_to_company.get(vid, f"company_{vid}")
+            except Exception:
+                v_name_real = v_raw
+        else:
+            v_name_real = v_raw
+
+        # Add nodes with bipartite attribute: investor -> 0, company -> 1
+        remapped_graph.add_node(u_name_real, bipartite=0 if "investor" in u_name_real else 1)
+        remapped_graph.add_node(v_name_real, bipartite=1 if "company" in v_name_real else 0)
+        remapped_graph.add_edge(u_name_real, v_name_real, **data)
+
+    logger.info(f"Node IDs successfully remapped to names ({remapped_graph.number_of_nodes()} nodes).")
+
+# Save named graph
+named_graph_path = Path(f'predicted_graph_named_{args.data}.pkl')
+with open(named_graph_path, 'wb') as f:
+    pickle.dump(remapped_graph, f, pickle.HIGHEST_PROTOCOL)
+logger.info(f"Named predicted graph saved to {named_graph_path}")
+
+# Optional: export top-K predictions to CSV for quick inspection
+if args.top_k_export and args.top_k_export > 0:
+    logger.info(f"Exporting top {args.top_k_export} predicted links to CSV...")
+    sorted_preds = sorted(predictions, key=lambda x: x[2], reverse=True)
+    top_k = sorted_preds[:args.top_k_export]
+    csv_path = Path(f"top_predictions_{args.data}.csv")
+    with open(csv_path, "w", newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["investor_id", "company_id", "investor_name", "company_name", "probability"])
+        for uid, vid, prob in top_k:
+            inv_name = id_to_investor.get(uid, f"investor_{uid}") if 'id_to_investor' in locals() else f"investor_{uid}"
+            comp_name = id_to_company.get(vid, f"company_{vid}") if 'id_to_company' in locals() else f"company_{vid}"
+            writer.writerow([uid, vid, inv_name, comp_name, prob])
+    logger.info(f"Top predictions exported to {csv_path}")
 
 # ---------------- Visualization Functions ---------------- #
 
 def plot_bipartite_graph(G, circular=False):
-    """Plots the bipartite network similar to the original style"""
+    """Plots the bipartite network"""
     print("\n========================== PLOTTING BIPARTITE GRAPH ==========================")
 
-    # Identify the two sets of the bipartite graph
-    # Assuming sources are set 0 (companies) and destinations are set 1 (investors)
-    set1 = [node for node in G.nodes() if G.nodes[node].get('bipartite', 0) == 0]
-    set2 = [node for node in G.nodes() if G.nodes[node].get('bipartite', 1) == 1]
-    
-    # If bipartite attribute doesn't exist, split by degree or node ID
-    if len(set1) == 0 or len(set2) == 0:
-        all_nodes = list(G.nodes())
-        mid = len(all_nodes) // 2
-        set1 = all_nodes[:mid]
-        set2 = all_nodes[mid:]
-        # Add bipartite attribute
-        for node in set1:
-            G.nodes[node]['bipartite'] = 0
-        for node in set2:
-            G.nodes[node]['bipartite'] = 1
+    set1 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 0]
+    set2 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 1]
 
     if circular:
         pos = nx.circular_layout(G)
@@ -280,7 +403,7 @@ def plot_bipartite_graph(G, circular=False):
     companies = set1
     investors = set2
 
-    # Calculate degree centrality
+    # calculate degree centrality
     companyDegree = nx.degree(G, companies) 
     investorDegree = nx.degree(G, investors)
 
@@ -306,50 +429,51 @@ def plot_bipartite_graph(G, circular=False):
 
     plt.legend()
     plt.tight_layout()
-    plt.savefig(f"bipartite_graph_{args.data}.png", dpi=300, bbox_inches='tight')
-    logger.info(f"Bipartite graph saved to bipartite_graph_{args.data}.png")
     plt.show(block=True)
     return pos
 
 
 def plot_predicted_graph(graph, dataset_name, save_path=None, figsize=(15, 10)):
-    """Visualize the predicted graph with edge weights."""
+    """Visualize the predicted graph with edge weights (detailed analysis)."""
     fig, axes = plt.subplots(2, 2, figsize=figsize)
     fig.suptitle(f'TGN Predicted Graph Analysis - {dataset_name}', fontsize=16, fontweight='bold')
-    
+
     # 1. Main graph visualization
     ax1 = axes[0, 0]
     pos = nx.spring_layout(graph, k=0.5, iterations=50, seed=42)
-    
+
     # Get edge weights
     edges = graph.edges()
-    weights = [graph[u][v]['weight'] for u, v in edges]
-    
+    weights = [graph[u][v]['weight'] for u, v in edges] if graph.number_of_edges() > 0 else [0.0]
+
     # Normalize weights for visualization
     weights_normalized = np.array(weights)
-    weights_normalized = (weights_normalized - weights_normalized.min()) / (weights_normalized.max() - weights_normalized.min() + 1e-8)
-    
+    if len(weights_normalized) > 0:
+        weights_normalized = (weights_normalized - weights_normalized.min()) / (weights_normalized.max() - weights_normalized.min() + 1e-8)
+    else:
+        weights_normalized = np.array([0.0])
+
     # Draw nodes
     node_sizes = [graph.degree(node) * 50 + 100 for node in graph.nodes()]
-    nx.draw_networkx_nodes(graph, pos, node_size=node_sizes, node_color='lightblue', 
+    nx.draw_networkx_nodes(graph, pos, node_size=node_sizes, node_color='lightblue',
                           alpha=0.7, ax=ax1)
-    
+
     # Draw edges with varying thickness based on weight
     nx.draw_networkx_edges(graph, pos, width=[w * 3 + 0.5 for w in weights_normalized],
-                          alpha=0.6, edge_color=weights_normalized, 
+                          alpha=0.6, edge_color=weights_normalized,
                           edge_cmap=plt.cm.RdYlGn, ax=ax1)
-    
+
     # Draw labels for nodes with high degree
     high_degree_nodes = [node for node in graph.nodes() if graph.degree(node) > 3]
     labels = {node: str(node) for node in high_degree_nodes}
     nx.draw_networkx_labels(graph, pos, labels, font_size=8, ax=ax1)
-    
+
     ax1.set_title('Graph Structure (node size = degree, edge color/width = probability)')
     ax1.axis('off')
-    
+
     # 2. Edge weight distribution
     ax2 = axes[0, 1]
-    ax2.hist(weights, bins=30, color='skyblue', edgecolor='black', alpha=0.7)
+    ax2.hist(weights, bins=30, edgecolor='black', alpha=0.7)
     ax2.axvline(np.mean(weights), color='red', linestyle='--', linewidth=2, label=f'Mean: {np.mean(weights):.3f}')
     ax2.axvline(np.median(weights), color='green', linestyle='--', linewidth=2, label=f'Median: {np.median(weights):.3f}')
     ax2.set_xlabel('Edge Probability')
@@ -357,21 +481,21 @@ def plot_predicted_graph(graph, dataset_name, save_path=None, figsize=(15, 10)):
     ax2.set_title('Distribution of Edge Probabilities')
     ax2.legend()
     ax2.grid(True, alpha=0.3)
-    
+
     # 3. Degree distribution
     ax3 = axes[1, 0]
-    degrees = [graph.degree(node) for node in graph.nodes()]
-    ax3.hist(degrees, bins=max(degrees) if max(degrees) < 50 else 50, 
-             color='coral', edgecolor='black', alpha=0.7)
+    degrees = [graph.degree(node) for node in graph.nodes()] if graph.number_of_nodes() > 0 else [0]
+    ax3.hist(degrees, bins=max(degrees) if max(degrees) < 50 else 50,
+             edgecolor='black', alpha=0.7)
     ax3.set_xlabel('Node Degree')
     ax3.set_ylabel('Frequency')
     ax3.set_title(f'Degree Distribution (avg: {np.mean(degrees):.2f})')
     ax3.grid(True, alpha=0.3)
-    
+
     # 4. Statistics table
     ax4 = axes[1, 1]
     ax4.axis('off')
-    
+
     # Calculate statistics
     stats = [
         ['Metric', 'Value'],
@@ -380,67 +504,65 @@ def plot_predicted_graph(graph, dataset_name, save_path=None, figsize=(15, 10)):
         ['Number of Edges', f'{graph.number_of_edges()}'],
         ['Density', f'{nx.density(graph):.4f}'],
         ['Avg. Degree', f'{np.mean(degrees):.2f}'],
-        ['Max Degree', f'{max(degrees)}'],
-        ['Min Degree', f'{min(degrees)}'],
+        ['Max Degree', f'{max(degrees) if len(degrees)>0 else 0}'],
+        ['Min Degree', f'{min(degrees) if len(degrees)>0 else 0}'],
         ['─' * 30, '─' * 15],
         ['Edge Probabilities:', ''],
-        ['  Mean', f'{np.mean(weights):.4f}'],
-        ['  Std', f'{np.std(weights):.4f}'],
-        ['  Min', f'{min(weights):.4f}'],
-        ['  Max', f'{max(weights):.4f}'],
+        ['  Mean', f'{np.mean(weights):.4f}' if len(weights)>0 else '0.0'],
+        ['  Std', f'{np.std(weights):.4f}' if len(weights)>0 else '0.0'],
+        ['  Min', f'{min(weights):.4f}' if len(weights)>0 else '0.0'],
+        ['  Max', f'{max(weights):.4f}' if len(weights)>0 else '0.0'],
         ['─' * 30, '─' * 15],
     ]
-    
-    # Add connectivity info if not directed
+
     if not graph.is_directed():
         stats.append(['Connected Components', f'{nx.number_connected_components(graph)}'])
-    
+
     table = ax4.table(cellText=stats, cellLoc='left', loc='center',
                      colWidths=[0.7, 0.3])
     table.auto_set_font_size(False)
     table.set_fontsize(10)
     table.scale(1, 2)
-    
+
     # Style the header row
     for i in range(2):
         table[(0, i)].set_facecolor('#4CAF50')
         table[(0, i)].set_text_props(weight='bold', color='white')
-    
+
     plt.tight_layout()
-    
+
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         logger.info(f"Graph visualization saved to {save_path}")
-    
-    plt.show()
 
+    plt.show()
 
 def plot_top_edges(graph, k=20, dataset_name=""):
     """Plot a subgraph containing only the top-k most confident edges."""
     edges_with_weights = [(u, v, data['weight']) for u, v, data in graph.edges(data=True)]
     edges_with_weights.sort(key=lambda x: x[2], reverse=True)
-    
+
     top_edges = edges_with_weights[:k]
-    
+
     # Create subgraph
-    subgraph = nx.Graph() if not graph.is_directed() else nx.DiGraph()
+    subgraph = nx.Graph()
     for u, v, w in top_edges:
         subgraph.add_edge(u, v, weight=w)
-    
+
     plt.figure(figsize=(12, 8))
-    pos = nx.spring_layout(subgraph, k=1, iterations=50)
-    
+    pos = nx.spring_layout(subgraph, k=1, iterations=50, seed=42)
+
     weights = [subgraph[u][v]['weight'] for u, v in subgraph.edges()]
-    
-    nx.draw_networkx_nodes(subgraph, pos, node_size=500, node_color='lightcoral', alpha=0.8)
-    nx.draw_networkx_edges(subgraph, pos, width=3, alpha=0.6, 
+
+    nx.draw_networkx_nodes(subgraph, pos, node_size=500, alpha=0.8)
+    nx.draw_networkx_edges(subgraph, pos, width=3, alpha=0.6,
                           edge_color=weights, edge_cmap=plt.cm.RdYlGn)
     nx.draw_networkx_labels(subgraph, pos, font_size=10, font_weight='bold')
-    
+
     # Add edge labels with weights
     edge_labels = {(u, v): f'{subgraph[u][v]["weight"]:.3f}' for u, v in subgraph.edges()}
     nx.draw_networkx_edge_labels(subgraph, pos, edge_labels, font_size=8)
-    
+
     plt.title(f'Top {k} Most Confident Edges - {dataset_name}', fontsize=14, fontweight='bold')
     plt.axis('off')
     plt.tight_layout()
@@ -448,15 +570,17 @@ def plot_top_edges(graph, k=20, dataset_name=""):
     logger.info(f"Top edges plot saved to top_edges_{dataset_name}.png")
     plt.show()
 
-
 # Generate visualizations
 logger.info("Visualizing predicted graph (bipartite style)...")
-plot_bipartite_graph(pred_graph, circular=args.circular)
+plot_bipartite_graph(remapped_graph if 'remapped_graph' in locals() else pred_graph,
+                     circular=args.circular)
+
 
 logger.info("Visualizing predicted graph (detailed analysis)...")
-plot_predicted_graph(pred_graph, args.data, save_path=f"predicted_graph_{args.data}.png")
+plot_predicted_graph(remapped_graph if 'remapped_graph' in locals() else pred_graph,
+                     args.data, save_path=f"predicted_graph_{args.data}.png")
 
 logger.info("Plotting top confident edges...")
-plot_top_edges(pred_graph, k=20, dataset_name=args.data)
+plot_top_edges(remapped_graph if 'remapped_graph' in locals() else pred_graph, k=20, dataset_name=args.data)
 
 logger.info("Evaluation complete!")
