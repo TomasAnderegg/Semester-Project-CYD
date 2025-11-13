@@ -12,6 +12,8 @@ from evaluation.evaluation import eval_edge_prediction
 from model.tgn import TGN
 from utils.utils import RandEdgeSampler, get_neighbor_finder
 from utils.data_processing import get_data, compute_time_statistics
+from code.teckrank import run_techrank
+
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -569,6 +571,32 @@ def plot_top_edges(graph, k=20, dataset_name=""):
     plt.savefig(f"top_edges_{dataset_name}.png", dpi=300, bbox_inches='tight')
     logger.info(f"Top edges plot saved to top_edges_{dataset_name}.png")
     plt.show()
+
+    # ---------------- Prepare dict_companies and dict_investors ---------------- #
+logger.info("Preparing dict_companies and dict_investors for TechRank...")
+
+graph_for_techrank = remapped_graph if 'remapped_graph' in locals() else pred_graph
+
+# Crée des dictionnaires avec des valeurs par défaut pour TechRank
+dict_companies = {
+    node: {'class': 'unknown', 'initial_score': 1.0}  # tu peux ajuster les valeurs si tu veux
+    for node, data in graph_for_techrank.nodes(data=True)
+    if data['bipartite'] == 1
+}
+
+dict_investors = {
+    node: {'class': 'unknown', 'initial_score': 1.0}
+    for node, data in graph_for_techrank.nodes(data=True)
+    if data['bipartite'] == 0
+}
+
+logger.info(f"Number of companies: {len(dict_companies)}, Number of investors: {len(dict_investors)}")
+
+# ---------------- Run TechRank ---------------- #
+logger.info("Running TechRank on predicted graph...")
+df_companies, df_investors = run_techrank(graph_for_techrank, dict_companies, dict_investors)
+logger.info("TechRank finished. DataFrames ready.")
+# ---------------- Visualizations ---------------- #
 
 # Generate visualizations
 logger.info("Visualizing predicted graph (bipartite style)...")
