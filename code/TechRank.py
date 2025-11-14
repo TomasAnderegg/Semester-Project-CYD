@@ -72,7 +72,7 @@ def load_saved_data(num_comp, num_tech, flag_cybersecurity):
     with open(name_file_graph, 'rb') as f:
         B = pickle.load(f)
     
-    print(f"✓ Données chargées: {len(dict_companies)} entreprises, {len(dict_tech)} technologies, Graphe: {B.number_of_nodes()} noeuds, {B.number_of_edges()} arêtes")
+    print(f" Données chargées: {len(dict_companies)} entreprises, {len(dict_tech)} technologies, Graphe: {B.number_of_nodes()} noeuds, {B.number_of_edges()} arêtes")
     return dict_companies, dict_tech, B
 
 # ===================================================================
@@ -83,9 +83,9 @@ def create_adjacency_matrix(B):
     set0 = extract_nodes(B, 0)
     set1 = extract_nodes(B, 1)
     
-    print(f"Création matrice d'adjacence: Companies={len(set0)}, Technologies={len(set1)}")
+    print(f"Création matrice d'adjacence: Investors={len(set0)}, Companies={len(set1)}")
     adj_matrix = bipartite.biadjacency_matrix(B, set0, set1, format='csr')
-    print(f"✓ Matrice créée: Shape={adj_matrix.shape}, Arêtes={adj_matrix.sum()}")
+    print(f" Matrice créée: Shape={adj_matrix.shape}, Arêtes={adj_matrix.sum()}")
     return adj_matrix, set0, set1
 
 def save_matrix(M, num_comp, num_tech, flag_cybersecurity, dict_companies, dict_tech):
@@ -95,21 +95,19 @@ def save_matrix(M, num_comp, num_tech, flag_cybersecurity, dict_companies, dict_
         name_file_M = f'{SAVE_DIR_M}/cybersecurity_comp_{len(dict_companies)}_tech_{len(dict_tech)}.npy'
     
     np.save(name_file_M, M)
-    print(f"✓ Matrice sauvegardée: {name_file_M}")
+    print(f" Matrice sauvegardée: {name_file_M}")
 
 # ===================================================================
 # TECHRANK FUNCTIONS - CORRIGÉES
 # ===================================================================
 
 def zero_order_score(M):
-    """Calcule le degré des companies et technologies"""
     k_c = M.sum(axis=1)
     k_t = M.sum(axis=0)
-    print(f"✓ Scores ordre zéro: deg_companies={np.mean(k_c):.2f}, deg_tech={np.mean(k_t):.2f}")
+    print(f" Scores ordre zéro: deg_investors={np.mean(k_c):.2f}, deg_comp={np.mean(k_t):.2f}")
     return k_c, k_t
 
 def make_G_hat(M, alpha=1, beta=1, eps=1e-12):
-    """Version avec debug"""
     k_c = M.sum(axis=1).astype(float)
     k_t = M.sum(axis=0).astype(float)
     
@@ -174,9 +172,9 @@ def generator_order_w(M, alpha, beta, normalize=True):
 
 def find_convergence_debug(M, alpha, beta, fit_or_ubiq, do_plot=False, flag_cybersecurity=False, preferences=''):
     if fit_or_ubiq=='fitness':
-        name='Companies'; M_shape=M.shape[0]
+        name='Investors'; M_shape=M.shape[0]
     else:
-        name='Technologies'; M_shape=M.shape[1]
+        name='Companies'; M_shape=M.shape[1]
     
     rankings=[]; scores=[]
     prev_rankdata = np.zeros(M_shape)
@@ -210,7 +208,7 @@ def find_convergence_debug(M, alpha, beta, fit_or_ubiq, do_plot=False, flag_cybe
             stops_flag += 1
             if stops_flag >= 20:  # 20 itérations stables
                 convergence_iteration = iteration
-                print(f"✓ CONVERGENCE à l'itération {iteration} (stabilité des rangs)")
+                print(f" CONVERGENCE à l'itération {iteration} (stabilité des rangs)")
                 break
         else:
             stops_flag = 0
@@ -221,7 +219,7 @@ def find_convergence_debug(M, alpha, beta, fit_or_ubiq, do_plot=False, flag_cybe
         
         if iteration >= max_iterations:
             convergence_iteration = iteration
-            print(f"⏹️  Maximum d'itérations atteint: {iteration}")
+            print(f" Maximum d'itérations atteint: {iteration}")
             break
     
     final_data = scores[-1]
@@ -301,7 +299,7 @@ def rank_df_class_corrected(convergence, dict_class):
             # Calculer la corrélation de Spearman
             from scipy.stats import spearmanr
             correlation, p_value = spearmanr(techranks, ground_truths)
-            print(f"📊 Corrélation avec ground truth: {correlation:.3f} (p-value: {p_value:.3f})")
+            print(f" Corrélation avec ground truth: {correlation:.3f} (p-value: {p_value:.3f})")
             
             # Ajouter la corrélation comme attribut
             df_final.attrs['spearman_correlation'] = correlation
@@ -313,37 +311,37 @@ def rank_df_class_corrected(convergence, dict_class):
     # Afficher les statistiques sur le ground truth
     valid_ground_truth = [r for r in ground_truth_ranks if r is not None]
     if valid_ground_truth:
-        print(f"📈 Ground truth disponible pour {len(valid_ground_truth)} éléments")
+        print(f" Ground truth disponible pour {len(valid_ground_truth)} éléments")
     
     return df_final, dict_class
 
-def save_corrected_results(df_companies, df_tech, num_comp, num_tech, flag_cybersecurity, preferences_comp, preferences_tech):
+def save_corrected_results(df_investors, df_companies, num_invest, num_comp, flag_cybersecurity, preferences_comp, preferences_tech):
     pref_comp = preferences_to_string(preferences_comp)
     pref_tech = preferences_to_string(preferences_tech)
     
     # Réorganiser les colonnes - AJOUT des colonnes ground truth
-    company_columns = ['TeckRank_int', 'final_configuration', 'techrank', 'ground_truth_rank', 'ground_truth_score', 'initial_position']
-    tech_columns = ['TeckRank_int', 'final_configuration', 'techrank', 'ground_truth_rank', 'ground_truth_score', 'initial_position']
+    investors_columns = ['TeckRank_int', 'final_configuration', 'techrank', 'ground_truth_rank', 'ground_truth_score', 'initial_position']
+    invest_columns = ['TeckRank_int', 'final_configuration', 'techrank', 'ground_truth_rank', 'ground_truth_score', 'initial_position']
     
     # Fichier entreprises
-    companies_filename = f'{SAVE_DIR_RESULTS}/companies_rank_{num_comp}_{pref_comp}.csv'
+    investors_filename = f'{SAVE_DIR_RESULTS}/companies_rank_{num_invest}_{pref_comp}.csv'
     # Garder seulement les colonnes qui existent
-    available_company_cols = [col for col in company_columns if col in df_companies.columns]
-    df_companies[available_company_cols].to_csv(companies_filename, index=False)
-    print(f"✓ Fichier entreprises sauvegardé: {companies_filename}")
+    available_invest_cols = [col for col in investors_columns if col in df_investors.columns]
+    df_investors[available_invest_cols].to_csv(investors_filename, index=False)
+    print(f" Fichier entreprises sauvegardé: {investors_filename}")
     
     # Fichier technologies
-    tech_filename = f'{SAVE_DIR_RESULTS}/technologies_rank_{num_tech}_{pref_tech}.csv'
-    available_tech_cols = [col for col in tech_columns if col in df_tech.columns]
-    df_tech[available_tech_cols].to_csv(tech_filename, index=False)
-    print(f"✓ Fichier technologies sauvegardé: {tech_filename}")
+    comp_filename = f'{SAVE_DIR_RESULTS}/technologies_rank_{num_comp}_{pref_tech}.csv'
+    available_tech_cols = [col for col in invest_columns if col in df_companies.columns]
+    df_companies[available_tech_cols].to_csv(comp_filename, index=False)
+    print(f" Fichier technologies sauvegardé: {comp_filename}")
     
     # Afficher les corrélations si disponibles
-    if hasattr(df_companies, 'attrs') and 'spearman_correlation' in df_companies.attrs:
-        print(f"📊 Corrélation entreprises: {df_companies.attrs['spearman_correlation']:.3f}")
+    if hasattr(df_investors, 'attrs') and 'spearman_correlation' in df_investors.attrs:
+        print(f" Corrélation entreprises: {df_investors.attrs['spearman_correlation']:.3f}")
     
-    if hasattr(df_tech, 'attrs') and 'spearman_correlation' in df_tech.attrs:
-        print(f"📊 Corrélation technologies: {df_tech.attrs['spearman_correlation']:.3f}")
+    if hasattr(df_companies, 'attrs') and 'spearman_correlation' in df_companies.attrs:
+        print(f" Corrélation technologies: {df_companies.attrs['spearman_correlation']:.3f}")
 
 
 # ===================================================================
@@ -352,10 +350,12 @@ def save_corrected_results(df_companies, df_tech, num_comp, num_tech, flag_cyber
 
 def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_CYBERSECURITY,
                  preferences_comp=None, preferences_tech=None,
-                 alpha=OPTIMAL_ALPHA_COMP, beta=OPTIMAL_BETA_COMP, do_plot=False):
+                 alpha=OPTIMAL_ALPHA_COMP, beta=OPTIMAL_BETA_COMP, do_plot=False, 
+                 dict_investors=None, dict_comp=None, B=None
+                ):
     
     create_directories()
-    dict_companies, dict_tech, B = load_saved_data(num_comp, num_tech, flag_cybersecurity)
+    dict_investors, dict_comp, B = load_saved_data(num_comp, num_tech, flag_cybersecurity)
     
     # Création de la matrice
     set0 = extract_nodes(B, 0)
@@ -364,7 +364,7 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_C
     adj_matrix_dense = adj_matrix.todense()
     M = np.squeeze(np.asarray(adj_matrix_dense))
     
-    print(f"✓ Matrice M créée: {M.shape}")
+    print(f" Matrice M créée: {M.shape}")
     
     # Ranking Companies
     print("\n" + "="*60)
@@ -374,7 +374,7 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_C
     convergence_comp = find_convergence_debug(M, alpha, beta, 'fitness', do_plot=do_plot)
     time_conv_comp = time.time() - start_time
     
-    df_final_companies, dict_companies = rank_df_class_corrected(convergence_comp, dict_companies)
+    df_final_companies, dict_investors = rank_df_class_corrected(convergence_comp, dict_investors)
     
     # Ranking Technologies  
     print("\n" + "="*60)
@@ -384,7 +384,7 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_C
     convergence_tech = find_convergence_debug(M, alpha, beta, 'ubiquity', do_plot=do_plot)
     time_conv_tech = time.time() - start_time
     
-    df_final_tech, dict_tech = rank_df_class_corrected(convergence_tech, dict_tech)
+    df_final_tech, dict_comp = rank_df_class_corrected(convergence_tech, dict_comp)
     
     # Sauvegarde des résultats
     save_corrected_results(df_final_companies, df_final_tech, num_comp, num_tech, flag_cybersecurity, preferences_comp, preferences_tech)
@@ -394,26 +394,27 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_C
     print("RÉSULTATS FINAUX - TOP 10")
     print("="*60)
     
-    print("\n🏆 TOP 10 ENTREPRISES (par influence technologique):")
+    print("\n TOP 10 ENTREPRISES (par influence technologique):")
     top_comp = df_final_companies[['TeckRank_int', 'final_configuration', 'techrank']].head(10)
     for _, row in top_comp.iterrows():
         print(f"#{int(row['TeckRank_int']):2d} {row['final_configuration']:30} → Score: {row['techrank']:.6f}")
     
-    print("\n💡 TOP 10 TECHNOLOGIES (par adoption stratégique):")
+    print("\n TOP 10 TECHNOLOGIES (par adoption stratégique):")
     top_tech = df_final_tech[['TeckRank_int', 'final_configuration', 'techrank']].head(10)  # CORRECTION : df_final_tech
     for _, row in top_tech.iterrows():
         print(f"#{int(row['TeckRank_int']):2d} {row['final_configuration']:30} → Score: {row['techrank']:.6f}")
     
-    print(f"\n⏱️  Temps d'exécution:")
+    print(f"\n Temps d'execution:")
     print(f"   Entreprises: {time_conv_comp:.1f}s")
     print(f"   Technologies: {time_conv_tech:.1f}s")
     print(f"   Total: {time_conv_comp + time_conv_tech:.1f}s")
     
-    return df_final_companies, df_final_tech, dict_companies, dict_tech
+    return df_final_companies, df_final_tech, dict_investors, dict_comp
 
 # ===================================================================
 # EXECUTION
 # ===================================================================
 
-if __name__ == "__main__":
-    df_companies, df_tech, dict_companies, dict_tech = run_techrank(do_plot=False)
+# if __name__ == "__main__":
+#     df_investors, df_comp, dict_investors, dict_invest = run_techrank(do_plot=False)
+#     print(df_investors.head(), df_comp.head())

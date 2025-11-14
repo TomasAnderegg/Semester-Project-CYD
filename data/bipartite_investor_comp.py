@@ -8,9 +8,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import List, Dict
 import math
-import classes
+from . import classes
 import matplotlib
 from datetime import datetime 
+from code.TechRank import run_techrank
 matplotlib.use('Qt5Agg')  # ou 'TkAgg' selon ton installation
 
 
@@ -44,7 +45,7 @@ LIMITS = [500]  # Nombre d'entrées à traiter
 
 def create_directories():
     Path(SAVE_DIR_NETWORKS).mkdir(parents=True, exist_ok=True)
-    Path(SAVE_DIR_CSV).mkdir(parents=True, exist_ok=True)  # ✅ NOUVEAU
+    Path(SAVE_DIR_CSV).mkdir(parents=True, exist_ok=True) 
 
 
 def load_data_from_duckdb(filepath, table_name):
@@ -634,6 +635,7 @@ def main(max_companies_plot=20, max_investors_plot=20):
 
         # Créer le graphe bipartite
         B, dict_companies, dict_investors = nx_dip_graph_from_pandas(df_graph)
+        _,_,_,_=run_techrank(dict_investors, dict_companies, B)
 
         prepare_tgn_input(B, output_prefix="crunchbase_tgn")
         
