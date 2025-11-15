@@ -13,6 +13,7 @@ import matplotlib
 from datetime import datetime 
 # from code.TechRank import run_techrank
 matplotlib.use('Qt5Agg')  # ou 'TkAgg' selon ton installation
+from sklearn.preprocessing import StandardScaler
 
 
 # ===================================================================
@@ -38,7 +39,7 @@ SAVE_DIR_CSV = "savings/bipartite_invest_comp/csv_exports"  # ✅ NOUVEAU: dossi
 
 FLAG_FILTER = False  # Mettre True si tu veux filtrer
 FILTER_KEYWORDS = ['quantum computing', 'quantum key distribution']  # Keywords pour filtrage optionnel
-LIMITS = [500]  # Nombre d'entrées à traiter
+LIMITS = [10000]  # Nombre d'entrées à traiter
 
 # ===================================================================
 # UTILS
@@ -109,19 +110,167 @@ def save_graph_and_dicts(B, df_companies, dict_companies, dict_tech, limit, flag
 
     print(f"\n✓ Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
 
+# def prepare_tgn_input(B, output_prefix="investment_bipartite"):
+#     """
+#     Convertit le graphe bipartite NetworkX en fichiers compatibles TGN.
+#     FIXE: Gère les timestamps dupliqués en ajoutant un epsilon au cas où il y a des dates similaires.
+#     NOUVEAU: crée et sauvegarde des dictionnaires (companies/investors → ids)
+#     """
+#     rows = []
+#     feats = []
+#     user_map, item_map = {}, {}  # investors / companies respectivement
+#     user_inverse, item_inverse = {}, {}
+
+#     for idx, (u, v, data) in enumerate(B.edges(data=True)):
+#         # u = company, v = investor (selon ta convention)
+#         # Identifiants entiers pour TGN
+#         if u not in item_map:
+#             item_map[u] = len(item_map)
+#             item_inverse[item_map[u]] = u
+#         if v not in user_map:
+#             user_map[v] = len(user_map)
+#             user_inverse[user_map[v]] = v
+
+#         u_id = item_map[u]
+#         v_id = user_map[v]
+        
+#         # Timestamp
+#         if data.get('funding_rounds') and data['funding_rounds'][0].get('announced_on'):
+#             try:
+#                 ts = datetime.strptime(
+#                     data['funding_rounds'][0]['announced_on'], "%Y-%m-%d"
+#                 ).timestamp()
+#             except Exception:
+#                 ts = 0.0
+#         else:
+#             ts = 0.0
+
+#         # Label
+#         label = 1.0
+
+#         # # Features
+#         # feat = np.array([
+#         #     data.get('total_raised_amount_usd', 0.0),
+#         #     data.get('num_funding_rounds', 0.0)
+#         # ])
+
+#         # Features enrichies et normalisées
+#         raised_amount = data.get('total_raised_amount_usd', 0.0)
+#         num_rounds = max(data.get('num_funding_rounds', 1.0), 1.0)
+
+#         feat = np.array([
+#             np.log1p(raised_amount),                    # Log du montant (normalise)
+#             num_rounds,                                  # Nombre de rounds
+#             raised_amount / num_rounds,                  # Montant moyen par round
+#             1.0 if raised_amount > 5_000_000 else 0.0,  # Gros investissement
+#             1.0 if num_rounds > 2 else 0.0,             # Multiple rounds
+#             np.sqrt(raised_amount),                      # Racine carrée (autre normalisation)
+#         ])
+
+        
+#         rows.append((v_id, u_id, ts, label))  # investor → company
+#         feats.append(feat)
+
+#     # === Conversion en DataFrame ===
+#     df = pd.DataFrame(rows, columns=['u', 'i', 'ts', 'label'])
+#     feats = np.array(feats)
+
+#     print(f"Avant filtrage: {len(df)} interactions")
+#     if (df.ts == 0).any():
+#         print(f"   Suppression de {(df.ts == 0).sum()} interactions sans timestamp")
+#         valid_mask = df.ts > 0
+#         df = df[valid_mask].reset_index(drop=True)
+#         feats = feats[valid_mask]
+#     print(f"   Après filtrage: {len(df)} interactions")
+    
+#     if len(df) == 0:
+#         raise ValueError("Aucune interaction avec timestamp valide!")
+
+#     # Tri par timestamp
+#     sort_indices = df.ts.argsort()
+#     df = df.iloc[sort_indices].reset_index(drop=True)
+#     feats = feats[sort_indices]
+    
+#     # Résolution des timestamps dupliqués
+#     epsilon = 1e-6
+#     df['group'] = df.groupby('ts').cumcount()
+#     df['ts'] = df['ts'] + df['group'] * epsilon
+#     df = df.drop('group', axis=1)
+
+#     # Vérification stricte
+#     assert (df.ts.diff().dropna() > 0).all(), "Timestamps non strictement croissants!"
+    
+#     # Sauvegarde des données TGN
+#     Path("data").mkdir(exist_ok=True)
+#     df['idx'] = np.arange(len(df))
+#     df.to_csv(f"data/{output_prefix}.csv", index=False)
+#     np.save(f"data/{output_prefix}.npy", feats)
+
+#     # Node features
+#     max_node_id = max(df.u.max(), df.i.max())
+#     MEMORY_DIM = 172
+#     node_feats = np.zeros((max_node_id + 1, MEMORY_DIM))
+#     np.save(f"data/{output_prefix}_node.npy", node_feats)
+
+#     print(f"\n✓ Données TGN prêtes : data/{output_prefix}.csv, .npy et _node.npy")
+
+#     # ===============================
+#     # NOUVEAU : Sauvegarde des mappings
+#     # ===============================
+
+#     mapping_dir = Path("data/mappings")
+#     mapping_dir.mkdir(exist_ok=True)
+
+#     # Inverse mapping (utile pour décodage après entraînement)
+#     with open(mapping_dir / f"{output_prefix}_company_id_map.pickle", "wb") as f:
+#         pickle.dump(item_map, f)
+#     with open(mapping_dir / f"{output_prefix}_investor_id_map.pickle", "wb") as f:
+#         pickle.dump(user_map, f)
+
+#     # Version CSV lisible facilement
+#     pd.DataFrame.from_dict(item_map, orient='index', columns=['company_id']).to_csv(
+#         mapping_dir / f"{output_prefix}_company_id_map.csv"
+#     )
+#     pd.DataFrame.from_dict(user_map, orient='index', columns=['investor_id']).to_csv(
+#         mapping_dir / f"{output_prefix}_investor_id_map.csv"
+#     )
+
+#     print(f"\n✓ Mappings sauvegardés dans {mapping_dir}/ :")
+#     print(f"   - {output_prefix}_company_id_map.pickle/.csv")
+#     print(f"   - {output_prefix}_investor_id_map.pickle/.csv")
+
+#     print(f"   {len(item_map)} entreprises mappées, {len(user_map)} investisseurs mappés.")
+
+#     return df, user_map, item_map
+
 def prepare_tgn_input(B, output_prefix="investment_bipartite"):
     """
     Convertit le graphe bipartite NetworkX en fichiers compatibles TGN.
-    FIXE: Gère les timestamps dupliqués en ajoutant un epsilon au cas où il y a des dates similaires.
-    NOUVEAU: crée et sauvegarde des dictionnaires (companies/investors → ids)
+    VERSION ENRICHIE avec features temporelles, de degré et normalisées.
     """
+    from sklearn.preprocessing import StandardScaler
+    
     rows = []
     feats = []
     user_map, item_map = {}, {}  # investors / companies respectivement
     user_inverse, item_inverse = {}, {}
 
+    # ✅ NOUVEAU: Calculer les degrés avant la boucle
+    print("Calcul des degrés des nœuds...")
+    company_degrees = {}
+    investor_degrees = {}
+    
+    for node in B.nodes():
+        if B.nodes[node].get('bipartite') == 1:  # Company
+            company_degrees[node] = B.degree(node)
+        else:  # Investor
+            investor_degrees[node] = B.degree(node)
+    
+    print(f"✓ {len(company_degrees)} entreprises, {len(investor_degrees)} investisseurs")
+
+    # Boucle principale
     for idx, (u, v, data) in enumerate(B.edges(data=True)):
-        # u = company, v = investor (selon ta convention)
+        # u = company, v = investor
         # Identifiants entiers pour TGN
         if u not in item_map:
             item_map[u] = len(item_map)
@@ -133,24 +282,61 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
         u_id = item_map[u]
         v_id = user_map[v]
         
-        # Timestamp
+        # ✅ Timestamp avec extraction de features temporelles
         if data.get('funding_rounds') and data['funding_rounds'][0].get('announced_on'):
             try:
-                ts = datetime.strptime(
-                    data['funding_rounds'][0]['announced_on'], "%Y-%m-%d"
-                ).timestamp()
+                date_str = data['funding_rounds'][0]['announced_on']
+                dt = datetime.strptime(date_str, "%Y-%m-%d")
+                ts = dt.timestamp()
+                
+                # Features temporelles
+                year = dt.year
+                month = dt.month
+                day_of_year = dt.timetuple().tm_yday
+                has_timestamp = 1.0
+                
             except Exception:
                 ts = 0.0
+                year = 2020
+                month = 1
+                day_of_year = 1
+                has_timestamp = 0.0
         else:
             ts = 0.0
+            year = 2020
+            month = 1
+            day_of_year = 1
+            has_timestamp = 0.0
 
         # Label
         label = 1.0
 
-        # Features
+        # ✅ Features enrichies
+        raised_amount = data.get('total_raised_amount_usd', 0.0)
+        num_rounds = max(data.get('num_funding_rounds', 1.0), 1.0)
+        
+        # Degrés des nœuds
+        company_degree = company_degrees.get(u, 1)
+        investor_degree = investor_degrees.get(v, 1)
+
         feat = np.array([
-            data.get('total_raised_amount_usd', 0.0),
-            data.get('num_funding_rounds', 0.0)
+            # Features financières (0-5)
+            np.log1p(raised_amount),                     # 0: Log du montant
+            num_rounds,                                   # 1: Nombre de rounds
+            raised_amount / num_rounds,                   # 2: Montant moyen par round
+            1.0 if raised_amount > 5_000_000 else 0.0,   # 3: Gros investissement (>5M)
+            1.0 if num_rounds > 2 else 0.0,              # 4: Multiple rounds (>2)
+            np.sqrt(raised_amount),                       # 5: Racine carrée du montant
+            
+            # Features temporelles (6-9)
+            year - 2000,                                  # 6: Année normalisée (0-25 pour 2000-2025)
+            month / 12.0,                                 # 7: Mois normalisé (0-1)
+            day_of_year / 365.0,                          # 8: Jour de l'année (0-1)
+            has_timestamp,                                # 9: Indicateur de timestamp valide
+            
+            # Features de graphe (10-11)
+            np.log1p(company_degree),                     # 10: Log du degré de l'entreprise
+            np.log1p(investor_degree),                    # 11: Log du degré de l'investisseur
         ])
         
         rows.append((v_id, u_id, ts, label))  # investor → company
@@ -160,7 +346,10 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
     df = pd.DataFrame(rows, columns=['u', 'i', 'ts', 'label'])
     feats = np.array(feats)
 
-    print(f"Avant filtrage: {len(df)} interactions")
+    print(f"\nAvant filtrage: {len(df)} interactions")
+    print(f"Features shape: {feats.shape}")
+    
+    # Filtrage des timestamps invalides
     if (df.ts == 0).any():
         print(f"   Suppression de {(df.ts == 0).sum()} interactions sans timestamp")
         valid_mask = df.ts > 0
@@ -175,6 +364,17 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
     sort_indices = df.ts.argsort()
     df = df.iloc[sort_indices].reset_index(drop=True)
     feats = feats[sort_indices]
+    
+    # ✅ NORMALISATION DES FEATURES (critique pour l'apprentissage)
+    print("\n📊 Normalisation des features...")
+    print(f"   Avant normalisation - Mean: {feats.mean(axis=0)}")
+    print(f"   Avant normalisation - Std: {feats.std(axis=0)}")
+    
+    scaler = StandardScaler()
+    feats = scaler.fit_transform(feats)
+    
+    print(f"   Après normalisation - Mean: {feats.mean(axis=0)}")
+    print(f"   Après normalisation - Std: {feats.std(axis=0)}")
     
     # Résolution des timestamps dupliqués
     epsilon = 1e-6
@@ -199,20 +399,15 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
 
     print(f"\n✓ Données TGN prêtes : data/{output_prefix}.csv, .npy et _node.npy")
 
-    # ===============================
-    # NOUVEAU : Sauvegarde des mappings
-    # ===============================
-
+    # Sauvegarde des mappings
     mapping_dir = Path("data/mappings")
     mapping_dir.mkdir(exist_ok=True)
 
-    # Inverse mapping (utile pour décodage après entraînement)
     with open(mapping_dir / f"{output_prefix}_company_id_map.pickle", "wb") as f:
         pickle.dump(item_map, f)
     with open(mapping_dir / f"{output_prefix}_investor_id_map.pickle", "wb") as f:
         pickle.dump(user_map, f)
 
-    # Version CSV lisible facilement
     pd.DataFrame.from_dict(item_map, orient='index', columns=['company_id']).to_csv(
         mapping_dir / f"{output_prefix}_company_id_map.csv"
     )
@@ -220,10 +415,7 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
         mapping_dir / f"{output_prefix}_investor_id_map.csv"
     )
 
-    print(f"\n✓ Mappings sauvegardés dans {mapping_dir}/ :")
-    print(f"   - {output_prefix}_company_id_map.pickle/.csv")
-    print(f"   - {output_prefix}_investor_id_map.pickle/.csv")
-
+    print(f"\n✓ Mappings sauvegardés dans {mapping_dir}/")
     print(f"   {len(item_map)} entreprises mappées, {len(user_map)} investisseurs mappés.")
 
     return df, user_map, item_map
@@ -705,7 +897,7 @@ def main(max_companies_plot=20, max_investors_plot=20):
     df_graph_full = merge_and_clean_final(df_funding_clean, df_investments_clean)
     print(f"✓ Données mergées : {len(df_graph_full):,} lignes")
 
-    df_graph_full = filter_merged_by_organizations(df_graph_full, df_organizations)
+    # df_graph_full = filter_merged_by_organizations(df_graph_full, df_organizations)
     
     for limit in LIMITS:
         print(f"\n{'='*70}")
@@ -751,7 +943,7 @@ def main(max_companies_plot=20, max_investors_plot=20):
         pos = plot_bipartite_graph(B_sub)
         
         # Save - avec dictionnaires
-        save_graph_and_dicts(B_sub, dict_companies, dict_investors, limit)
+        save_graph_and_dicts(B, dict_companies, dict_investors, limit)
 
 
 if __name__ == "__main__":

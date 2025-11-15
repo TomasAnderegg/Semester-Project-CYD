@@ -29,15 +29,9 @@ SAVE_DIR_CLASSES = "savings/bipartite_tech_comp/classes"
 SAVE_DIR_NETWORKS = "savings/bipartite_tech_comp/networks"
 
 FLAG_CYBERSECURITY = True
-LIMITS = [500]
+LIMITS = [2000]
 CYBERSECURITY_KEYWORDS = [
-    'quantum computing', 
-    'quantum encryption', 
-    'quantum key distribution',
-    'cybersecurity',           
-    'information security',    
-    'network security',        
-    'encryption',              
+    'cyber',            
 ]
 
 # ===================================================================
@@ -132,63 +126,63 @@ def process_category_groups(df):
     return df_proc
 
 
-def filter_cybersecurity(df: pd.DataFrame, keywords: List[str] = ['quantum']) -> pd.DataFrame:
+def filter_cybersecurity(df: pd.DataFrame, keywords: List[str] = ['quantum computing']) -> pd.DataFrame:
     """
-    Filtre les entreprises dont AU MOINS UNE catégorie correspond EXACTEMENT à un keyword.
+    Filtre les entreprises dont AU MOINS UNE catégorie CONTIENT un keyword.
     """
-    print("\n========================== FILTRAGE CYBER (EXACT MATCH) ==========================")
+    print("\n========================== FILTRAGE (CONTIENT) ==========================")
     df = df.copy().reset_index(drop=True)
 
-    # Vérification des colonnes nécessaires
     if 'category_groups' not in df.columns:
         raise ValueError(f"Colonne manquante : 'category_groups'")
 
-    # Normaliser les keywords (minuscules, trim)
-    normalized_keywords = {k.strip().lower() for k in keywords}
-    print(f"🔍 Keywords recherchés (normalisés) : {normalized_keywords}")
+    # Normaliser les keywords
+    normalized_keywords = [k.strip().lower() for k in keywords]
+    print(f"🔍 Keywords recherchés : {normalized_keywords}")
 
-    def match_exact_categories(entry):
+    def match_contains_keywords(entry):
         """
-        Vérifie si AU MOINS UNE catégorie de l'entreprise 
-        correspond EXACTEMENT à un keyword.
+        Vérifie si AU MOINS UNE catégorie CONTIENT un des keywords.
         """
         if isinstance(entry, list):
-            # Normaliser chaque catégorie
-            categories = {str(cat).strip().lower() for cat in entry if pd.notna(cat)}
+            # Joindre toutes les catégories en une seule string
+            all_cats = ' '.join([str(cat).strip().lower() for cat in entry if pd.notna(cat)])
         elif isinstance(entry, str):
-            categories = {entry.strip().lower()}
+            all_cats = entry.strip().lower()
         else:
             return False
         
-        # Intersection : y a-t-il au moins une catégorie qui matche ?
-        matches = categories & normalized_keywords
-        return len(matches) > 0
+        # Vérifier si UN des keywords apparaît dans les catégories
+        return any(keyword in all_cats for keyword in normalized_keywords)
 
     # Appliquer le filtre
-    mask_cat = df['category_groups'].apply(match_exact_categories)
+    mask_cat = df['category_groups'].apply(match_contains_keywords)
     df_filtered = df.loc[mask_cat].reset_index(drop=True)
 
     # Statistiques
-    print(f"✓ Entreprises avec match EXACT : {mask_cat.sum():,}")
+    print(f"✓ Entreprises contenant les keywords : {mask_cat.sum():,}")
     print(f"➡️  Total d'entreprises filtrées : {len(df_filtered):,}")
 
-    # Afficher les catégories uniques trouvées
+    # Afficher les catégories matchées
     if not df_filtered.empty:
         all_matching_cats = set()
         for cats in df_filtered['category_groups']:
             if isinstance(cats, list):
-                normalized_cats = {str(c).strip().lower() for c in cats if pd.notna(c)}
-                # Garder seulement celles qui matchent
-                all_matching_cats.update(normalized_cats & normalized_keywords)
+                for cat in cats:
+                    cat_lower = str(cat).strip().lower()
+                    # Garder seulement les catégories qui contiennent un keyword
+                    if any(kw in cat_lower for kw in normalized_keywords):
+                        all_matching_cats.add(str(cat).strip())
         
-        print(f"\n🏷️  Catégories qui ont matché : {sorted(all_matching_cats)}")
+        print(f"\n🏷️  Catégories matchées ({len(all_matching_cats)}) :")
+        for cat in sorted(all_matching_cats):
+            print(f"  • {cat}")
         
         print("\n📋 Exemples d'entreprises détectées :")
         for idx, row in df_filtered[['name', 'category_groups']].head(10).iterrows():
             print(f"  • {row['name']}: {row['category_groups']}")
     else:
-        print("\n⚠️  Aucune entreprise trouvée avec ces keywords exacts !")
-        print("Vérifiez que vos keywords correspondent exactement aux catégories Crunchbase.")
+        print("\n⚠️  Aucune entreprise trouvée !")
 
     return df_filtered
 
