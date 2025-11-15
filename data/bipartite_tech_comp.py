@@ -124,83 +124,95 @@ def process_category_groups(df):
     return df_proc
 
 
-def filter_cybersecurity(df: pd.DataFrame, keywords: List[str] = ['cyber', 'security', 'cybersecurity']) -> pd.DataFrame:
+def filter_cybersecurity(df: pd.DataFrame, keywords: List[str] = ['quantum computing', 'quantum encryption', 'quantum key distribution']) -> pd.DataFrame:
     """
-    Filtre les entreprises liées à la cybersécurité en se basant sur les colonnes
-    'category_groups' et 'short_description'.
-
-    Paramètres
-    ----------
-    df : pd.DataFrame
-        DataFrame d'entreprises issu de Crunchbase.
-    keywords : list of str
-        Liste de mots-clés caractéristiques de la cybersécurité.
-
-    Retour
-    ------
-    df_filtered : pd.DataFrame
-        Sous-ensemble du DataFrame contenant uniquement les entreprises
-        identifiées comme appartenant au domaine de la cybersécurité.
+    Filtre les entreprises dont AU MOINS UNE catégorie correspond EXACTEMENT à un keyword.
     """
-
-    print("\n========================== FILTRAGE CYBER ==========================")
+    print("\n========================== FILTRAGE CYBER (EXACT MATCH) ==========================")
     df = df.copy().reset_index(drop=True)
 
-    # --- Vérification des colonnes nécessaires ---
-    required_cols = ['category_groups', 'short_description']
-    for col in required_cols:
-        if col not in df.columns:
-            raise ValueError(f"Colonne manquante dans le DataFrame : '{col}'")
+    # Vérification des colonnes nécessaires
+    if 'category_groups' not in df.columns:
+        raise ValueError(f"Colonne manquante : 'category_groups'")
 
-    # --- 1️⃣ Vérification dans category_groups ---
-    def match_in_category_groups(entry):
-        """Vérifie si un mot-clé est présent dans la liste de catégories."""
+    # Normaliser les keywords (minuscules, trim)
+    normalized_keywords = {k.strip().lower() for k in keywords}
+    print(f"🔍 Keywords recherchés (normalisés) : {normalized_keywords}")
+
+    def match_exact_categories(entry):
+        """
+        Vérifie si AU MOINS UNE catégorie de l'entreprise 
+        correspond EXACTEMENT à un keyword.
+        """
         if isinstance(entry, list):
-            joined = ' '.join(map(str, entry)).lower()
+            # Normaliser chaque catégorie
+            categories = {str(cat).strip().lower() for cat in entry if pd.notna(cat)}
         elif isinstance(entry, str):
-            joined = entry.lower()
+            categories = {entry.strip().lower()}
         else:
             return False
-        return any(k in joined for k in keywords)
+        
+        # Intersection : y a-t-il au moins une catégorie qui matche ?
+        matches = categories & normalized_keywords
+        return len(matches) > 0
 
-    mask_cat = df['category_groups'].apply(match_in_category_groups) #donne une serie de booléens
+    # Appliquer le filtre
+    mask_cat = df['category_groups'].apply(match_exact_categories)
+    df_filtered = df.loc[mask_cat].reset_index(drop=True)
 
-    # --- 2️⃣ Vérification dans short_description ---
-    pattern = '|'.join([f"\\b{k}\\b" for k in keywords])  # recherche par mot complet
-    mask_desc = df['short_description'].astype(str).str.contains(pattern, case=False, na=False, regex=True)
+    # Statistiques
+    print(f"✓ Entreprises avec match EXACT : {mask_cat.sum():,}")
+    print(f"➡️  Total d'entreprises filtrées : {len(df_filtered):,}")
 
-    # --- 3️⃣ Combinaison des deux filtres ---
-    mask_combined = mask_cat | mask_desc
-    df_filtered = df.loc[mask_combined].reset_index(drop=True)
-
-    # --- 4️⃣ Statistiques ---
-    print(f"✓ Entreprises détectées dans category_groups : {mask_cat.sum():,}")
-    print(f"✓ Entreprises détectées dans short_description : {mask_desc.sum():,}")
-    print(f"➡️  Total unique d'entreprises cybersécurité : {len(df_filtered):,}")
-
-    # --- 5️⃣ Exemple de vérification visuelle ---
-    # if not df_filtered.empty:
-    #     print("\nExemples d'entreprises cybersécurité détectées :")
-    #     print(df_filtered[['name', 'category_groups', 'short_description']].head(5).to_string(index=False))
+    # Afficher les catégories uniques trouvées
+    if not df_filtered.empty:
+        all_matching_cats = set()
+        for cats in df_filtered['category_groups']:
+            if isinstance(cats, list):
+                normalized_cats = {str(c).strip().lower() for c in cats if pd.notna(c)}
+                # Garder seulement celles qui matchent
+                all_matching_cats.update(normalized_cats & normalized_keywords)
+        
+        print(f"\n🏷️  Catégories qui ont matché : {sorted(all_matching_cats)}")
+        
+        print("\n📋 Exemples d'entreprises détectées :")
+        for idx, row in df_filtered[['name', 'category_groups']].head(10).iterrows():
+            print(f"  • {row['name']}: {row['category_groups']}")
+    else:
+        print("\n⚠️  Aucune entreprise trouvée avec ces keywords exacts !")
+        print("Vérifiez que vos keywords correspondent exactement aux catégories Crunchbase.")
 
     return df_filtered
-
 
 
 # ===================================================================
 # BIPARTITE CREATION FUNCTION
 # ===================================================================
 
-def extract_classes_company_tech_all(df):
+def extract_classes_company_tech_all(df, keywords=None):
     """
-    Version simple qui vérifie le type avant d'ajouter l'arête
-    """
+    Crée le graphe bipartite en ne gardant QUE les technologies qui matchent les keywords.
     
+    Args:
+        df: DataFrame filtré des entreprises
+        keywords: Liste des keywords exacts à garder (si None, garde toutes les catégories)
+    """
     dict_companies = {}
     dict_tech = {}
     B = nx.Graph()
     
-    # D'abord, créer tous les nœuds entreprises
+    # Normaliser les keywords
+    if keywords:
+        normalized_keywords = {k.strip().lower() for k in keywords}
+    else:
+        normalized_keywords = None
+    
+    print(f"\n🔧 Construction du graphe bipartite...")
+    if normalized_keywords:
+        print(f"   Technologies autorisées : {normalized_keywords}")
+    
+    companies_without_tech = []
+    
     for index, row in df.iterrows():
         comp_name = row['name']
         
@@ -208,7 +220,7 @@ def extract_classes_company_tech_all(df):
         c = classes.Company(
             id=row['uuid'],
             name=comp_name,
-            technologies=row['category_groups']
+            technologies=row['category_groups']  # Garde toutes pour l'objet
         )
 
         if 'rank_company' in df.columns:
@@ -219,25 +231,56 @@ def extract_classes_company_tech_all(df):
         dict_companies[comp_name] = c
         B.add_node(comp_name, bipartite=0)
 
-        # Technologies:
-        if issubclass(type(row['category_groups']), List):
-            for tech in row['category_groups']:
-                t = classes.Technology(name=tech)
-                dict_tech[tech] = t
-
-                B.add_node(tech, bipartite=1)
-
-                # add edges
-                B.add_edge(comp_name, tech)
+        # Technologies : FILTRER selon les keywords
+        categories = row['category_groups']
+        
+        if isinstance(categories, list):
+            # Normaliser et filtrer
+            if normalized_keywords:
+                valid_techs = [
+                    tech for tech in categories 
+                    if str(tech).strip().lower() in normalized_keywords
+                ]
+            else:
+                valid_techs = categories
+            
+            # Ajouter les arêtes UNIQUEMENT pour les technologies valides
+            for tech in valid_techs:
+                tech_normalized = str(tech).strip()
+                
+                if tech_normalized not in dict_tech:
+                    t = classes.Technology(name=tech_normalized)
+                    dict_tech[tech_normalized] = t
+                    B.add_node(tech_normalized, bipartite=1)
+                
+                # Ajouter l'arête
+                B.add_edge(comp_name, tech_normalized)
+            
+            if not valid_techs:
+                companies_without_tech.append(comp_name)
+        
         else:
-            t = classes.Technology(name=row['category_groups'])
-            dict_tech[tech] = t   
-
-            B.add_node(tech, bipartite=1)
-
-            # add edges
-            B.add_edge(comp_name, tech)
-
+            # Cas où category_groups n'est pas une liste (normalement ne devrait pas arriver)
+            tech_str = str(categories).strip()
+            if not normalized_keywords or tech_str.lower() in normalized_keywords:
+                if tech_str not in dict_tech:
+                    t = classes.Technology(name=tech_str)
+                    dict_tech[tech_str] = t
+                    B.add_node(tech_str, bipartite=1)
+                
+                B.add_edge(comp_name, tech_str)
+            else:
+                companies_without_tech.append(comp_name)
+    
+    # Rapport
+    print(f"✓ Graphe créé :")
+    print(f"   - Entreprises : {len(dict_companies)}")
+    print(f"   - Technologies (filtrées) : {len(dict_tech)}")
+    print(f"   - Arêtes : {B.number_of_edges()}")
+    
+    if companies_without_tech:
+        print(f"\n⚠️  {len(companies_without_tech)} entreprises sans technologie valide")
+        print(f"   Exemples : {companies_without_tech[:3]}")
 
     return dict_companies, dict_tech, B
 
@@ -422,7 +465,8 @@ def main():
         return
 
     for limit in LIMITS:
-        dict_companies, dict_tech, B = extract_classes_company_tech_all(df_comp_filter)
+                # ✅ PASSER LES KEYWORDS à la fonction
+        dict_companies, dict_tech, B = extract_classes_company_tech_all(df_comp_filter,keywords=CYBERSECURITY_KEYWORDS)
 
         # 3. DIAGNOSTIC CRITIQUE
         if B.number_of_nodes() == 0:
@@ -449,7 +493,7 @@ def main():
 
 
         # ✅ Appel corrigé
-        save_graph_and_dicts(B, df_comp_proc, dict_companies, dict_tech, limit, FLAG_CYBERSECURITY)
+        save_graph_and_dicts(B, df_comp_filter, dict_companies, dict_tech, limit, FLAG_CYBERSECURITY)
 
 
 

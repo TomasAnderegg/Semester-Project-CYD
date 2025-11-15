@@ -11,7 +11,7 @@ import math
 from . import classes
 import matplotlib
 from datetime import datetime 
-from code.TechRank import run_techrank
+# from code.TechRank import run_techrank
 matplotlib.use('Qt5Agg')  # ou 'TkAgg' selon ton installation
 
 
@@ -24,6 +24,7 @@ USE_DUCKDB = True  # True = utiliser DuckDB, False = CSV
 DATA_PATH_DUCKDB = r"C:\Users\tjga9\Documents\Tomas\EPFL\MA3\CYD PDS\Crunchbase dataset\crunchbase.duckdb"
 DATA_PATH_INVESTMENTS_CSV = r"data/data_cb/investments.csv"
 DATA_PATH_FUNDING_CSV = r"data/data_cb/funding_rounds.csv"
+DATA_PATH_ORGA_CSV = r"C:\Users\tjga9\Documents\Tomas\EPFL\MA3\CYD PDS\Code\savings\bipartite_tech_comp\classes\cybersecurity_companies_ranked_500.csv"
 
 TABLE_NAME_INVESTMENTS = "investments"
 TABLE_NAME_FUNDING = "funding_rounds"
@@ -36,7 +37,7 @@ SAVE_DIR_NETWORKS = "savings/bipartite_invest_comp/networks"
 SAVE_DIR_CSV = "savings/bipartite_invest_comp/csv_exports"  # ✅ NOUVEAU: dossier pour les CSV
 
 FLAG_FILTER = False  # Mettre True si tu veux filtrer
-FILTER_KEYWORDS = ['quantum computing']  # Keywords pour filtrage optionnel
+FILTER_KEYWORDS = ['quantum computing', 'quantum key distribution']  # Keywords pour filtrage optionnel
 LIMITS = [500]  # Nombre d'entrées à traiter
 
 # ===================================================================
@@ -60,8 +61,19 @@ def load_data_from_duckdb(filepath, table_name):
 def load_data_from_csv(filepath):
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Fichier CSV introuvable: {filepath}")
-    return pd.read_csv(filepath)
-
+    
+    # Détecter le séparateur (virgule ou point-virgule)
+    df = pd.read_csv(
+        filepath,
+        sep=None,              # Détection automatique du séparateur
+        engine='python',       # Nécessaire pour sep=None
+        on_bad_lines='skip'
+    )
+    
+    # Nettoyer les noms de colonnes
+    df.columns = df.columns.str.strip()
+    
+    return df
 
 def load_data(use_duckdb=True, table_name=""):
     if use_duckdb:
@@ -352,6 +364,82 @@ def merge_and_clean_final(df_funding, df_investments):
         return df_graph
     else:
         raise ValueError("Colonnes 'org_name' ou 'investor_name' manquantes")
+    
+def filter_merged_by_organizations(df_merged, df_organizations):
+    """
+    Filtre le DataFrame mergé pour ne garder que les entreprises présentes dans df_organizations.
+    
+    Args:
+        df_merged: DataFrame issu du merge entre funding et investments
+        df_organizations: DataFrame contenant les organisations filtrées
+    
+    Returns:
+        df_filtered: DataFrame filtré contenant uniquement les org_uuid présents dans df_organizations
+    """
+    print("\n========================== FILTERING BY ORGANIZATIONS ==========================")
+    
+    # Afficher les colonnes disponibles pour diagnostic
+    print(f"  Colonnes dans df_organizations: {df_organizations.columns.tolist()}")
+    print(f"  Colonnes dans df_merged: {df_merged.columns.tolist()}")
+    
+    # Détecter la colonne UUID dans df_organizations
+    possible_uuid_cols = ['uuid', 'org_uuid', 'organization_uuid', 'id', 'organization_id']
+    uuid_col = None
+    
+    for col in possible_uuid_cols:
+        if col in df_organizations.columns:
+            uuid_col = col
+            print(f"  ✓ Colonne UUID détectée: '{uuid_col}'")
+            break
+    
+    if uuid_col is None:
+        print(f"\n  ERREUR: Aucune colonne UUID trouvée parmi {possible_uuid_cols}")
+        print(f"  Colonnes disponibles: {df_organizations.columns.tolist()}")
+        raise ValueError(f"Impossible de trouver une colonne UUID dans df_organizations")
+    
+    # Vérifier que org_uuid existe dans df_merged
+    if 'org_uuid' not in df_merged.columns:
+        print(f"\n  ERREUR: Colonne 'org_uuid' manquante dans df_merged")
+        print(f"  Colonnes disponibles: {df_merged.columns.tolist()}")
+        raise ValueError("Colonne 'org_uuid' manquante dans df_merged")
+    
+    # Obtenir la liste des UUIDs à garder
+    valid_uuids = set(df_organizations[uuid_col].dropna().unique())
+    print(f"  Nombre d'organisations de référence: {len(valid_uuids)}")
+    
+    # Afficher quelques exemples d'UUIDs
+    sample_uuids = list(valid_uuids)[:5]
+    print(f"  Exemples d'UUIDs: {sample_uuids}")
+    
+    # Filtrer le DataFrame mergé
+    initial_rows = len(df_merged)
+    df_filtered = df_merged[df_merged['org_uuid'].isin(valid_uuids)].copy()
+    final_rows = len(df_filtered)
+    
+    print(f"  Lignes avant filtrage: {initial_rows:,}")
+    print(f"  Lignes après filtrage: {final_rows:,}")
+    
+    if final_rows == 0:
+        print("\n  ⚠️ ATTENTION: Aucune correspondance trouvée!")
+        print("  Vérifiez que les UUIDs sont au même format dans les deux fichiers")
+        # Afficher des exemples pour comparaison
+        sample_merged_uuids = df_merged['org_uuid'].dropna().head(5).tolist()
+        print(f"  Exemples d'UUIDs dans df_merged: {sample_merged_uuids}")
+    else:
+        print(f"  Lignes supprimées: {initial_rows - final_rows:,} ({100*(initial_rows-final_rows)/initial_rows:.1f}%)")
+    
+    # Statistiques sur les entreprises conservées
+    unique_orgs_before = df_merged['org_uuid'].nunique()
+    unique_orgs_after = df_filtered['org_uuid'].nunique()
+    print(f"  Entreprises uniques avant: {unique_orgs_before:,}")
+    print(f"  Entreprises uniques après: {unique_orgs_after:,}")
+    
+    # Sauvegarder le résultat filtré
+    csv_filtered_path = f"{SAVE_DIR_CSV}/merged_filtered_by_organizations.csv"
+    df_filtered.to_csv(csv_filtered_path, index=False)
+    print(f"\n✓ CSV filtré sauvegardé: {csv_filtered_path}")
+    
+    return df_filtered
 
 
 # ===================================================================
@@ -600,6 +688,10 @@ def main(max_companies_plot=20, max_investors_plot=20):
     print("\n========================== LOADING DATA ==========================")
     df_investments = load_data(use_duckdb=USE_DUCKDB, table_name=TABLE_NAME_INVESTMENTS)
     df_funding = load_data(use_duckdb=USE_DUCKDB, table_name=TABLE_NAME_FUNDING)
+
+     # ✅ NOUVEAU: Charger le fichier organizations
+    df_organizations = load_data_from_csv(DATA_PATH_ORGA_CSV)
+    print(f"✓ Organisations chargées: {len(df_organizations):,} lignes")
     
     print("✓ Données chargées")
     
@@ -612,6 +704,8 @@ def main(max_companies_plot=20, max_investors_plot=20):
     print("\n========================== MERGING DATA ==========================")
     df_graph_full = merge_and_clean_final(df_funding_clean, df_investments_clean)
     print(f"✓ Données mergées : {len(df_graph_full):,} lignes")
+
+    df_graph_full = filter_merged_by_organizations(df_graph_full, df_organizations)
     
     for limit in LIMITS:
         print(f"\n{'='*70}")
@@ -635,7 +729,7 @@ def main(max_companies_plot=20, max_investors_plot=20):
 
         # Créer le graphe bipartite
         B, dict_companies, dict_investors = nx_dip_graph_from_pandas(df_graph)
-        _,_,_,_=run_techrank(dict_investors, dict_companies, B)
+        # _,_,_,_=run_techrank(dict_investors, dict_companies, B)
 
         prepare_tgn_input(B, output_prefix="crunchbase_tgn")
         

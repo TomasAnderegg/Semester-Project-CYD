@@ -12,6 +12,7 @@ from scipy.sparse import csr_matrix
 import json
 from tqdm import tqdm
 
+
 # ===================================================================
 # CONFIGURATION
 # ===================================================================
@@ -350,8 +351,8 @@ def save_corrected_results(df_investors, df_companies, num_invest, num_comp, fla
 
 def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_CYBERSECURITY,
                  preferences_comp=None, preferences_tech=None,
-                 alpha=OPTIMAL_ALPHA_COMP, beta=OPTIMAL_BETA_COMP, do_plot=False, 
-                 dict_investors=None, dict_comp=None, B=None
+                 alpha=OPTIMAL_ALPHA_COMP, beta=OPTIMAL_BETA_COMP, do_plot=False 
+                 #,dict_investors=None, dict_comp=None, B=None
                 ):
     
     create_directories()
@@ -415,6 +416,6 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_C
 # EXECUTION
 # ===================================================================
 
-# if __name__ == "__main__":
-#     df_investors, df_comp, dict_investors, dict_invest = run_techrank(do_plot=False)
-#     print(df_investors.head(), df_comp.head())
+if __name__ == "__main__":
+    df_investors, df_comp, dict_investors, dict_invest = run_techrank(do_plot=False)
+    # print(df_investors.head(), df_comp.head())

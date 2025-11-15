@@ -16,6 +16,24 @@ con = duckdb.connect(db_path)
 
 MINIMUM_NUM_FUNDING = 5
 
+# 🔍 UUID que tu veux inspecter
+TARGET_UUID = "1ecfb336-a948-b94a-7741-46aa44136e3c"
+
+# 🔍 Recherche des détails dans organizations
+query_details = f"""
+    SELECT
+        name,
+        category_list,
+        short_description
+    FROM main.organizations
+    WHERE uuid = '{TARGET_UUID}'
+"""
+df_details = con.execute(query_details).fetchdf()
+
+print("\n🔎 Détails de l'organisation ciblée :")
+print(df_details if not df_details.empty else "⚠️ Aucun résultat trouvé.")
+
+
 # Liste pour stocker toutes les levées de fonds
 all_funding_data = []
 
@@ -36,7 +54,7 @@ for company_name in df_companies["final_configuration"]:
         company_uuid = df_company['uuid'].iloc[0]
         print(f"'{company_name}' existe avec UUID : {company_uuid}")
 
-        # 2️⃣ Récupérer les levées de fonds avec UUID et nom
+        # 2️⃣ Récupérer les levées de fonds
         query_funding = f"""
             SELECT 
                 '{company_name}' AS company_name,
@@ -57,14 +75,15 @@ for company_name in df_companies["final_configuration"]:
     except Exception as e:
         print(f"⚠️ Erreur pour '{company_name}' : {e}")
 
-# Concaténer toutes les données et sauvegarder le CSV global
+
+# Concaténer toutes les données et sauvegarder
 if all_funding_data:
     df_all_funding = pd.concat(all_funding_data, ignore_index=True)
     csv_all_path = output_dir / "all_companies_funding_rounds.csv"
     df_all_funding.to_csv(csv_all_path, index=False)
     print(f"\n💾 CSV global sauvegardé : {csv_all_path}")
 
-    # 🔹 Filtrer entreprises avec >=5 levées de fonds
+    # 🔹 Filtrer entreprises avec >=5 levées
     df_counts = df_all_funding.groupby(["company_name", "company_uuid"]).size().reset_index(name="funding_rounds_count")
     df_5plus = df_counts[df_counts["funding_rounds_count"] >= MINIMUM_NUM_FUNDING].sort_values(by="funding_rounds_count", ascending=False)
 
