@@ -30,7 +30,15 @@ SAVE_DIR_NETWORKS = "savings/bipartite_tech_comp/networks"
 
 FLAG_CYBERSECURITY = True
 LIMITS = [500]
-CYBERSECURITY_KEYWORDS = ['quantum computing', 'quantum encryption', 'quantum key distribution',]
+CYBERSECURITY_KEYWORDS = [
+    'quantum computing', 
+    'quantum encryption', 
+    'quantum key distribution',
+    'cybersecurity',           
+    'information security',    
+    'network security',        
+    'encryption',              
+]
 
 # ===================================================================
 # UTILS
@@ -124,7 +132,7 @@ def process_category_groups(df):
     return df_proc
 
 
-def filter_cybersecurity(df: pd.DataFrame, keywords: List[str] = ['quantum computing', 'quantum encryption', 'quantum key distribution']) -> pd.DataFrame:
+def filter_cybersecurity(df: pd.DataFrame, keywords: List[str] = ['quantum']) -> pd.DataFrame:
     """
     Filtre les entreprises dont AU MOINS UNE catégorie correspond EXACTEMENT à un keyword.
     """
@@ -191,27 +199,21 @@ def filter_cybersecurity(df: pd.DataFrame, keywords: List[str] = ['quantum compu
 
 def extract_classes_company_tech_all(df, keywords=None):
     """
-    Crée le graphe bipartite en ne gardant QUE les technologies qui matchent les keywords.
+    Crée le graphe bipartite avec TOUTES les technologies des entreprises filtrées.
     
     Args:
-        df: DataFrame filtré des entreprises
-        keywords: Liste des keywords exacts à garder (si None, garde toutes les catégories)
+        df: DataFrame filtré des entreprises (déjà filtrées par keywords)
+        keywords: Liste des keywords (optionnel, pour info seulement)
     """
     dict_companies = {}
     dict_tech = {}
     B = nx.Graph()
     
-    # Normaliser les keywords
-    if keywords:
-        normalized_keywords = {k.strip().lower() for k in keywords}
-    else:
-        normalized_keywords = None
-    
     print(f"\n🔧 Construction du graphe bipartite...")
-    if normalized_keywords:
-        print(f"   Technologies autorisées : {normalized_keywords}")
+    print(f"   Mode: Garder TOUTES les technologies des entreprises filtrées")
     
     companies_without_tech = []
+    all_techs_found = set()
     
     for index, row in df.iterrows():
         comp_name = row['name']
@@ -220,7 +222,7 @@ def extract_classes_company_tech_all(df, keywords=None):
         c = classes.Company(
             id=row['uuid'],
             name=comp_name,
-            technologies=row['category_groups']  # Garde toutes pour l'objet
+            technologies=row['category_groups']
         )
 
         if 'rank_company' in df.columns:
@@ -231,22 +233,14 @@ def extract_classes_company_tech_all(df, keywords=None):
         dict_companies[comp_name] = c
         B.add_node(comp_name, bipartite=0)
 
-        # Technologies : FILTRER selon les keywords
+        # Technologies : GARDER TOUTES LES CATÉGORIES (pas de filtre ici)
         categories = row['category_groups']
         
-        if isinstance(categories, list):
-            # Normaliser et filtrer
-            if normalized_keywords:
-                valid_techs = [
-                    tech for tech in categories 
-                    if str(tech).strip().lower() in normalized_keywords
-                ]
-            else:
-                valid_techs = categories
-            
-            # Ajouter les arêtes UNIQUEMENT pour les technologies valides
-            for tech in valid_techs:
+        if isinstance(categories, list) and len(categories) > 0:
+            # ✅ Ajouter TOUTES les technologies, pas de filtre
+            for tech in categories:
                 tech_normalized = str(tech).strip()
+                all_techs_found.add(tech_normalized.lower())
                 
                 if tech_normalized not in dict_tech:
                     t = classes.Technology(name=tech_normalized)
@@ -255,32 +249,37 @@ def extract_classes_company_tech_all(df, keywords=None):
                 
                 # Ajouter l'arête
                 B.add_edge(comp_name, tech_normalized)
-            
-            if not valid_techs:
-                companies_without_tech.append(comp_name)
         
-        else:
-            # Cas où category_groups n'est pas une liste (normalement ne devrait pas arriver)
+        elif isinstance(categories, str) and categories.strip():
+            # Cas où category_groups est une string
             tech_str = str(categories).strip()
-            if not normalized_keywords or tech_str.lower() in normalized_keywords:
-                if tech_str not in dict_tech:
-                    t = classes.Technology(name=tech_str)
-                    dict_tech[tech_str] = t
-                    B.add_node(tech_str, bipartite=1)
-                
-                B.add_edge(comp_name, tech_str)
-            else:
-                companies_without_tech.append(comp_name)
+            all_techs_found.add(tech_str.lower())
+            
+            if tech_str not in dict_tech:
+                t = classes.Technology(name=tech_str)
+                dict_tech[tech_str] = t
+                B.add_node(tech_str, bipartite=1)
+            
+            B.add_edge(comp_name, tech_str)
+        else:
+            companies_without_tech.append(comp_name)
     
     # Rapport
-    print(f"✓ Graphe créé :")
+    print(f"\n✓ Graphe créé :")
     print(f"   - Entreprises : {len(dict_companies)}")
-    print(f"   - Technologies (filtrées) : {len(dict_tech)}")
+    print(f"   - Technologies (TOUTES) : {len(dict_tech)}")
+    print(f"   - Technologies uniques : {len(all_techs_found)}")
     print(f"   - Arêtes : {B.number_of_edges()}")
     
     if companies_without_tech:
-        print(f"\n⚠️  {len(companies_without_tech)} entreprises sans technologie valide")
-        print(f"   Exemples : {companies_without_tech[:3]}")
+        print(f"\n⚠️  {len(companies_without_tech)} entreprises sans technologie")
+        print(f"   Exemples : {companies_without_tech[:5]}")
+    
+    # Afficher quelques exemples de technologies trouvées
+    print(f"\n📊 Exemples de technologies dans le graphe :")
+    sample_techs = sorted(all_techs_found)[:10]
+    for tech in sample_techs:
+        print(f"   • {tech}")
 
     return dict_companies, dict_tech, B
 
