@@ -198,7 +198,9 @@ def filter_edges_after_training(full_data, train_data, logger):
     else:
         train_max_ts = -np.inf
 
-    mask_after_train = edge_times >= train_max_ts
+    mask_after_train = edge_times >= train_max_ts # on ne garde que les arretes après le temps max du train
+    # mask_after_train = np.ones_like(edge_times, dtype=bool)  # garde toutes les arêtes
+
     count_total = len(edge_times)
     count_after = mask_after_train.sum()
     logger.info("Edges total in full_data: %d, edges at/after train max timestamp: %d", count_total, int(count_after))
@@ -208,7 +210,7 @@ def filter_edges_after_training(full_data, train_data, logger):
 def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data, train_data, args, logger):
     """
     Génère le graphe prédit et une liste de prédictions (uid, vid, prob).
-    CORRECTION : Gère correctement le mapping bipartite
+    ✅ CORRECTION : Utilise les mappings correctement sans supposer l'ordre
     """
     # Filter edges after train
     sources, destinations, edge_times, edge_idxs = filter_edges_after_training(full_data, train_data, logger)
@@ -217,11 +219,8 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     pred_graph = nx.Graph()
     predictions = []
     
-    # Dictionnaires compatibles TechRank (nom → infos)
     dict_companies = {}
     dict_investors = {}
-    
-    # Tracking des funding rounds par paire
     edge_funding_info = {}
 
     logger.info("Computing edge probabilities for filtered dataset (post-train timestamps)...")
@@ -241,39 +240,36 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
             pos_prob, _ = tgn.compute_edge_probabilities(src_batch, dst_batch, neg_batch, times_batch, idx_batch)
 
         for s, d, p, t in zip(src_batch, dst_batch, pos_prob.cpu().numpy(), times_batch):
+            # ✅ Résoudre les noms depuis les mappings
+            # Note: s et d sont des IDs numériques du TGN
+            inv_name = id_to_investor.get(s, None)
+            comp_name_from_s = id_to_company.get(s, None)
+            
+            comp_name = id_to_company.get(d, None)
+            inv_name_from_d = id_to_investor.get(d, None)
+            
+            # Déterminer qui est qui
+            # Cas 1: s est dans investors ET d est dans companies
+            if inv_name is not None and comp_name is not None:
+                # Parfait ! C'est le cas normal
+                pass
+            # Cas 2: s est dans companies ET d est dans investors (inversé)
+            elif comp_name_from_s is not None and inv_name_from_d is not None:
+                inv_name = inv_name_from_d
+                comp_name = comp_name_from_s
+            # Cas 3: Fallback avec des noms génériques
+            else:
+                inv_name = inv_name or inv_name_from_d or f"investor_{s}_{d}"
+                comp_name = comp_name or comp_name_from_s or f"company_{s}_{d}"
+                logger.warning(f"Ambiguous mapping: s={s}, d={d}")
+            
             prob_score = float(p)
             timestamp = float(t)
             
-            # CORRECTION CRITIQUE : Déterminer qui est investor et qui est company
-            # Dans tes mappings, tu as séparé investors et companies
-            # Il faut vérifier dans quel mapping se trouve chaque ID
-            
-            # Essayer de résoudre s et d
-            s_is_investor = s in id_to_investor
-            s_is_company = s in id_to_company
-            d_is_investor = d in id_to_investor
-            d_is_company = d in id_to_company
-            
-            # Déterminer les rôles
-            if s_is_investor and d_is_company:
-                # s = investor, d = company (cas normal)
-                inv_name = id_to_investor[s]
-                comp_name = id_to_company[d]
-            elif s_is_company and d_is_investor:
-                # s = company, d = investor (cas inversé)
-                inv_name = id_to_investor[d]
-                comp_name = id_to_company[s]
-            else:
-                # Cas ambigu : utiliser un fallback
-                logger.warning(f"Ambiguous edge: s={s} (inv={s_is_investor}, comp={s_is_company}), "
-                             f"d={d} (inv={d_is_investor}, comp={d_is_company})")
-                inv_name = id_to_investor.get(s, id_to_investor.get(d, f"investor_{s}_{d}"))
-                comp_name = id_to_company.get(d, id_to_company.get(s, f"company_{s}_{d}"))
-            
-            # ✅ Créer les dictionnaires
+            # Créer/mettre à jour les dictionnaires
             if comp_name not in dict_companies:
                 dict_companies[comp_name] = {
-                    'id': int(d) if d_is_company else int(s),
+                    'id': int(d) if comp_name == id_to_company.get(d) else int(s),
                     'name': comp_name,
                     'technologies': [],
                     'total_funding': 0.0,
@@ -282,13 +278,13 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
             
             if inv_name not in dict_investors:
                 dict_investors[inv_name] = {
-                    'investor_id': int(s) if s_is_investor else int(d),
+                    'investor_id': int(s) if inv_name == id_to_investor.get(s) else int(d),
                     'name': inv_name,
                     'num_investments': 0,
                     'total_invested': 0.0
                 }
             
-            # ✅ Tracking des funding rounds par edge
+            # Tracking funding rounds
             edge_key = (comp_name, inv_name)
             if edge_key not in edge_funding_info:
                 edge_funding_info[edge_key] = {
@@ -297,7 +293,6 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
                     'num_funding_rounds': 0
                 }
             
-            # Ajouter ce funding round
             edge_funding_info[edge_key]['funding_rounds'].append({
                 'timestamp': timestamp,
                 'probability': prob_score
@@ -305,32 +300,25 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
             edge_funding_info[edge_key]['total_raised_amount_usd'] += prob_score
             edge_funding_info[edge_key]['num_funding_rounds'] += 1
             
-            # Mettre à jour les statistiques globales
             dict_companies[comp_name]['total_funding'] += prob_score
             dict_companies[comp_name]['num_funding_rounds'] += 1
             dict_investors[inv_name]['num_investments'] += 1
             dict_investors[inv_name]['total_invested'] += prob_score
             
-            # Ajouter au graphe avec les bonnes propriétés bipartite
-            pred_graph.add_node(inv_name, bipartite=1)  # Investors = 1
-            pred_graph.add_node(comp_name, bipartite=0)  # Companies = 0
-
-            if not pred_graph.has_node(comp_name):
-                logger.warning(f"Company {comp_name} not in graph yet")
-            if not pred_graph.has_node(inv_name):
-                logger.warning(f"Investor {inv_name} not in graph yet")
+            # ✅ Ajouter au graphe (l'ordre n'a pas d'importance pour nx.Graph)
+            pred_graph.add_node(inv_name, bipartite=0)
+            pred_graph.add_node(comp_name, bipartite=1)
             
             predictions.append((s, d, prob_score))
 
         if (start // args.bs) % 10 == 0:
             logger.info("Processed %d/%d edges...", end, len(sources))
     
-    #  Ajouter les edges avec toutes les infos
+    # ✅ Ajouter les edges (ordre n'a pas d'importance)
     for (comp_name, inv_name), funding_info in edge_funding_info.items():
         pred_graph.add_edge(
-              
-            comp_name,#  CORRECTION : comp_name en premier (bipartite=1)
-            inv_name, #  CORRECTION : inv_name en second (bipartite=0)
+            comp_name,
+            inv_name,
             weight=funding_info['total_raised_amount_usd'],
             funding_rounds=funding_info['funding_rounds'],
             total_raised_amount_usd=funding_info['total_raised_amount_usd'],
@@ -340,19 +328,10 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     logger.info("Graph created: %d nodes, %d edges", pred_graph.number_of_nodes(), pred_graph.number_of_edges())
     logger.info("Dictionaries created: %d companies, %d investors", len(dict_companies), len(dict_investors))
     
-    #  Statistiques
+    # Statistiques
     logger.info("\nStatistiques des levées de fonds:")
     total_funding_rounds = sum([data.get('num_funding_rounds', 0) for u, v, data in pred_graph.edges(data=True)])
     logger.info(f"  - Total levées de fonds: {total_funding_rounds}")
-    
-    multi_funding = [(u, v, data.get('num_funding_rounds', 0)) 
-                     for u, v, data in pred_graph.edges(data=True) 
-                     if data.get('num_funding_rounds', 0) > 1]
-    if multi_funding:
-        logger.info(f"  - Paires avec plusieurs levées: {len(multi_funding)}")
-        logger.info(f"  - Top 5 paires (par nombre de levées):")
-        for u, v, count in sorted(multi_funding, key=lambda x: x[2], reverse=True)[:5]:
-            logger.info(f"    • {u} ← {v}: {count} levées")
     
     return pred_graph, predictions, dict_companies, dict_investors
 

@@ -243,35 +243,29 @@ def save_graph_and_dicts(B, df_companies, dict_companies, dict_tech, limit, flag
 
 #     return df, user_map, item_map
 
-def prepare_tgn_input(B, output_prefix="investment_bipartite"):
+def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
     """
-    Convertit le graphe bipartite NetworkX en fichiers compatibles TGN.
-    VERSION ENRICHIE avec features temporelles, de degré et normalisées.
+    Prépare les fichiers TGN en ne gardant que les arêtes <= max_time si fourni.
     """
-    from sklearn.preprocessing import StandardScaler
-    
-    rows = []
-    feats = []
-    user_map, item_map = {}, {}  # investors / companies respectivement
+    rows, feats = [], []
+    user_map, item_map = {}, {}
     user_inverse, item_inverse = {}, {}
 
-    # ✅ NOUVEAU: Calculer les degrés avant la boucle
-    print("Calcul des degrés des nœuds...")
-    company_degrees = {}
-    investor_degrees = {}
-    
-    for node in B.nodes():
-        if B.nodes[node].get('bipartite') == 1:  # Company
-            company_degrees[node] = B.degree(node)
-        else:  # Investor
-            investor_degrees[node] = B.degree(node)
-    
-    print(f"✓ {len(company_degrees)} entreprises, {len(investor_degrees)} investisseurs")
+    for u, v, data in B.edges(data=True):
+        # Extraire timestamp min/max des levées
+        ts_list = []
+        for fr in data.get('funding_rounds', []):
+            try:
+                ts_list.append(datetime.strptime(fr['announced_on'], "%Y-%m-%d").timestamp())
+            except Exception:
+                continue
+        if not ts_list:
+            continue
+        ts = min(ts_list)
 
-    # Boucle principale
-    for idx, (u, v, data) in enumerate(B.edges(data=True)):
-        # u = company, v = investor
-        # Identifiants entiers pour TGN
+        if max_time is not None and ts > max_time:
+            continue  # on ignore les arêtes futures
+
         if u not in item_map:
             item_map[u] = len(item_map)
             item_inverse[item_map[u]] = u
@@ -279,147 +273,51 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
             user_map[v] = len(user_map)
             user_inverse[user_map[v]] = v
 
-        u_id = item_map[u]
-        v_id = user_map[v]
-        
-        # ✅ Timestamp avec extraction de features temporelles
-        if data.get('funding_rounds') and data['funding_rounds'][0].get('announced_on'):
-            try:
-                date_str = data['funding_rounds'][0]['announced_on']
-                dt = datetime.strptime(date_str, "%Y-%m-%d")
-                ts = dt.timestamp()
-                
-                # Features temporelles
-                year = dt.year
-                month = dt.month
-                day_of_year = dt.timetuple().tm_yday
-                has_timestamp = 1.0
-                
-            except Exception:
-                ts = 0.0
-                year = 2020
-                month = 1
-                day_of_year = 1
-                has_timestamp = 0.0
-        else:
-            ts = 0.0
-            year = 2020
-            month = 1
-            day_of_year = 1
-            has_timestamp = 0.0
-
-        # Label
+        u_id, v_id = item_map[u], user_map[v]
         label = 1.0
-
-        # ✅ Features enrichies
-        raised_amount = data.get('total_raised_amount_usd', 0.0)
-        num_rounds = max(data.get('num_funding_rounds', 1.0), 1.0)
-        
-        # Degrés des nœuds
-        company_degree = company_degrees.get(u, 1)
-        investor_degree = investor_degrees.get(v, 1)
-
-        feat = np.array([
-            # Features financières (0-5)
-            np.log1p(raised_amount),                     # 0: Log du montant
-            num_rounds,                                   # 1: Nombre de rounds
-            raised_amount / num_rounds,                   # 2: Montant moyen par round
-            1.0 if raised_amount > 5_000_000 else 0.0,   # 3: Gros investissement (>5M)
-            1.0 if num_rounds > 2 else 0.0,              # 4: Multiple rounds (>2)
-            np.sqrt(raised_amount),                       # 5: Racine carrée du montant
-            
-            # Features temporelles (6-9)
-            year - 2000,                                  # 6: Année normalisée (0-25 pour 2000-2025)
-            month / 12.0,                                 # 7: Mois normalisé (0-1)
-            day_of_year / 365.0,                          # 8: Jour de l'année (0-1)
-            has_timestamp,                                # 9: Indicateur de timestamp valide
-            
-            # Features de graphe (10-11)
-            np.log1p(company_degree),                     # 10: Log du degré de l'entreprise
-            np.log1p(investor_degree),                    # 11: Log du degré de l'investisseur
-        ])
-        
-        rows.append((v_id, u_id, ts, label))  # investor → company
+        feat = np.array([data.get('total_raised_amount_usd', 0), data.get('num_funding_rounds', 1)])
+        rows.append((v_id, u_id, ts, label))
         feats.append(feat)
 
-    # === Conversion en DataFrame ===
     df = pd.DataFrame(rows, columns=['u', 'i', 'ts', 'label'])
     feats = np.array(feats)
 
-    print(f"\nAvant filtrage: {len(df)} interactions")
-    print(f"Features shape: {feats.shape}")
-    
-    # Filtrage des timestamps invalides
-    if (df.ts == 0).any():
-        print(f"   Suppression de {(df.ts == 0).sum()} interactions sans timestamp")
-        valid_mask = df.ts > 0
-        df = df[valid_mask].reset_index(drop=True)
-        feats = feats[valid_mask]
-    print(f"   Après filtrage: {len(df)} interactions")
-    
-    if len(df) == 0:
-        raise ValueError("Aucune interaction avec timestamp valide!")
-
-    # Tri par timestamp
-    sort_indices = df.ts.argsort()
-    df = df.iloc[sort_indices].reset_index(drop=True)
-    feats = feats[sort_indices]
-    
-    # ✅ NORMALISATION DES FEATURES (critique pour l'apprentissage)
-    print("\n📊 Normalisation des features...")
-    print(f"   Avant normalisation - Mean: {feats.mean(axis=0)}")
-    print(f"   Avant normalisation - Std: {feats.std(axis=0)}")
-    
-    scaler = StandardScaler()
-    feats = scaler.fit_transform(feats)
-    
-    print(f"   Après normalisation - Mean: {feats.mean(axis=0)}")
-    print(f"   Après normalisation - Std: {feats.std(axis=0)}")
-    
-    # Résolution des timestamps dupliqués
-    epsilon = 1e-6
-    df['group'] = df.groupby('ts').cumcount()
-    df['ts'] = df['ts'] + df['group'] * epsilon
-    df = df.drop('group', axis=1)
-
-    # Vérification stricte
-    assert (df.ts.diff().dropna() > 0).all(), "Timestamps non strictement croissants!"
-    
-    # Sauvegarde des données TGN
-    Path("data").mkdir(exist_ok=True)
+    # Tri par timestamp et ajout idx
+    df = df.sort_values('ts').reset_index(drop=True)
     df['idx'] = np.arange(len(df))
+
+    # Sauvegarde
+    Path("data").mkdir(exist_ok=True)
     df.to_csv(f"data/{output_prefix}.csv", index=False)
     np.save(f"data/{output_prefix}.npy", feats)
-
-    # Node features
-    max_node_id = max(df.u.max(), df.i.max())
-    MEMORY_DIM = 172
-    node_feats = np.zeros((max_node_id + 1, MEMORY_DIM))
+    node_feats = np.zeros((max(df.u.max(), df.i.max()) + 1, 172))
     np.save(f"data/{output_prefix}_node.npy", node_feats)
 
-    print(f"\n✓ Données TGN prêtes : data/{output_prefix}.csv, .npy et _node.npy")
-
-    # Sauvegarde des mappings
+    # Sauvegarde mappings
     mapping_dir = Path("data/mappings")
     mapping_dir.mkdir(exist_ok=True)
-
     with open(mapping_dir / f"{output_prefix}_company_id_map.pickle", "wb") as f:
         pickle.dump(item_map, f)
     with open(mapping_dir / f"{output_prefix}_investor_id_map.pickle", "wb") as f:
         pickle.dump(user_map, f)
 
-    pd.DataFrame.from_dict(item_map, orient='index', columns=['company_id']).to_csv(
-        mapping_dir / f"{output_prefix}_company_id_map.csv"
-    )
-    pd.DataFrame.from_dict(user_map, orient='index', columns=['investor_id']).to_csv(
-        mapping_dir / f"{output_prefix}_investor_id_map.csv"
-    )
+    return df, item_map, user_map, item_inverse, user_inverse
 
-    print(f"\n✓ Mappings sauvegardés dans {mapping_dir}/")
-    print(f"   {len(item_map)} entreprises mappées, {len(user_map)} investisseurs mappés.")
 
-    # return df, user_map, item_map
-    return item_map, user_map, item_inverse, user_inverse
+def temporal_split(df, train_ratio=0.7, val_ratio=0.15):
+    """Split DataFrame into train/val/test based on timestamp."""
+    df_sorted = df.sort_values('announced_on').reset_index(drop=True)
+    n = len(df_sorted)
+    train_end = int(n * train_ratio)
+    val_end = int(n * (train_ratio + val_ratio))
+
+    df_train = df_sorted.iloc[:train_end].copy()
+    df_val = df_sorted.iloc[train_end:val_end].copy()
+    df_test = df_sorted.iloc[val_end:].copy()
+
+    print(f"Split: train={len(df_train)}, val={len(df_val)}, test={len(df_test)}")
+    return df_train, df_val, df_test
+
 
 
 # ===================================================================
@@ -693,7 +591,7 @@ def nx_dip_graph_from_pandas(df):
         )
 
         dict_invest[invest_name] = i
-        B.add_node(invest_name, bipartite=0)
+        B.add_node(invest_name, bipartite=1)
 
         # Company informations
         comp_name = row.get('org_name', '') or ''
@@ -705,7 +603,7 @@ def nx_dip_graph_from_pandas(df):
         )
 
         dict_companies[comp_name] = c
-        B.add_node(comp_name, bipartite=1)
+        B.add_node(comp_name, bipartite=0)
 
         # Edge / funding info
         edge_key = (comp_name, invest_name)
@@ -899,6 +797,9 @@ def main(max_companies_plot=20, max_investors_plot=20):
     print(f"✓ Données mergées : {len(df_graph_full):,} lignes")
 
     # df_graph_full = filter_merged_by_organizations(df_graph_full, df_organizations)
+
+    # --- Découpe temporelle ---
+    df_train, df_val, df_test = temporal_split(df_graph_full)
     
     for limit in LIMITS:
         print(f"\n{'='*70}")
@@ -921,36 +822,26 @@ def main(max_companies_plot=20, max_investors_plot=20):
         print("Nb de lignes totales :", len(df_graph))
 
         # Créer le graphe bipartite
-        B, dict_companies, dict_investors = nx_dip_graph_from_pandas(df_graph)
+        B_train, dict_companies, dict_investors = nx_dip_graph_from_pandas(df_graph)
         # _,_,_,_=run_techrank(dict_investors, dict_companies, B)
+        df_tgn, comp_map, inv_map, comp_inv, inv_inv = prepare_tgn_input(B_train, max_time=None, output_prefix="train")
+        
+        # --- Graphe complet pour prédiction (forecast) ---
+        max_val_time = df_val['announced_on'].min().timestamp()
+        B_full, _, _ = nx_dip_graph_from_pandas(pd.concat([df_train, df_val, df_test]))
+        df_tgn_forecast,_, _, _, _ = prepare_tgn_input(B_full, max_time=max_val_time, output_prefix="forecast")
 
-        comp_map, inv_map, comp_inv, inv_inv = prepare_tgn_input(B,output_prefix=f"investments_{limit}")
+        # --- Sauvegarde graphique et dictionnaires ---
+        save_graph_and_dicts(B_full, dict_companies, dict_investors, limit="forecast")
 
-        # Sauvegarde locale pour réutilisation après les prédictions
-        with open("company_inverse.pkl", "wb") as f:
-            pickle.dump(comp_inv, f)
-        with open("investor_inverse.pkl", "wb") as f:
-            pickle.dump(inv_inv, f)
-        
-        companies = [n for n, d in B.nodes(data=True) if d['bipartite'] == 0]
-        investors = [n for n, d in B.nodes(data=True) if d['bipartite'] == 1]
-        
-        print(f"✓ Graphe créé : {len(companies)} entreprises, {len(investors)} investisseurs")
-        
-        # Limiter pour le plotting
-        top_companies = sorted(companies, key=lambda n: B.degree(n), reverse=True)[:max_companies_plot]
-        top_investors = sorted(investors, key=lambda n: B.degree(n), reverse=True)[:max_investors_plot]
-        
+        # --- Visualisation sous-graphe ---
+        companies = [n for n, d in B_full.nodes(data=True) if d['bipartite'] == 0]
+        investors = [n for n, d in B_full.nodes(data=True) if d['bipartite'] == 1]
+        top_companies = sorted(companies, key=lambda n: B_full.degree(n), reverse=True)[:max_companies_plot]
+        top_investors = sorted(investors, key=lambda n: B_full.degree(n), reverse=True)[:max_investors_plot]
         nodes_to_keep = set(top_companies) | set(top_investors)
-        B_sub = B.subgraph(nodes_to_keep).copy()
-        
-        print(f"✓ Sous-graphe créé : {len(B_sub.nodes())} noeuds, {len(B_sub.edges())} arêtes")
-        
-        # Plot
-        pos = plot_bipartite_graph(B_sub)
-        
-        # Save - avec dictionnaires
-        save_graph_and_dicts(B, dict_companies, dict_investors, limit)
+        B_sub = B_full.subgraph(nodes_to_keep).copy()
+        plot_bipartite_graph(B_sub)
 
 
 if __name__ == "__main__":
