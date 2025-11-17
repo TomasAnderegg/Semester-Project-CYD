@@ -352,12 +352,23 @@ def save_corrected_results(df_investors, df_companies, num_invest, num_comp, fla
 def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_CYBERSECURITY,
                  preferences_comp=None, preferences_tech=None,
                  alpha=OPTIMAL_ALPHA_COMP, beta=OPTIMAL_BETA_COMP, do_plot=False 
-                 #,dict_investors=None, dict_comp=None, B=None
+                 ,dict_investors=None, dict_comp=None, B=None
                 ):
     
     create_directories()
-    dict_investors, dict_comp, B = load_saved_data(num_comp, num_tech, flag_cybersecurity)
+    # dict_investors, dict_comp, B = load_saved_data(num_comp, num_tech, flag_cybersecurity)
     
+    # ✅ MODIFICATION: Charger depuis les fichiers OU utiliser les paramètres
+    if dict_investors is None or dict_comp is None or B is None:
+        # Mode normal: charger depuis les fichiers
+        dict_investors, dict_comp, B = load_saved_data(num_comp, num_tech, flag_cybersecurity)
+    else:
+        # Mode avec données fournies: utiliser directement
+        print(f"✓ Utilisation des données fournies: {len(dict_investors)} investors, {len(dict_comp)} companies")
+    
+    # Vérifier que B n'est pas None
+    if B is None:
+        raise ValueError("Le graphe B est None! Vérifiez que les données sont correctement chargées.")
     # Création de la matrice
     set0 = extract_nodes(B, 0)
     set1 = extract_nodes(B, 1)
@@ -416,6 +427,6 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_C
 # EXECUTION
 # ===================================================================
 
-if __name__ == "__main__":
-    df_investors, df_comp, dict_investors, dict_invest = run_techrank(do_plot=False)
-    # print(df_investors.head(), df_comp.head())
+# if __name__ == "__main__":
+#     df_investors, df_comp, dict_investors, dict_invest = run_techrank(do_plot=False)
+#     # print(df_investors.head(), df_comp.head())

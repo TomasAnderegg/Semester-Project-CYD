@@ -418,7 +418,8 @@ def prepare_tgn_input(B, output_prefix="investment_bipartite"):
     print(f"\n✓ Mappings sauvegardés dans {mapping_dir}/")
     print(f"   {len(item_map)} entreprises mappées, {len(user_map)} investisseurs mappés.")
 
-    return df, user_map, item_map
+    # return df, user_map, item_map
+    return item_map, user_map, item_inverse, user_inverse
 
 
 # ===================================================================
@@ -923,7 +924,13 @@ def main(max_companies_plot=20, max_investors_plot=20):
         B, dict_companies, dict_investors = nx_dip_graph_from_pandas(df_graph)
         # _,_,_,_=run_techrank(dict_investors, dict_companies, B)
 
-        prepare_tgn_input(B, output_prefix="crunchbase_tgn")
+        comp_map, inv_map, comp_inv, inv_inv = prepare_tgn_input(B,output_prefix=f"investments_{limit}")
+
+        # Sauvegarde locale pour réutilisation après les prédictions
+        with open("company_inverse.pkl", "wb") as f:
+            pickle.dump(comp_inv, f)
+        with open("investor_inverse.pkl", "wb") as f:
+            pickle.dump(inv_inv, f)
         
         companies = [n for n, d in B.nodes(data=True) if d['bipartite'] == 0]
         investors = [n for n, d in B.nodes(data=True) if d['bipartite'] == 1]

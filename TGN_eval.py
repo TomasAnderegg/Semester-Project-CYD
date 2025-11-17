@@ -22,6 +22,7 @@ import networkx as nx
 
 from evaluation.evaluation import eval_edge_prediction
 from model.tgn import TGN
+
 from utils.utils import RandEdgeSampler, get_neighbor_finder
 from utils.data_processing import get_data, compute_time_statistics
 
@@ -57,6 +58,7 @@ def parse_args():
     parser.add_argument('--circular', action='store_true', help='Use circular layout')
     parser.add_argument('--mapping_dir', type=str, default='data/mappings')
     parser.add_argument('--top_k_export', type=int, default=100)
+    parser.add_argument('--run_techrank', action='store_true', help='Run TechRank after evaluation')
     return parser.parse_args()
 
 def setup_logger():
@@ -88,12 +90,16 @@ def initialize_model(args, device, node_features, edge_features, mean_time_shift
 def load_mappings(mapping_dir, logger):
     mapping_dir = Path(mapping_dir)
     candidate_company = [
-        "crunchbase_tgn_company_id_map.pickle",
-        "investment_bipartite_company_id_map.pickle",
+        # "crunchbase_tgn_company_id_map.pickle",
+        # "investment_bipartite_company_id_map.pickle",
+        # "investments_10000_investor_id_map.pickle"
+        "investments_10000_company_id_map.pickle"
     ]
     candidate_investor = [
-        "crunchbase_tgn_investor_id_map.pickle",
-        "investment_bipartite_investor_id_map.pickle",
+        # "crunchbase_tgn_investor_id_map.pickle",
+        # "investment_bipartite_investor_id_map.pickle",
+        "investments_10000_investor_id_map.pickle"
+        # "investments_10000_company_id_map.pickle"
     ]
 
     company_map_path = None
@@ -202,7 +208,7 @@ def filter_edges_after_training(full_data, train_data, logger):
 def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data, train_data, args, logger):
     """
     Génère le graphe prédit et une liste de prédictions (uid, vid, prob).
-    Filtre les edges pour timestamps >= max(train.timestamps).
+    CORRECTION : Gère correctement le mapping bipartite
     """
     # Filter edges after train
     sources, destinations, edge_times, edge_idxs = filter_edges_after_training(full_data, train_data, logger)
@@ -210,6 +216,13 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     neg_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=42)
     pred_graph = nx.Graph()
     predictions = []
+    
+    # Dictionnaires compatibles TechRank (nom → infos)
+    dict_companies = {}
+    dict_investors = {}
+    
+    # Tracking des funding rounds par paire
+    edge_funding_info = {}
 
     logger.info("Computing edge probabilities for filtered dataset (post-train timestamps)...")
     for start in range(0, len(sources), args.bs):
@@ -227,26 +240,140 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
         with torch.no_grad():
             pos_prob, _ = tgn.compute_edge_probabilities(src_batch, dst_batch, neg_batch, times_batch, idx_batch)
 
-        for s, d, p in zip(src_batch, dst_batch, pos_prob.cpu().numpy()):
-            inv_name = id_to_investor.get(s, f"investor_{s}")
-            comp_name = id_to_company.get(d, f"company_{d}")
-            pred_graph.add_node(inv_name, bipartite=0)
-            pred_graph.add_node(comp_name, bipartite=1)
-            pred_graph.add_edge(inv_name, comp_name, weight=float(p))
-            predictions.append((s, d, float(p)))
+        for s, d, p, t in zip(src_batch, dst_batch, pos_prob.cpu().numpy(), times_batch):
+            prob_score = float(p)
+            timestamp = float(t)
+            
+            # CORRECTION CRITIQUE : Déterminer qui est investor et qui est company
+            # Dans tes mappings, tu as séparé investors et companies
+            # Il faut vérifier dans quel mapping se trouve chaque ID
+            
+            # Essayer de résoudre s et d
+            s_is_investor = s in id_to_investor
+            s_is_company = s in id_to_company
+            d_is_investor = d in id_to_investor
+            d_is_company = d in id_to_company
+            
+            # Déterminer les rôles
+            if s_is_investor and d_is_company:
+                # s = investor, d = company (cas normal)
+                inv_name = id_to_investor[s]
+                comp_name = id_to_company[d]
+            elif s_is_company and d_is_investor:
+                # s = company, d = investor (cas inversé)
+                inv_name = id_to_investor[d]
+                comp_name = id_to_company[s]
+            else:
+                # Cas ambigu : utiliser un fallback
+                logger.warning(f"Ambiguous edge: s={s} (inv={s_is_investor}, comp={s_is_company}), "
+                             f"d={d} (inv={d_is_investor}, comp={d_is_company})")
+                inv_name = id_to_investor.get(s, id_to_investor.get(d, f"investor_{s}_{d}"))
+                comp_name = id_to_company.get(d, id_to_company.get(s, f"company_{s}_{d}"))
+            
+            # ✅ Créer les dictionnaires
+            if comp_name not in dict_companies:
+                dict_companies[comp_name] = {
+                    'id': int(d) if d_is_company else int(s),
+                    'name': comp_name,
+                    'technologies': [],
+                    'total_funding': 0.0,
+                    'num_funding_rounds': 0
+                }
+            
+            if inv_name not in dict_investors:
+                dict_investors[inv_name] = {
+                    'investor_id': int(s) if s_is_investor else int(d),
+                    'name': inv_name,
+                    'num_investments': 0,
+                    'total_invested': 0.0
+                }
+            
+            # ✅ Tracking des funding rounds par edge
+            edge_key = (comp_name, inv_name)
+            if edge_key not in edge_funding_info:
+                edge_funding_info[edge_key] = {
+                    'funding_rounds': [],
+                    'total_raised_amount_usd': 0.0,
+                    'num_funding_rounds': 0
+                }
+            
+            # Ajouter ce funding round
+            edge_funding_info[edge_key]['funding_rounds'].append({
+                'timestamp': timestamp,
+                'probability': prob_score
+            })
+            edge_funding_info[edge_key]['total_raised_amount_usd'] += prob_score
+            edge_funding_info[edge_key]['num_funding_rounds'] += 1
+            
+            # Mettre à jour les statistiques globales
+            dict_companies[comp_name]['total_funding'] += prob_score
+            dict_companies[comp_name]['num_funding_rounds'] += 1
+            dict_investors[inv_name]['num_investments'] += 1
+            dict_investors[inv_name]['total_invested'] += prob_score
+            
+            # Ajouter au graphe avec les bonnes propriétés bipartite
+            pred_graph.add_node(inv_name, bipartite=1)  # Investors = 1
+            pred_graph.add_node(comp_name, bipartite=0)  # Companies = 0
+
+            if not pred_graph.has_node(comp_name):
+                logger.warning(f"Company {comp_name} not in graph yet")
+            if not pred_graph.has_node(inv_name):
+                logger.warning(f"Investor {inv_name} not in graph yet")
+            
+            predictions.append((s, d, prob_score))
 
         if (start // args.bs) % 10 == 0:
             logger.info("Processed %d/%d edges...", end, len(sources))
+    
+    #  Ajouter les edges avec toutes les infos
+    for (comp_name, inv_name), funding_info in edge_funding_info.items():
+        pred_graph.add_edge(
+              
+            comp_name,#  CORRECTION : comp_name en premier (bipartite=1)
+            inv_name, #  CORRECTION : inv_name en second (bipartite=0)
+            weight=funding_info['total_raised_amount_usd'],
+            funding_rounds=funding_info['funding_rounds'],
+            total_raised_amount_usd=funding_info['total_raised_amount_usd'],
+            num_funding_rounds=funding_info['num_funding_rounds']
+        )
 
     logger.info("Graph created: %d nodes, %d edges", pred_graph.number_of_nodes(), pred_graph.number_of_edges())
-    return pred_graph, predictions
+    logger.info("Dictionaries created: %d companies, %d investors", len(dict_companies), len(dict_investors))
+    
+    #  Statistiques
+    logger.info("\nStatistiques des levées de fonds:")
+    total_funding_rounds = sum([data.get('num_funding_rounds', 0) for u, v, data in pred_graph.edges(data=True)])
+    logger.info(f"  - Total levées de fonds: {total_funding_rounds}")
+    
+    multi_funding = [(u, v, data.get('num_funding_rounds', 0)) 
+                     for u, v, data in pred_graph.edges(data=True) 
+                     if data.get('num_funding_rounds', 0) > 1]
+    if multi_funding:
+        logger.info(f"  - Paires avec plusieurs levées: {len(multi_funding)}")
+        logger.info(f"  - Top 5 paires (par nombre de levées):")
+        for u, v, count in sorted(multi_funding, key=lambda x: x[2], reverse=True)[:5]:
+            logger.info(f"    • {u} ← {v}: {count} levées")
+    
+    return pred_graph, predictions, dict_companies, dict_investors
 
-def save_graph_and_top(pred_graph, predictions, args, logger):
+def save_graph_and_top(pred_graph, predictions, dict_companies, dict_investors, args, logger, id_to_company, id_to_investor):
+    """Sauvegarde compatible TechRank"""
     # Save graph
     graph_path = Path(f'predicted_graph_{args.data}.pkl')
     with open(graph_path, 'wb') as f:
         pickle.dump(pred_graph, f)
     logger.info("Graph saved to %s", graph_path)
+    
+    # Save dictionaries (format TechRank)
+    dict_comp_path = Path(f'dict_companies_{args.data}.pickle')
+    with open(dict_comp_path, 'wb') as f:
+        pickle.dump(dict_companies, f)
+    logger.info("Companies dict saved to %s", dict_comp_path)
+    
+    dict_inv_path = Path(f'dict_investors_{args.data}.pickle')
+    with open(dict_inv_path, 'wb') as f:
+        pickle.dump(dict_investors, f)
+    logger.info("Investors dict saved to %s", dict_inv_path)
 
     # Export top-k predictions
     if args.top_k_export > 0 and len(predictions) > 0:
@@ -256,10 +383,10 @@ def save_graph_and_top(pred_graph, predictions, args, logger):
             writer = csv.writer(f)
             writer.writerow(["investor_id", "company_id", "investor_name", "company_name", "probability"])
             for uid, vid, prob in sorted_preds:
-                writer.writerow([uid, vid, f"investor_{uid}", f"company_{vid}", prob])
+                investor_name = id_to_investor.get(uid, f"investor_{uid}")
+                company_name = id_to_company.get(vid, f"company_{vid}")
+                writer.writerow([uid, vid, investor_name, company_name, prob])
         logger.info("Top %d predictions saved to %s", args.top_k_export, csv_path)
-    else:
-        logger.info("No predictions to export or top_k_export <= 0")
 
 # ----------------------------
 # main()
@@ -351,11 +478,123 @@ def main():
     build_memory_from_train(args, tgn, train_data, train_ngh_finder, logger)
     tgn.set_neighbor_finder(full_ngh_finder)
 
-    pred_graph, predictions = generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data, train_data, args, logger)
+     # MODIFICATION: Récupérer aussi les dictionnaires
+    pred_graph, predictions, dict_companies, dict_investors = generate_predictions_and_graph(
+        tgn, id_to_company, id_to_investor, full_data, train_data, args, logger
+    )
 
-    save_graph_and_top(pred_graph, predictions, args, logger)
+    # MODIFICATION: Passer les dictionnaires
+    save_graph_and_top(pred_graph, predictions, dict_companies, dict_investors, 
+                       args, logger, id_to_company, id_to_investor)
 
     logger.info("Evaluation complete!")
+
+    # NOUVEAU: Lancer TechRank si demandé
+    if args.run_techrank:
+        logger.info("\n" + "="*70)
+        logger.info("LANCEMENT DE TECHRANK SUR LE GRAPHE PRÉDIT")
+        logger.info("="*70)
+        
+        # Sauvegarder d'abord dans le format attendu (au cas où)
+        num_nodes = pred_graph.number_of_nodes()
+        save_dir_classes = Path("savings/bipartite_invest_comp/classes")
+        save_dir_networks = Path("savings/bipartite_invest_comp/networks")
+        save_dir_classes.mkdir(parents=True, exist_ok=True)
+        save_dir_networks.mkdir(parents=True, exist_ok=True)
+        
+        with open(save_dir_classes / f'dict_companies_{num_nodes}.pickle', 'wb') as f:
+            pickle.dump(dict_companies, f)
+        with open(save_dir_classes / f'dict_investors_{num_nodes}.pickle', 'wb') as f:
+            pickle.dump(dict_investors, f)
+        with open(save_dir_networks / f'bipartite_graph_{num_nodes}.gpickle', 'wb') as f:
+            pickle.dump(pred_graph, f)
+        
+        logger.info(f"✓ Données sauvegardées pour TechRank (limit={num_nodes})")
+        
+        # Importer et lancer TechRank avec les données directement
+        try:
+            from code.TechRank import run_techrank
+            
+            # ✅ CORRECTION: Passer les données directement
+            df_investors_rank, df_companies_rank, _, _ = run_techrank(
+                num_comp=num_nodes,
+                num_tech=num_nodes,
+                flag_cybersecurity=False,
+                alpha=0.8,
+                beta=-0.6,
+                do_plot=False,
+                dict_investors=dict_investors,  # ✅ Passer directement
+                dict_comp=dict_companies,        # ✅ Passer directement
+                B=pred_graph                     # ✅ Passer directement
+            )
+            
+            logger.info("\n✓ TechRank terminé avec succès!")
+            logger.info("\nTop 5 Investors (par TechRank):")
+            logger.info(df_investors_rank[['TeckRank_int', 'final_configuration', 'techrank']].head().to_string())
+            
+            logger.info("\nTop 5 Companies (par TechRank):")
+            logger.info(df_companies_rank[['TeckRank_int', 'final_configuration', 'techrank']].head().to_string())
+            
+        except ImportError as e:
+            logger.error(f"Impossible d'importer TechRank: {e}")
+        except Exception as e:
+            logger.error(f"Erreur lors de l'exécution de TechRank: {e}", exc_info=True)
+
+
+    if args.run_techrank:
+        logger.info("\n" + "="*70)
+        logger.info("DIAGNOSTIC DU GRAPHE AVANT TECHRANK")
+        logger.info("="*70)
+        
+        # Vérifier la structure bipartite
+        investors = [n for n, d in pred_graph.nodes(data=True) if d.get('bipartite') == 1]
+        companies = [n for n, d in pred_graph.nodes(data=True) if d.get('bipartite') == 0]
+        
+        logger.info(f" Structure du graphe:")
+        logger.info(f"   Total nodes: {pred_graph.number_of_nodes()}")
+        logger.info(f"   Total edges: {pred_graph.number_of_edges()}")
+        logger.info(f"   Investors (bipartite=0): {len(investors)}")
+        logger.info(f"   Companies (bipartite=1): {len(companies)}")
+        logger.info(f"   Dict investors: {len(dict_investors)}")
+        logger.info(f"   Dict companies: {len(dict_companies)}")
+        
+        # Exemples de noms
+        logger.info(f"\ Exemples de noms:")
+        logger.info(f"   Investors: {investors[:3]}")
+        logger.info(f"   Companies: {companies[:3]}")
+        logger.info(f"   Dict investors keys: {list(dict_investors.keys())[:3]}")
+        logger.info(f"   Dict companies keys: {list(dict_companies.keys())[:3]}")
+        
+        # Vérifier les nœuds isolés
+        isolated = list(nx.isolates(pred_graph))
+        logger.info(f"\  Nœuds isolés: {len(isolated)}")
+        if isolated:
+            logger.info(f"   Exemples: {isolated[:5]}")
+        
+        # Vérifier la cohérence dict ↔ graphe
+        missing_in_graph_inv = set(dict_investors.keys()) - set(investors)
+        missing_in_graph_comp = set(dict_companies.keys()) - set(companies)
+        
+        if missing_in_graph_inv:
+            logger.info(f"\n❌ {len(missing_in_graph_inv)} investors dans dict mais pas dans graphe")
+            logger.info(f"   Exemples: {list(missing_in_graph_inv)[:5]}")
+        
+        if missing_in_graph_comp:
+            logger.info(f"❌ {len(missing_in_graph_comp)} companies dans dict mais pas dans graphe")
+            logger.info(f"   Exemples: {list(missing_in_graph_comp)[:5]}")
+        
+        # Vérifier un edge exemple
+        if pred_graph.number_of_edges() > 0:
+            sample_edge = list(pred_graph.edges(data=True))[0]
+            logger.info(f"\n🔗 Exemple d'arête:")
+            logger.info(f"   {sample_edge[0]} → {sample_edge[1]}")
+            logger.info(f"   Attributs: {sample_edge[2]}")
+            
+            # Vérifier le sens de l'arête
+            u, v = sample_edge[0], sample_edge[1]
+            u_bipartite = pred_graph.nodes[u].get('bipartite', 'MISSING')
+            v_bipartite = pred_graph.nodes[v].get('bipartite', 'MISSING')
+            logger.info(f"   {u} (bipartite={u_bipartite}) → {v} (bipartite={v_bipartite})")
 
 if __name__ == "__main__":
     main()
