@@ -276,7 +276,7 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
         u_id, v_id = item_map[u], user_map[v]
         label = 1.0
         feat = np.array([data.get('total_raised_amount_usd', 0), data.get('num_funding_rounds', 1)])
-        rows.append((v_id, u_id, ts, label))
+        rows.append((u_id, v_id, ts, label)) #u → company, v → investor
         feats.append(feat)
 
     df = pd.DataFrame(rows, columns=['u', 'i', 'ts', 'label'])
@@ -796,6 +796,10 @@ def main(max_companies_plot=20, max_investors_plot=20):
     df_graph_full = merge_and_clean_final(df_funding_clean, df_investments_clean)
     print(f"✓ Données mergées : {len(df_graph_full):,} lignes")
 
+    df_graph_full['announced_on'] = pd.to_datetime(df_graph_full['announced_on'], errors='coerce')
+    df_graph_full = df_graph_full.dropna(subset=['announced_on'])
+
+
     # df_graph_full = filter_merged_by_organizations(df_graph_full, df_organizations)
 
     # --- Découpe temporelle ---
@@ -822,17 +826,30 @@ def main(max_companies_plot=20, max_investors_plot=20):
         print("Nb de lignes totales :", len(df_graph))
 
         # Créer le graphe bipartite
-        B_train, dict_companies, dict_investors = nx_dip_graph_from_pandas(df_graph)
-        # _,_,_,_=run_techrank(dict_investors, dict_companies, B)
-        df_tgn, comp_map, inv_map, comp_inv, inv_inv = prepare_tgn_input(B_train, max_time=None, output_prefix="train")
+        B_train, _, _ = nx_dip_graph_from_pandas(df_train)
+        prepare_tgn_input(B_train, output_prefix="train")
+
+        B_val, _, _ = nx_dip_graph_from_pandas(df_val)
+        prepare_tgn_input(B_val, output_prefix="val")
+
+        B_test, _, _ = nx_dip_graph_from_pandas(df_test)
+        prepare_tgn_input(B_test, output_prefix="test")
         
         # --- Graphe complet pour prédiction (forecast) ---
-        max_val_time = df_val['announced_on'].min().timestamp()
-        B_full, _, _ = nx_dip_graph_from_pandas(pd.concat([df_train, df_val, df_test]))
-        df_tgn_forecast,_, _, _, _ = prepare_tgn_input(B_full, max_time=max_val_time, output_prefix="forecast")
+        max_train_time = df_train['announced_on'].max().timestamp()
+        # Créer le graphe complet pour forecast
+        B_full, dict_companies_full, dict_investors_full = nx_dip_graph_from_pandas(df_graph_full)
 
-        # --- Sauvegarde graphique et dictionnaires ---
-        save_graph_and_dicts(B_full, dict_companies, dict_investors, limit="forecast")
+        # Préparer les fichiers TGN limités au temps maximal du train
+        prepare_tgn_input(
+            B_full,
+            max_time=max_train_time,
+            output_prefix="forecast"
+        )
+
+        # --- Sauvegarde graphique et dictionnaires pour forecast ---
+        save_graph_and_dicts(B_full, dict_companies_full, dict_investors_full, limit="forecast")
+
 
         # --- Visualisation sous-graphe ---
         companies = [n for n, d in B_full.nodes(data=True) if d['bipartite'] == 0]

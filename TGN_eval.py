@@ -93,12 +93,12 @@ def load_mappings(mapping_dir, logger):
         # "crunchbase_tgn_company_id_map.pickle",
         # "investment_bipartite_company_id_map.pickle",
         # "investments_10000_investor_id_map.pickle"
-        "investments_10000_company_id_map.pickle"
+        "forecast_company_id_map.pickle"
     ]
     candidate_investor = [
         # "crunchbase_tgn_investor_id_map.pickle",
         # "investment_bipartite_investor_id_map.pickle",
-        "investments_10000_investor_id_map.pickle"
+        "forecast_investor_id_map.pickle"
         # "investments_10000_company_id_map.pickle"
     ]
 
@@ -210,15 +210,37 @@ def filter_edges_after_training(full_data, train_data, logger):
 def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data, train_data, args, logger):
     """
     Génère le graphe prédit et une liste de prédictions (uid, vid, prob).
-    ✅ CORRECTION : Utilise les mappings correctement sans supposer l'ordre
+    Correction robuste:
+     - construit node_type/node_name à partir des mappings fournis
+     - résout systématiquement qui est investor / company
+     - ignore les arêtes ambigües au lieu de polluer le graphe
+     - ajoute explicitement tous les nodes connus au graphe
     """
+    # Build a reliable node_type / node_name table from mappings
+    node_type = {}   # tgn_id -> "company" or "investor"
+    node_name = {}   # tgn_id -> human name
+
+    # id_to_company and id_to_investor are expected to map numeric_id -> name
+    for nid, name in (id_to_company or {}).items():
+        try:
+            node_type[int(nid)] = "company"
+            node_name[int(nid)] = name
+        except Exception:
+            continue
+    for nid, name in (id_to_investor or {}).items():
+        try:
+            node_type[int(nid)] = "investor"
+            node_name[int(nid)] = name
+        except Exception:
+            continue
+
     # Filter edges after train
     sources, destinations, edge_times, edge_idxs = filter_edges_after_training(full_data, train_data, logger)
 
     neg_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=42)
     pred_graph = nx.Graph()
     predictions = []
-    
+
     dict_companies = {}
     dict_investors = {}
     edge_funding_info = {}
@@ -240,81 +262,111 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
             pos_prob, _ = tgn.compute_edge_probabilities(src_batch, dst_batch, neg_batch, times_batch, idx_batch)
 
         for s, d, p, t in zip(src_batch, dst_batch, pos_prob.cpu().numpy(), times_batch):
-            # ✅ Résoudre les noms depuis les mappings
-            # Note: s et d sont des IDs numériques du TGN
-            inv_name = id_to_investor.get(s, None)
-            comp_name_from_s = id_to_company.get(s, None)
-            
-            comp_name = id_to_company.get(d, None)
-            inv_name_from_d = id_to_investor.get(d, None)
-            
-            # Déterminer qui est qui
-            # Cas 1: s est dans investors ET d est dans companies
-            if inv_name is not None and comp_name is not None:
-                # Parfait ! C'est le cas normal
-                pass
-            # Cas 2: s est dans companies ET d est dans investors (inversé)
-            elif comp_name_from_s is not None and inv_name_from_d is not None:
-                inv_name = inv_name_from_d
-                comp_name = comp_name_from_s
-            # Cas 3: Fallback avec des noms génériques
-            else:
-                inv_name = inv_name or inv_name_from_d or f"investor_{s}_{d}"
-                comp_name = comp_name or comp_name_from_s or f"company_{s}_{d}"
-                logger.warning(f"Ambiguous mapping: s={s}, d={d}")
-            
+            s = int(s); d = int(d)
             prob_score = float(p)
             timestamp = float(t)
-            
-            # Créer/mettre à jour les dictionnaires
-            if comp_name not in dict_companies:
-                dict_companies[comp_name] = {
-                    'id': int(d) if comp_name == id_to_company.get(d) else int(s),
-                    'name': comp_name,
+
+            # Resolve types/names deterministically using node_type/node_name
+            s_type = node_type.get(s, None)
+            d_type = node_type.get(d, None)
+            s_name = node_name.get(s, None)
+            d_name = node_name.get(d, None)
+
+            # Try best-effort if one side missing: use id_to_* fallback
+            if s_name is None:
+                s_name = id_to_company.get(s) or id_to_investor.get(s)
+            if d_name is None:
+                d_name = id_to_company.get(d) or id_to_investor.get(d)
+
+            # Determine investor/company using types
+            investor_name = None
+            company_name = None
+
+            if s_type == "investor" and d_type == "company":
+                investor_name = s_name
+                company_name = d_name
+            elif s_type == "company" and d_type == "investor":
+                investor_name = d_name
+                company_name = s_name
+            else:
+                # If one type known and other unknown, try to deduce:
+                if s_type == "investor" and d_type is None:
+                    investor_name = s_name
+                    company_name = d_name
+                elif s_type == "company" and d_type is None:
+                    investor_name = d_name
+                    company_name = s_name
+                elif d_type == "investor" and s_type is None:
+                    investor_name = d_name
+                    company_name = s_name
+                elif d_type == "company" and s_type is None:
+                    investor_name = s_name
+                    company_name = d_name
+                else:
+                    # Ambiguous: both types unknown OR both same -> skip this edge
+                    logger.debug(f"Skipping ambiguous edge (cannot resolve roles): s={s}({s_type}), d={d}({d_type}), s_name={s_name}, d_name={d_name})")
+                    continue  # skip ambiguous mapping to avoid corruption
+
+            # If still missing a name, build fallback string
+            if investor_name is None:
+                investor_name = f"investor_{s}_{d}"
+            if company_name is None:
+                company_name = f"company_{s}_{d}"
+
+            # Create/update dict entries (consistent structure)
+            if company_name not in dict_companies:
+                # prefer numeric id of the company (if we can decide)
+                comp_id_for_dict = d if node_type.get(d) == "company" else (s if node_type.get(s) == "company" else None)
+                dict_companies[company_name] = {
+                    'id': int(comp_id_for_dict) if comp_id_for_dict is not None else None,
+                    'name': company_name,
                     'technologies': [],
                     'total_funding': 0.0,
                     'num_funding_rounds': 0
                 }
-            
-            if inv_name not in dict_investors:
-                dict_investors[inv_name] = {
-                    'investor_id': int(s) if inv_name == id_to_investor.get(s) else int(d),
-                    'name': inv_name,
+
+            if investor_name not in dict_investors:
+                inv_id_for_dict = s if node_type.get(s) == "investor" else (d if node_type.get(d) == "investor" else None)
+                dict_investors[investor_name] = {
+                    'investor_id': int(inv_id_for_dict) if inv_id_for_dict is not None else None,
+                    'name': investor_name,
                     'num_investments': 0,
                     'total_invested': 0.0
                 }
-            
-            # Tracking funding rounds
-            edge_key = (comp_name, inv_name)
+
+            # Tracking funding rounds per pair
+            edge_key = (company_name, investor_name)
             if edge_key not in edge_funding_info:
                 edge_funding_info[edge_key] = {
                     'funding_rounds': [],
                     'total_raised_amount_usd': 0.0,
                     'num_funding_rounds': 0
                 }
-            
+
             edge_funding_info[edge_key]['funding_rounds'].append({
                 'timestamp': timestamp,
                 'probability': prob_score
             })
             edge_funding_info[edge_key]['total_raised_amount_usd'] += prob_score
             edge_funding_info[edge_key]['num_funding_rounds'] += 1
-            
-            dict_companies[comp_name]['total_funding'] += prob_score
-            dict_companies[comp_name]['num_funding_rounds'] += 1
-            dict_investors[inv_name]['num_investments'] += 1
-            dict_investors[inv_name]['total_invested'] += prob_score
-            
-            # ✅ Ajouter au graphe (l'ordre n'a pas d'importance pour nx.Graph)
-            pred_graph.add_node(inv_name, bipartite=0)
-            pred_graph.add_node(comp_name, bipartite=1)
-            
+
+            # Update global stats
+            dict_companies[company_name]['total_funding'] += prob_score
+            dict_companies[company_name]['num_funding_rounds'] += 1
+            dict_investors[investor_name]['num_investments'] += 1
+            dict_investors[investor_name]['total_invested'] += prob_score
+
+            # Add nodes (with correct bipartite)
+            pred_graph.add_node(company_name, bipartite=0)
+            pred_graph.add_node(investor_name, bipartite=1)
+
+            # Save raw prediction mapping (keep numeric ids for reference)
             predictions.append((s, d, prob_score))
 
         if (start // args.bs) % 10 == 0:
             logger.info("Processed %d/%d edges...", end, len(sources))
-    
-    # ✅ Ajouter les edges (ordre n'a pas d'importance)
+
+    # Add the edges to the graph (company -> investor)
     for (comp_name, inv_name), funding_info in edge_funding_info.items():
         pred_graph.add_edge(
             comp_name,
@@ -325,15 +377,29 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
             num_funding_rounds=funding_info['num_funding_rounds']
         )
 
+    # Ensure all mapped nodes (from id_to_company/id_to_investor) are present in the graph
+    # This avoids "in dict but not in graph" for nodes without predicted edges
+    for nid, name in (id_to_company or {}).items():
+        if name not in pred_graph:
+            pred_graph.add_node(name, bipartite=0)
+            if name not in dict_companies:
+                dict_companies[name] = {'id': int(nid), 'name': name, 'technologies': [], 'total_funding': 0.0, 'num_funding_rounds': 0}
+    for nid, name in (id_to_investor or {}).items():
+        if name not in pred_graph:
+            pred_graph.add_node(name, bipartite=1)
+            if name not in dict_investors:
+                dict_investors[name] = {'investor_id': int(nid), 'name': name, 'num_investments': 0, 'total_invested': 0.0}
+
     logger.info("Graph created: %d nodes, %d edges", pred_graph.number_of_nodes(), pred_graph.number_of_edges())
     logger.info("Dictionaries created: %d companies, %d investors", len(dict_companies), len(dict_investors))
-    
-    # Statistiques
+
+    # Stats
     logger.info("\nStatistiques des levées de fonds:")
     total_funding_rounds = sum([data.get('num_funding_rounds', 0) for u, v, data in pred_graph.edges(data=True)])
     logger.info(f"  - Total levées de fonds: {total_funding_rounds}")
-    
+
     return pred_graph, predictions, dict_companies, dict_investors
+
 
 def save_graph_and_top(pred_graph, predictions, dict_companies, dict_investors, args, logger, id_to_company, id_to_investor):
     """Sauvegarde compatible TechRank"""
