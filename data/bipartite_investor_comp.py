@@ -11,7 +11,7 @@ import math
 from . import classes
 import matplotlib
 from datetime import datetime 
-# from code.TechRank import run_techrank
+from code.TechRank import run_techrank
 matplotlib.use('Qt5Agg')  # ou 'TkAgg' selon ton installation
 from sklearn.preprocessing import StandardScaler
 
@@ -110,175 +110,126 @@ def save_graph_and_dicts(B, df_companies, dict_companies, dict_tech, limit, flag
 
     print(f"\n✓ Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
 
-# def prepare_tgn_input(B, output_prefix="investment_bipartite"):
-#     """
-#     Convertit le graphe bipartite NetworkX en fichiers compatibles TGN.
-#     FIXE: Gère les timestamps dupliqués en ajoutant un epsilon au cas où il y a des dates similaires.
-#     NOUVEAU: crée et sauvegarde des dictionnaires (companies/investors → ids)
-#     """
-#     rows = []
-#     feats = []
-#     user_map, item_map = {}, {}  # investors / companies respectivement
-#     user_inverse, item_inverse = {}, {}
-
-#     for idx, (u, v, data) in enumerate(B.edges(data=True)):
-#         # u = company, v = investor (selon ta convention)
-#         # Identifiants entiers pour TGN
-#         if u not in item_map:
-#             item_map[u] = len(item_map)
-#             item_inverse[item_map[u]] = u
-#         if v not in user_map:
-#             user_map[v] = len(user_map)
-#             user_inverse[user_map[v]] = v
-
-#         u_id = item_map[u]
-#         v_id = user_map[v]
+def run_techrank_on_bipartite(B, dict_companies, dict_investors, limit, 
+                               alpha=0.8, beta=-0.6):
+    """
+    Exécute TechRank sur le graphe bipartite créé.
+    
+    Args:
+        B: Graphe bipartite NetworkX
+        dict_companies: Dictionnaire des entreprises
+        dict_investors: Dictionnaire des investisseurs
+        limit: Limite utilisée pour nommer les fichiers
+        alpha: Paramètre alpha pour TechRank
+        beta: Paramètre beta pour TechRank
+    
+    Returns:
+        df_investors_rank: DataFrame avec le ranking des investisseurs
+        df_companies_rank: DataFrame avec le ranking des entreprises
+    """
+    print("\n" + "="*70)
+    print("EXÉCUTION DE TECHRANK")
+    print("="*70)
+    
+    try:
+        # Appeler run_techrank avec les données créées
+        df_investors_rank, df_companies_rank, dict_inv_updated, dict_comp_updated = run_techrank(
+            num_comp=limit,
+            num_tech=limit,
+            flag_cybersecurity=False,
+            preferences_comp=None,
+            preferences_tech=None,
+            alpha=alpha,
+            beta=beta,
+            do_plot=False,
+            # IMPORTANT: Passer les données directement
+            dict_investors=dict_investors,
+            dict_comp=dict_companies,
+            B=B
+        )
         
-#         # Timestamp
-#         if data.get('funding_rounds') and data['funding_rounds'][0].get('announced_on'):
-#             try:
-#                 ts = datetime.strptime(
-#                     data['funding_rounds'][0]['announced_on'], "%Y-%m-%d"
-#                 ).timestamp()
-#             except Exception:
-#                 ts = 0.0
-#         else:
-#             ts = 0.0
-
-#         # Label
-#         label = 1.0
-
-#         # # Features
-#         # feat = np.array([
-#         #     data.get('total_raised_amount_usd', 0.0),
-#         #     data.get('num_funding_rounds', 0.0)
-#         # ])
-
-#         # Features enrichies et normalisées
-#         raised_amount = data.get('total_raised_amount_usd', 0.0)
-#         num_rounds = max(data.get('num_funding_rounds', 1.0), 1.0)
-
-#         feat = np.array([
-#             np.log1p(raised_amount),                    # Log du montant (normalise)
-#             num_rounds,                                  # Nombre de rounds
-#             raised_amount / num_rounds,                  # Montant moyen par round
-#             1.0 if raised_amount > 5_000_000 else 0.0,  # Gros investissement
-#             1.0 if num_rounds > 2 else 0.0,             # Multiple rounds
-#             np.sqrt(raised_amount),                      # Racine carrée (autre normalisation)
-#         ])
-
+        print("\n✓ TechRank exécuté avec succès!")
+        print(f"  - {len(df_investors_rank)} investisseurs classés")
+        print(f"  - {len(df_companies_rank)} entreprises classées")
         
-#         rows.append((v_id, u_id, ts, label))  # investor → company
-#         feats.append(feat)
-
-#     # === Conversion en DataFrame ===
-#     df = pd.DataFrame(rows, columns=['u', 'i', 'ts', 'label'])
-#     feats = np.array(feats)
-
-#     print(f"Avant filtrage: {len(df)} interactions")
-#     if (df.ts == 0).any():
-#         print(f"   Suppression de {(df.ts == 0).sum()} interactions sans timestamp")
-#         valid_mask = df.ts > 0
-#         df = df[valid_mask].reset_index(drop=True)
-#         feats = feats[valid_mask]
-#     print(f"   Après filtrage: {len(df)} interactions")
-    
-#     if len(df) == 0:
-#         raise ValueError("Aucune interaction avec timestamp valide!")
-
-#     # Tri par timestamp
-#     sort_indices = df.ts.argsort()
-#     df = df.iloc[sort_indices].reset_index(drop=True)
-#     feats = feats[sort_indices]
-    
-#     # Résolution des timestamps dupliqués
-#     epsilon = 1e-6
-#     df['group'] = df.groupby('ts').cumcount()
-#     df['ts'] = df['ts'] + df['group'] * epsilon
-#     df = df.drop('group', axis=1)
-
-#     # Vérification stricte
-#     assert (df.ts.diff().dropna() > 0).all(), "Timestamps non strictement croissants!"
-    
-#     # Sauvegarde des données TGN
-#     Path("data").mkdir(exist_ok=True)
-#     df['idx'] = np.arange(len(df))
-#     df.to_csv(f"data/{output_prefix}.csv", index=False)
-#     np.save(f"data/{output_prefix}.npy", feats)
-
-#     # Node features
-#     max_node_id = max(df.u.max(), df.i.max())
-#     MEMORY_DIM = 172
-#     node_feats = np.zeros((max_node_id + 1, MEMORY_DIM))
-#     np.save(f"data/{output_prefix}_node.npy", node_feats)
-
-#     print(f"\n✓ Données TGN prêtes : data/{output_prefix}.csv, .npy et _node.npy")
-
-#     # ===============================
-#     # NOUVEAU : Sauvegarde des mappings
-#     # ===============================
-
-#     mapping_dir = Path("data/mappings")
-#     mapping_dir.mkdir(exist_ok=True)
-
-#     # Inverse mapping (utile pour décodage après entraînement)
-#     with open(mapping_dir / f"{output_prefix}_company_id_map.pickle", "wb") as f:
-#         pickle.dump(item_map, f)
-#     with open(mapping_dir / f"{output_prefix}_investor_id_map.pickle", "wb") as f:
-#         pickle.dump(user_map, f)
-
-#     # Version CSV lisible facilement
-#     pd.DataFrame.from_dict(item_map, orient='index', columns=['company_id']).to_csv(
-#         mapping_dir / f"{output_prefix}_company_id_map.csv"
-#     )
-#     pd.DataFrame.from_dict(user_map, orient='index', columns=['investor_id']).to_csv(
-#         mapping_dir / f"{output_prefix}_investor_id_map.csv"
-#     )
-
-#     print(f"\n✓ Mappings sauvegardés dans {mapping_dir}/ :")
-#     print(f"   - {output_prefix}_company_id_map.pickle/.csv")
-#     print(f"   - {output_prefix}_investor_id_map.pickle/.csv")
-
-#     print(f"   {len(item_map)} entreprises mappées, {len(user_map)} investisseurs mappés.")
-
-#     return df, user_map, item_map
+        return df_investors_rank, df_companies_rank
+        
+    except Exception as e:
+        print(f"\n❌ Erreur lors de l'exécution de TechRank: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None
 
 def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
     """
     Prépare les fichiers TGN en ne gardant que les arêtes <= max_time si fourni.
+    
+    MODIFICATION AJOUTÉE: Export des mappings réels vers CSV pour vérification.
     """
     rows, feats = [], []
     user_map, item_map = {}, {}
     user_inverse, item_inverse = {}, {}
 
     for u, v, data in B.edges(data=True):
+        # Pour NetworkX, u est le noeud du set 0 (Company), v est le noeud du set 1 (Investor)
+        # Vérification du type (pour être sûr)
+        u_bipartite = B.nodes[u].get('bipartite')
+        v_bipartite = B.nodes[v].get('bipartite')
+
+        # Si le graphe n'est pas strictement bipartite ou mal labellisé, on peut corriger ici
+        if u_bipartite == 1 and v_bipartite == 0:
+            # Si les rôles sont inversés dans l'itération, on les échange
+            u, v = v, u 
+            u_bipartite, v_bipartite = v_bipartite, u_bipartite # Nécessaire si on voulait réutiliser les variables
+
+        # Si 'u' n'a pas bipartite=0 (Company) ou 'v' n'a pas bipartite=1 (Investor), il y a un problème
+        if u_bipartite != 0 or v_bipartite != 1:
+            print(f"Avertissement: Nœud {u} ({u_bipartite}) ou {v} ({v_bipartite}) n'a pas le label bipartite attendu (0/1). Ignoré.")
+            continue
+
+
         # Extraire timestamp min/max des levées
         ts_list = []
         for fr in data.get('funding_rounds', []):
             try:
-                ts_list.append(datetime.strptime(fr['announced_on'], "%Y-%m-%d").timestamp())
-            except Exception:
+                # Assurez-vous que 'announced_on' est bien une chaîne de format "YYYY-MM-DD"
+                announced_on_str = fr['announced_on']
+                # Tente de convertir la chaîne de date en timestamp POSIX
+                ts_list.append(datetime.strptime(announced_on_str, "%Y-%m-%d").timestamp())
+            except ValueError:
+                 # Si le format n'est pas bon ou la valeur est manquante
                 continue
+            except TypeError:
+                 # Si fr['announced_on'] n'est pas une string (ex: est pd.NaT ou None)
+                continue
+                
         if not ts_list:
             continue
-        ts = min(ts_list)
+        ts = min(ts_list) # Le timestamp de la première levée de fonds entre la paire
 
         if max_time is not None and ts > max_time:
             continue  # on ignore les arêtes futures
 
+        # 1. Mapping du Nœud U (Company)
+        # On garantit que u est dans item_map (Compagnie)
         if u not in item_map:
             item_map[u] = len(item_map)
             item_inverse[item_map[u]] = u
+            
+        # 2. Mapping du Nœud V (Investor)
+        # On garantit que v est dans user_map (Investisseur)
         if v not in user_map:
             user_map[v] = len(user_map)
             user_inverse[user_map[v]] = v
 
         u_id, v_id = item_map[u], user_map[v]
-        label = 1.0
+        label = 1.0 # La transaction a eu lieu
+        # Features de l'arête: Total levé, Nombre de rounds
         feat = np.array([data.get('total_raised_amount_usd', 0), data.get('num_funding_rounds', 1)])
-        rows.append((u_id, v_id, ts, label)) #u → company, v → investor
+        rows.append((u_id, v_id, ts, label)) # u → company, v → investor
         feats.append(feat)
 
+    # Création des DataFrames TGN
     df = pd.DataFrame(rows, columns=['u', 'i', 'ts', 'label'])
     feats = np.array(feats)
 
@@ -286,23 +237,59 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
     df = df.sort_values('ts').reset_index(drop=True)
     df['idx'] = np.arange(len(df))
 
-    # Sauvegarde
+    # Sauvegarde des fichiers TGN
     Path("data").mkdir(exist_ok=True)
     df.to_csv(f"data/{output_prefix}.csv", index=False)
     np.save(f"data/{output_prefix}.npy", feats)
-    node_feats = np.zeros((max(df.u.max(), df.i.max()) + 1, 172))
+    
+    # Création du fichier de features de nœuds (nécessaire par TGN, même vide)
+    if not df.empty:
+        max_node_id = max(df['u'].max(), df['i'].max())
+    else:
+        max_node_id = -1
+        
+    node_feats = np.zeros((max_node_id + 1, 172)) # 172 est la dimension par défaut/conventionnelle
     np.save(f"data/{output_prefix}_node.npy", node_feats)
 
-    # Sauvegarde mappings
+    # Sauvegarde mappings (PICKLE - format nécessaire pour TGN)
     mapping_dir = Path("data/mappings")
     mapping_dir.mkdir(exist_ok=True)
     with open(mapping_dir / f"{output_prefix}_company_id_map.pickle", "wb") as f:
         pickle.dump(item_map, f)
     with open(mapping_dir / f"{output_prefix}_investor_id_map.pickle", "wb") as f:
         pickle.dump(user_map, f)
+        
+    print(f"\n✓ Fichiers TGN préparés pour '{output_prefix}'.")
+    
+    # =================================================================
+    # VÉRIFICATION DES MAPPINGS EN CSV (AJOUT DEMANDÉ)
+    # =================================================================
+
+    # 1. Créer le DataFrame de mapping des ENTREPRISES (u = item)
+    df_company_map = pd.DataFrame(
+        item_map.items(), 
+        columns=['Company_Name', 'Company_ID_TGN']
+    ).sort_values('Company_ID_TGN')
+    
+    csv_company_map_path = mapping_dir / f"{output_prefix}_company_map_verification.csv"
+    df_company_map.to_csv(csv_company_map_path, index=False)
+    print(f"✓ Fichier de vérification Company ID sauvegardé: {csv_company_map_path}")
+
+    # 2. Créer le DataFrame de mapping des INVESTISSEURS (v = user)
+    df_investor_map = pd.DataFrame(
+        user_map.items(), 
+        columns=['Investor_Name', 'Investor_ID_TGN']
+    ).sort_values('Investor_ID_TGN')
+    
+    csv_investor_map_path = mapping_dir / f"{output_prefix}_investor_map_verification.csv"
+    df_investor_map.to_csv(csv_investor_map_path, index=False)
+    print(f"✓ Fichier de vérification Investor ID sauvegardé: {csv_investor_map_path}")
+    
+    # =================================================================
+    # FIN VÉRIFICATION
+    # =================================================================
 
     return df, item_map, user_map, item_inverse, user_inverse
-
 
 def temporal_split(df, train_ratio=0.7, val_ratio=0.15):
     """Split DataFrame into train/val/test based on timestamp."""
@@ -537,17 +524,16 @@ def filter_merged_by_organizations(df_merged, df_organizations):
 # BIPARTITE GRAPH CREATION
 # ===================================================================
 
-def nx_dip_graph_from_pandas(df):
-    """Creates the bipartite graph from the dataset
-
-    bipartite = 0 => investor (investor_name)
-    bipartite = 1 => company (org_name)
-
-    Args:
-        - df: DataFrame with necessary columns
-
-    Return:
-        - B: bipartite graph with funding info on edges
+def nx_dip_graph_from_pandas(df: pd.DataFrame):
+    """
+    Creates the bipartite graph from the dataset
+    
+    bipartite = 0 => company (org_name)
+    bipartite = 1 => investor (investor_name)
+    
+    Correction: Assure que les CVC/Entités mixtes sont correctement labellisées 
+    pour le graphe bipartite avant de créer l'arête en priorisant 0 si l'entité est des deux.
+    Les arêtes non valides (0-0 ou 1-1) sont ignorées.
     """
     dict_companies = {}
     dict_invest = {}
@@ -555,62 +541,126 @@ def nx_dip_graph_from_pandas(df):
     B = nx.Graph()
 
     # helper to safely convert numbers
-    def safe_int(x, default=0):
+    def safe_int(x, default=0) -> int:
         try:
-            if pd.isna(x):
-                return default
+            if pd.isna(x): return default
             return int(x)
         except Exception:
             return default
 
-    def safe_float(x, default=0.0):
+    def safe_float(x, default=0.0) -> float:
         try:
-            if pd.isna(x):
-                return default
+            if pd.isna(x): return default
             return float(x)
         except Exception:
             return default
 
+    # =================================================================
+    # PRÉ-PASSE 1 : Collecter tous les rôles pour résoudre les conflits (Company vs Investor)
+    # =================================================================
+    all_companies: Set[str] = set(df['org_name'].dropna().unique())
+    all_investors: Set[str] = set(df['investor_name'].dropna().unique())
+    
+    # Entités qui sont à la fois des Compagnies et des Investisseurs (CVC)
+    mixed_entities = all_companies.intersection(all_investors)
+    
+    # =================================================================
+    # PRÉ-PASSE 2 : Définir les nœuds et les labelliser (0 ou 1)
+    # Règle de priorité : Si une entité est Comp ET Invest, elle est labellisée 0 (Company)
+    # =================================================================
+
+    # 1. Ajouter toutes les entités cibles (Compagnies = 0)
+    for name in all_companies:
+         B.add_node(name, bipartite=0) # COMPAGNIE = 0
+         
+         # Création de l'objet classe (pour TechRank)
+         try:
+             # Assurez-vous que la classe Company existe ou adaptez l'implémentation
+             c = classes.Company(id=f'org_{name}', name=name, technologies=[])
+         except NameError:
+             c = {'name': name}
+         dict_companies[name] = c
+
+    # 2. Ajouter les entités sources (Investisseurs = 1) qui ne sont PAS des Compagnies (0)
+    for name in all_investors:
+         # SI l'entité n'a pas déjà été ajoutée comme Compagnie (bipartite=0),
+         # ALORS on l'ajoute comme Investisseur (bipartite=1)
+         if name not in B.nodes or B.nodes[name].get('bipartite') != 0:
+             B.add_node(name, bipartite=1) # INVESTISSEUR = 1
+             
+         # Création de l'objet classe (pour TechRank)
+         try:
+             # Assurez-vous que la classe Investor existe ou adaptez l'implémentation
+             i = classes.Investor(investor_id=f'inv_{name}', name=name, announced_on='N/A', raised_amount_usd=0, num_investors=0)
+         except NameError:
+             i = {'name': name}
+         dict_invest[name] = i
+    
+    # =================================================================
+    # DEUXIÈME PASSE : Ajouter les arêtes valides (0-1)
+    # =================================================================
+
     for index, row in df.iterrows():
-        # Investor informations
         invest_name = row.get('investor_name', '') or ''
-        # Use announced_on from the row if present (could be funding round announced date)
+        comp_name = row.get('org_name', '') or ''
+        
+        if not invest_name or not comp_name:
+            continue
+            
+        # Récupérer les labels (qui ont été définis dans la pré-passe)
+        # On utilise le nom de l'entité comme clé
+        comp_bipartite = B.nodes.get(comp_name, {}).get('bipartite')
+        invest_bipartite = B.nodes.get(invest_name, {}).get('bipartite')
+
+        # Si l'arête est du type 0 -> 1, elle est valide.
+        if (comp_bipartite == 0 and invest_bipartite == 1):
+            # Le nom de la Compagnie est u, le nom de l'Investisseur est v
+            u, v = comp_name, invest_name 
+            
+        # Cas des CVC : l'entité (Compagnie 0) investit dans elle-même ou dans une autre Compagnie 0
+        # Mais dans le graphe bipartite Compagnie/Investisseur, on considère l'interaction 0-1.
+        # Le CVC a été étiqueté 0 (Compagnie), mais dans cette ligne, il agit comme un Investisseur.
+        # On doit s'assurer que l'arête est bien entre une Compagnie (0) et un Investisseur (1).
+        
+        # Cas 1 : Comp (0) <- Inv (1)
+        if comp_bipartite == 0 and invest_bipartite == 1:
+            u, v = comp_name, invest_name
+        
+        # Cas 2 : CVC (0, agissant comme Inv) <- Comp (0)
+        # (Ex: Palo Alto Networks (Investor) -> Autre Entreprise (Company))
+        # Comme Palo Alto Networks est 0, et l'autre Entreprise est 0, c'est 0-0 et ignoré.
+        # Si on veut inclure les CVC (Compagnie -> Compagnie/Compagnie), il faut ajuster la règle.
+        
+        # POUR LA PURETÉ DU GRAPHE BIPARTITE CIBLE(0) <-> SOURCE(1) :
+        # On n'ajoute l'arête que si les deux ensembles sont distincts (0 et 1).
+        elif comp_bipartite == 0 and invest_name in mixed_entities:
+            # Si la compagnie est 0 et l'investisseur est un CVC (qui a été labellisé 0)
+            # On ignore l'arête 0-0 (si on veut un graphe strict). 
+            # Si on veut la considérer, c'est plus complexe. Restons stricts pour TGN.
+            continue
+            
+        else:
+            # Arête invalide (Exemple: 0-0 ou 1-1). Ignorée.
+            continue
+            
+        # Détermination du timestamp (identique à votre code)
         announced_on = row.get('announced_on', '')
         if pd.notna(announced_on):
-            announced_on = str(announced_on.date())  # <--- convertit le Timestamp en string "YYYY-MM-DD"
+            if isinstance(announced_on, pd.Timestamp):
+                announced_on = str(announced_on.date()) 
+            else:
+                try:
+                    announced_on = str(pd.to_datetime(announced_on).date())
+                except Exception:
+                    announced_on = ''
         else:
             announced_on = ''
-
-        # Create the investor according to classes.Investor (provide announced_on)
-        i = classes.Investor(
-            investor_id=row.get('funding_round_uuid', row.get('investor_uuid', f'inv_{invest_name}')),
-            name=invest_name,
-            announced_on=announced_on,  # <-- FIX: now provided
-            raised_amount_usd=safe_int(row.get('raised_amount_usd', 0)),
-            num_investors=safe_int(row.get('investor_count', row.get('num_investors', 0)))
-        )
-
-        dict_invest[invest_name] = i
-        B.add_node(invest_name, bipartite=1)
-
-        # Company informations
-        comp_name = row.get('org_name', '') or ''
-
-        c = classes.Company(
-            id=row.get('org_uuid', f'org_{comp_name}'),
-            name=comp_name,
-            technologies=[]
-        )
-
-        dict_companies[comp_name] = c
-        B.add_node(comp_name, bipartite=0)
-
-        # Edge / funding info
-        edge_key = (comp_name, invest_name)
+            
         raised_amt = safe_float(row.get('raised_amount_usd', 0))
 
-        if B.has_edge(comp_name, invest_name): # Returns True if the edge (u, v) is in the graph.
-            existing_data = B[comp_name][invest_name]
+        # Ajout ou mise à jour de l'arête
+        if B.has_edge(u, v):
+            existing_data = B[u][v]
             existing_data['funding_rounds'].append({
                 'funding_round_uuid': row.get('funding_round_uuid', ''),
                 'announced_on': announced_on,
@@ -620,29 +670,25 @@ def nx_dip_graph_from_pandas(df):
             existing_data['total_raised_amount_usd'] = safe_float(existing_data.get('total_raised_amount_usd', 0)) + raised_amt
             existing_data['num_funding_rounds'] = existing_data.get('num_funding_rounds', 0) + 1
         else:
-            B.add_edge(comp_name, invest_name,
-                      funding_rounds=[{
-                          'funding_round_uuid': row.get('funding_round_uuid', ''),
-                          'announced_on': announced_on,
-                          'raised_amount_usd': raised_amt,
-                          'investment_type': row.get('investment_type', '')
-                      }],
-                      total_raised_amount_usd=raised_amt,
-                      num_funding_rounds=1
-                      )
+            B.add_edge(u, v,
+                       funding_rounds=[{
+                           'funding_round_uuid': row.get('funding_round_uuid', ''),
+                           'announced_on': announced_on,
+                           'raised_amount_usd': raised_amt,
+                           'investment_type': row.get('investment_type', '')
+                       }],
+                       total_raised_amount_usd=raised_amt,
+                       num_funding_rounds=1
+                       )
 
     # Stats
-    print(f"\ Statistiques des levées de fonds:")
+    print(f"\nStatistiques des levées de fonds:")
     total_funding_rounds = sum([B[u][v].get('num_funding_rounds', 0) for u, v in B.edges()])
-    print(f"  - Total levées de fonds: {total_funding_rounds}")
+    print(f"  - Total arêtes (paires Comp(0)-Inv(1)): {B.number_of_edges()}")
+    print(f"  - Total levées de fonds (somme des rounds): {total_funding_rounds}")
+    print(f"  - Total nœuds: {B.number_of_nodes()}")
 
-    multi_funding = [(u, v, B[u][v].get('num_funding_rounds', 0)) for u, v in B.edges() if B[u][v].get('num_funding_rounds', 0) > 1]
-    if multi_funding:
-        print(f"  - Paires avec plusieurs levées: {len(multi_funding)}")
-        print(f"  - Top 5 paires (par nombre de levées):")
-        for u, v, count in sorted(multi_funding, key=lambda x: x[2], reverse=True)[:5]:
-            print(f"    • {u} ← {v}: {count} levées")
-
+    # Rendu des dictionnaires et du graphe
     return B, dict_companies, dict_invest
 
 
@@ -773,7 +819,7 @@ def save_graph_and_dicts(B, dict_companies, dict_investors, limit):
 # MAIN
 # ===================================================================
 
-def main(max_companies_plot=20, max_investors_plot=20):
+def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
     create_directories()
     
     print("\n========================== LOADING DATA ==========================")
@@ -800,7 +846,7 @@ def main(max_companies_plot=20, max_investors_plot=20):
     df_graph_full = df_graph_full.dropna(subset=['announced_on'])
 
 
-    # df_graph_full = filter_merged_by_organizations(df_graph_full, df_organizations)
+    df_graph_full = filter_merged_by_organizations(df_graph_full, df_organizations)
 
     # --- Découpe temporelle ---
     df_train, df_val, df_test = temporal_split(df_graph_full)
@@ -849,18 +895,44 @@ def main(max_companies_plot=20, max_investors_plot=20):
 
         # --- Sauvegarde graphique et dictionnaires pour forecast ---
         save_graph_and_dicts(B_full, dict_companies_full, dict_investors_full, limit="forecast")
-
-
-        # --- Visualisation sous-graphe ---
+        
+        if run_techrank_flag:
+            print("\n" + "="*70)
+            print("LANCEMENT DE TECHRANK SUR LE GRAPHE COMPLET")
+            print("="*70)
+            
+            df_investors_rank, df_companies_rank = run_techrank_on_bipartite(
+                B=B_full,
+                dict_companies=dict_companies_full,
+                dict_investors=dict_investors_full,
+                limit=limit,
+                alpha=0.8,  # Tu peux ajuster ces valeurs
+                beta=-0.6
+            )
+            
+            # Afficher les résultats si TechRank a réussi
+            if df_investors_rank is not None and df_companies_rank is not None:
+                print("\n" + "="*70)
+                print("TOP 10 INVESTISSEURS (par TechRank)")
+                print("="*70)
+                print(df_investors_rank[['TeckRank_int', 'final_configuration', 'techrank']].head(10))
+                
+                print("\n" + "="*70)
+                print("TOP 10 ENTREPRISES (par TechRank)")
+                print("="*70)
+                print(df_companies_rank[['TeckRank_int', 'final_configuration', 'techrank']].head(10))
+        
+        # Visualisation sous-graphe
         companies = [n for n, d in B_full.nodes(data=True) if d['bipartite'] == 0]
         investors = [n for n, d in B_full.nodes(data=True) if d['bipartite'] == 1]
         top_companies = sorted(companies, key=lambda n: B_full.degree(n), reverse=True)[:max_companies_plot]
         top_investors = sorted(investors, key=lambda n: B_full.degree(n), reverse=True)[:max_investors_plot]
         nodes_to_keep = set(top_companies) | set(top_investors)
         B_sub = B_full.subgraph(nodes_to_keep).copy()
-        plot_bipartite_graph(B_sub)
+        # plot_bipartite_graph(B_sub)
+
 
 
 if __name__ == "__main__":
     # Plot seulement 15 entreprises et 15 investisseurs
-    main(max_companies_plot=50, max_investors_plot=50)
+    main(max_companies_plot=50, max_investors_plot=50,run_techrank_flag=True)
