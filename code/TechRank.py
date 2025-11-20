@@ -109,47 +109,76 @@ def zero_order_score(M):
     return k_c, k_t
 
 def make_G_hat(M, alpha=1, beta=1, eps=1e-12):
-    k_c = M.sum(axis=1).astype(float)
-    k_t = M.sum(axis=0).astype(float)
+    """Version optimisée pour matrices sparse - RESTE EN SPARSE"""
+    from scipy.sparse import diags
+    
+    # Convertir en array 1D pour les calculs
+    k_c = np.asarray(M.sum(axis=1)).flatten()  # Degré des investors
+    k_t = np.asarray(M.sum(axis=0)).flatten()  # Degré des companies
+    
+    print(f"  Degrés: investors [min={k_c.min()}, max={k_c.max()}], "
+          f"companies [min={k_t.min()}, max={k_t.max()}]")
     
     # Éviter division par zéro
     k_c_safe = np.where(k_c > eps, k_c, eps)
     k_t_safe = np.where(k_t > eps, k_t, eps)
     
-    # Calcul G_ct
-    G_ct = M * (k_c_safe ** (-beta))[:, np.newaxis]
+    # === Calcul de G_ct (investors → companies) ===
+    # Au lieu de: G_ct = M * (k_c_safe ** (-beta))[:, np.newaxis]
+    # Utiliser une matrice diagonale sparse
+    D_c = diags(k_c_safe ** (-beta), format='csr')
+    G_ct = D_c @ M  # Multiplication sparse @ sparse = sparse !
     
-    # Normalisation
-    col_sums = G_ct.sum(axis=0)
+    # Normalisation par colonnes (companies)
+    col_sums = np.asarray(G_ct.sum(axis=0)).flatten()
     col_sums_safe = np.where(col_sums > eps, col_sums, eps)
-    G_ct = G_ct / col_sums_safe
     
-    # Même chose pour G_tc
-    G_tc = M.T * (k_t_safe ** (-alpha))[:, np.newaxis]
-    col_sums_tc = G_tc.sum(axis=0)
+    # Division élément par élément SANS conversion en dense
+    D_norm_ct = diags(1.0 / col_sums_safe, format='csr')
+    G_ct = G_ct @ D_norm_ct
+    
+    # === Calcul de G_tc (companies → investors) ===
+    D_t = diags(k_t_safe ** (-alpha), format='csr')
+    G_tc = D_t @ M.T
+    
+    # Normalisation par colonnes (investors)
+    col_sums_tc = np.asarray(G_tc.sum(axis=0)).flatten()
     col_sums_tc_safe = np.where(col_sums_tc > eps, col_sums_tc, eps)
-    G_tc = G_tc / col_sums_tc_safe
+    
+    D_norm_tc = diags(1.0 / col_sums_tc_safe, format='csr')
+    G_tc = G_tc @ D_norm_tc
+    
+    print(f"  G_ct: {G_ct.shape}, sparse={type(G_ct).__name__}, nnz={G_ct.nnz}")
+    print(f"  G_tc: {G_tc.shape}, sparse={type(G_tc).__name__}, nnz={G_tc.nnz}")
     
     return {'G_ct': G_ct, 'G_tc': G_tc}
 
 def next_order_score(G_ct, G_tc, fitness_prev, ubiquity_prev):
-    """Version pour numpy arrays"""
-    fitness_next = G_ct.dot(ubiquity_prev)
-    ubiquity_next = G_tc.dot(fitness_prev)
+    """Version pour matrices sparse - retourne des arrays numpy"""
+    # Les multiplications sparse @ array retournent des arrays
+    fitness_next = G_ct @ ubiquity_prev
+    ubiquity_next = G_tc @ fitness_prev
+    
+    # Aplatir si nécessaire (au cas où retourne une matrice)
+    if hasattr(fitness_next, 'A1'):  # Si c'est une matrice sparse
+        fitness_next = fitness_next.A1
+    if hasattr(ubiquity_next, 'A1'):
+        ubiquity_next = ubiquity_next.A1
+    
     return fitness_next, ubiquity_next
-
 def generator_order_w(M, alpha, beta, normalize=True):
-    """Générateur adapté pour numpy arrays"""
+    """Générateur pour matrices sparse"""
     G_hat = make_G_hat(M, alpha, beta)
     G_ct, G_tc = G_hat['G_ct'], G_hat['G_tc']
-    fitness_0, ubiquity_0 = zero_order_score(M)
+    
+    # Scores initiaux (zero order)
+    fitness_0 = np.asarray(M.sum(axis=1)).flatten()
+    ubiquity_0 = np.asarray(M.sum(axis=0)).flatten()
     
     # Normalisation initiale
     if normalize:
-        # fitness_0 = fitness_0 / (np.linalg.norm(fitness_0) + 1e-12)
-        # ubiquity_0 = ubiquity_0 / (np.linalg.norm(ubiquity_0) + 1e-12)
-        fitness_0 = fitness_0 / (np.linalg.norm(fitness_0))
-        ubiquity_0 = ubiquity_0 / (np.linalg.norm(ubiquity_0))
+        fitness_0 = fitness_0 / (np.linalg.norm(fitness_0) + 1e-12)
+        ubiquity_0 = ubiquity_0 / (np.linalg.norm(ubiquity_0) + 1e-12)
     
     fitness_next, ubiquity_next = fitness_0, ubiquity_0
     i = 0
@@ -159,7 +188,13 @@ def generator_order_w(M, alpha, beta, normalize=True):
         fitness_prev, ubiquity_prev = fitness_next, ubiquity_next
         fitness_next, ubiquity_next = next_order_score(G_ct, G_tc, fitness_prev, ubiquity_prev)
         
-        # NORMALISATION CRITIQUE pour éviter l'explosion/implosion
+        # Aplatir au cas où
+        if hasattr(fitness_next, 'A1'):
+            fitness_next = fitness_next.A1
+        if hasattr(ubiquity_next, 'A1'):
+            ubiquity_next = ubiquity_next.A1
+        
+        # NORMALISATION CRITIQUE
         if normalize:
             fitness_norm = np.linalg.norm(fitness_next)
             ubiquity_norm = np.linalg.norm(ubiquity_next)
@@ -373,8 +408,12 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_C
     set0 = extract_nodes(B, 0)
     set1 = extract_nodes(B, 1)
     adj_matrix = bipartite.biadjacency_matrix(B, set0, set1)
-    adj_matrix_dense = adj_matrix.todense()
-    M = np.squeeze(np.asarray(adj_matrix_dense))
+    # adj_matrix_dense = adj_matrix.todense()
+    # M = np.squeeze(np.asarray(adj_matrix_dense))
+    if not isinstance(adj_matrix, csr_matrix):
+        M = csr_matrix(adj_matrix)
+    else:
+        M = adj_matrix
     
     print(f" Matrice M créée: {M.shape}")
     
