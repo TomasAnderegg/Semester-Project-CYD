@@ -264,33 +264,33 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
         
     print(f"\n✓ Fichiers TGN préparés pour '{output_prefix}'.")
     
-    # # =================================================================
-    # # VÉRIFICATION DES MAPPINGS EN CSV (AJOUT DEMANDÉ)
-    # # =================================================================
+    # =================================================================
+    # VÉRIFICATION DES MAPPINGS EN CSV (AJOUT DEMANDÉ)
+    # =================================================================
 
-    # # 1. Créer le DataFrame de mapping des ENTREPRISES (u = item)
-    # df_company_map = pd.DataFrame(
-    #     item_map.items(), 
-    #     columns=['Company_Name', 'Company_ID_TGN']
-    # ).sort_values('Company_ID_TGN')
+    # 1. Créer le DataFrame de mapping des ENTREPRISES (u = item)
+    df_company_map = pd.DataFrame(
+        item_map.items(), 
+        columns=['Company_Name', 'Company_ID_TGN']
+    ).sort_values('Company_ID_TGN')
     
-    # csv_company_map_path = mapping_dir / f"{output_prefix}_company_map_verification.csv"
-    # df_company_map.to_csv(csv_company_map_path, index=False)
-    # print(f"✓ Fichier de vérification Company ID sauvegardé: {csv_company_map_path}")
+    csv_company_map_path = mapping_dir / f"{output_prefix}_company_map_verification.csv"
+    df_company_map.to_csv(csv_company_map_path, index=False)
+    print(f"✓ Fichier de vérification Company ID sauvegardé: {csv_company_map_path}")
 
-    # # 2. Créer le DataFrame de mapping des INVESTISSEURS (v = user)
-    # df_investor_map = pd.DataFrame(
-    #     user_map.items(), 
-    #     columns=['Investor_Name', 'Investor_ID_TGN']
-    # ).sort_values('Investor_ID_TGN')
+    # 2. Créer le DataFrame de mapping des INVESTISSEURS (v = user)
+    df_investor_map = pd.DataFrame(
+        user_map.items(), 
+        columns=['Investor_Name', 'Investor_ID_TGN']
+    ).sort_values('Investor_ID_TGN')
     
-    # csv_investor_map_path = mapping_dir / f"{output_prefix}_investor_map_verification.csv"
-    # df_investor_map.to_csv(csv_investor_map_path, index=False)
-    # print(f"✓ Fichier de vérification Investor ID sauvegardé: {csv_investor_map_path}")
+    csv_investor_map_path = mapping_dir / f"{output_prefix}_investor_map_verification.csv"
+    df_investor_map.to_csv(csv_investor_map_path, index=False)
+    print(f"✓ Fichier de vérification Investor ID sauvegardé: {csv_investor_map_path}")
     
-    # # =================================================================
-    # # FIN VÉRIFICATION
-    # # =================================================================
+    # =================================================================
+    # FIN VÉRIFICATION
+    # =================================================================
 
     return df, item_map, user_map #, item_inverse, user_inverse
 
@@ -852,7 +852,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
     df_graph_full = filter_merged_by_organizations(df_graph_full, df_organizations)
 
     # --- Découpe temporelle ---
-    df_train, df_val, df_test = temporal_split(df_graph_full)
+    # df_train, df_val, df_test = temporal_split(df_graph_full)
     
     for limit in LIMITS:
         print(f"\n{'='*70}")
@@ -874,26 +874,26 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
         print("Nb de dates manquantes :", df_graph['announced_on'].isna().sum())
         print("Nb de lignes totales :", len(df_graph))
 
-        # Créer le graphe bipartite
-        B_train, _, _ = nx_dip_graph_from_pandas(df_train)
-        prepare_tgn_input(B_train, output_prefix="train")
+        # # Créer le graphe bipartite
+        # B_train, _, _ = nx_dip_graph_from_pandas(df_train)
+        # prepare_tgn_input(B_train, output_prefix="train")
 
-        B_val, _, _ = nx_dip_graph_from_pandas(df_val)
-        prepare_tgn_input(B_val, output_prefix="val")
+        # B_val, _, _ = nx_dip_graph_from_pandas(df_val)
+        # prepare_tgn_input(B_val, output_prefix="val")
 
-        B_test, _, _ = nx_dip_graph_from_pandas(df_test)
-        prepare_tgn_input(B_test, output_prefix="test")
+        # B_test, _, _ = nx_dip_graph_from_pandas(df_test)
+        # prepare_tgn_input(B_test, output_prefix="test")
         
-        # --- Graphe complet pour prédiction (forecast) ---
-        max_train_time = df_train['announced_on'].max().timestamp()
+        # # --- Graphe complet pour prédiction (forecast) ---
+        # max_train_time = df_train['announced_on'].max().timestamp()
         # Créer le graphe complet pour forecast
         B_full, dict_companies_full, dict_investors_full = nx_dip_graph_from_pandas(df_graph_full)
 
         # Préparer les fichiers TGN limités au temps maximal du train
         prepare_tgn_input(
             B_full,
-            max_time=max_train_time,
-            output_prefix="forecast"
+            # max_time=max_train_time,
+            output_prefix="crunchbase_filtered"
         )
 
         # # --- Sauvegarde graphique et dictionnaires pour forecast ---

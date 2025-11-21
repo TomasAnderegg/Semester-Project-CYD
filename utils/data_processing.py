@@ -55,9 +55,9 @@ def get_data(dataset_name, different_new_nodes_between_val_and_test=False, rando
   # edge_features = np.load('./data/ml_{}.npy'.format(dataset_name))
   # node_features = np.load('./data/ml_{}_node.npy'.format(dataset_name))
 
-  graph_df = pd.read_csv('./data/{}_tgn.csv'.format(dataset_name))
-  edge_features = np.load('./data/{}_tgn.npy'.format(dataset_name))
-  node_features = np.load('./data/{}_tgn_node.npy'.format(dataset_name))  
+  graph_df = pd.read_csv('./data/{}_filtered.csv'.format(dataset_name))
+  edge_features = np.load('./data/{}_filtered.npy'.format(dataset_name))
+  node_features = np.load('./data/{}_filtered_node.npy'.format(dataset_name))  
   
     
   if randomize_features:
