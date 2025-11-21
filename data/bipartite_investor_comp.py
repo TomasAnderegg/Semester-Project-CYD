@@ -190,7 +190,7 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
 
         # Extraire timestamp min/max des levées
         ts_list = []
-        for fr in data.get('funding_rounds', []):
+        for fr in data.get('funding_rounds', []): # cette condtion veut dire: "donne moi la clé 'funding_rounds' dans data, si elle n'existe pas, donne-moi une liste vide []"
             try:
                 # Assurez-vous que 'announced_on' est bien une chaîne de format "YYYY-MM-DD"
                 announced_on_str = fr['announced_on']
@@ -214,21 +214,24 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
         # On garantit que u est dans item_map (Compagnie)
         if u not in item_map:
             item_map[u] = len(item_map)
-            item_inverse[item_map[u]] = u
-            
+            # item_inverse[item_map[u]] = u
+            #    
         # 2. Mapping du Nœud V (Investor)
         # On garantit que v est dans user_map (Investisseur)
         if v not in user_map:
             user_map[v] = len(user_map)
-            user_inverse[user_map[v]] = v
+            # user_inverse[user_map[v]] = v
 
         u_id, v_id = item_map[u], user_map[v]
         label = 1.0 # La transaction a eu lieu
         # Features de l'arête: Total levé, Nombre de rounds
-        feat = np.array([data.get('total_raised_amount_usd', 0), data.get('num_funding_rounds', 1)])
+        feat = np.array([data.get('total_raised_amount_usd', 0), data.get('num_funding_rounds', 1)]) # l'argument de la fonctin get veut dire "Donne moi la valeur demandé ou si elle n'existe pas, donne moi 0 (ou 1 pour num_funding_rounds)"
         rows.append((u_id, v_id, ts, label)) # u → company, v → investor
         feats.append(feat)
-
+    
+    # print(f"liste du mapping company: {len(item_map)}")
+    # print("------------------------------------------")
+    # print(f"liste du mapping investor: {len(user_map)}")
     # Création des DataFrames TGN
     df = pd.DataFrame(rows, columns=['u', 'i', 'ts', 'label'])
     feats = np.array(feats)
@@ -261,35 +264,35 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
         
     print(f"\n✓ Fichiers TGN préparés pour '{output_prefix}'.")
     
-    # =================================================================
-    # VÉRIFICATION DES MAPPINGS EN CSV (AJOUT DEMANDÉ)
-    # =================================================================
+    # # =================================================================
+    # # VÉRIFICATION DES MAPPINGS EN CSV (AJOUT DEMANDÉ)
+    # # =================================================================
 
-    # 1. Créer le DataFrame de mapping des ENTREPRISES (u = item)
-    df_company_map = pd.DataFrame(
-        item_map.items(), 
-        columns=['Company_Name', 'Company_ID_TGN']
-    ).sort_values('Company_ID_TGN')
+    # # 1. Créer le DataFrame de mapping des ENTREPRISES (u = item)
+    # df_company_map = pd.DataFrame(
+    #     item_map.items(), 
+    #     columns=['Company_Name', 'Company_ID_TGN']
+    # ).sort_values('Company_ID_TGN')
     
-    csv_company_map_path = mapping_dir / f"{output_prefix}_company_map_verification.csv"
-    df_company_map.to_csv(csv_company_map_path, index=False)
-    print(f"✓ Fichier de vérification Company ID sauvegardé: {csv_company_map_path}")
+    # csv_company_map_path = mapping_dir / f"{output_prefix}_company_map_verification.csv"
+    # df_company_map.to_csv(csv_company_map_path, index=False)
+    # print(f"✓ Fichier de vérification Company ID sauvegardé: {csv_company_map_path}")
 
-    # 2. Créer le DataFrame de mapping des INVESTISSEURS (v = user)
-    df_investor_map = pd.DataFrame(
-        user_map.items(), 
-        columns=['Investor_Name', 'Investor_ID_TGN']
-    ).sort_values('Investor_ID_TGN')
+    # # 2. Créer le DataFrame de mapping des INVESTISSEURS (v = user)
+    # df_investor_map = pd.DataFrame(
+    #     user_map.items(), 
+    #     columns=['Investor_Name', 'Investor_ID_TGN']
+    # ).sort_values('Investor_ID_TGN')
     
-    csv_investor_map_path = mapping_dir / f"{output_prefix}_investor_map_verification.csv"
-    df_investor_map.to_csv(csv_investor_map_path, index=False)
-    print(f"✓ Fichier de vérification Investor ID sauvegardé: {csv_investor_map_path}")
+    # csv_investor_map_path = mapping_dir / f"{output_prefix}_investor_map_verification.csv"
+    # df_investor_map.to_csv(csv_investor_map_path, index=False)
+    # print(f"✓ Fichier de vérification Investor ID sauvegardé: {csv_investor_map_path}")
     
-    # =================================================================
-    # FIN VÉRIFICATION
-    # =================================================================
+    # # =================================================================
+    # # FIN VÉRIFICATION
+    # # =================================================================
 
-    return df, item_map, user_map, item_inverse, user_inverse
+    return df, item_map, user_map #, item_inverse, user_inverse
 
 def temporal_split(df, train_ratio=0.7, val_ratio=0.15):
     """Split DataFrame into train/val/test based on timestamp."""
@@ -893,43 +896,43 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
             output_prefix="forecast"
         )
 
-        # --- Sauvegarde graphique et dictionnaires pour forecast ---
-        save_graph_and_dicts(B_full, dict_companies_full, dict_investors_full, limit="forecast")
+        # # --- Sauvegarde graphique et dictionnaires pour forecast ---
+        # save_graph_and_dicts(B_full, dict_companies_full, dict_investors_full, limit="forecast")
         
-        if run_techrank_flag:
-            print("\n" + "="*70)
-            print("LANCEMENT DE TECHRANK SUR LE GRAPHE COMPLET")
-            print("="*70)
+        # if run_techrank_flag:
+        #     print("\n" + "="*70)
+        #     print("LANCEMENT DE TECHRANK SUR LE GRAPHE COMPLET")
+        #     print("="*70)
             
-            df_investors_rank, df_companies_rank = run_techrank_on_bipartite(
-                B=B_full,
-                dict_companies=dict_companies_full,
-                dict_investors=dict_investors_full,
-                limit=limit,
-                alpha=0.8,  # Tu peux ajuster ces valeurs
-                beta=-0.6
-            )
+        #     df_investors_rank, df_companies_rank = run_techrank_on_bipartite(
+        #         B=B_full,
+        #         dict_companies=dict_companies_full,
+        #         dict_investors=dict_investors_full,
+        #         limit=limit,
+        #         alpha=0.8,  # Tu peux ajuster ces valeurs
+        #         beta=-0.6
+        #     )
             
-            # Afficher les résultats si TechRank a réussi
-            if df_investors_rank is not None and df_companies_rank is not None:
-                print("\n" + "="*70)
-                print("TOP 10 INVESTISSEURS (par TechRank)")
-                print("="*70)
-                print(df_investors_rank[['TeckRank_int', 'final_configuration', 'techrank']].head(10))
+        #     # Afficher les résultats si TechRank a réussi
+        #     if df_investors_rank is not None and df_companies_rank is not None:
+        #         print("\n" + "="*70)
+        #         print("TOP 10 INVESTISSEURS (par TechRank)")
+        #         print("="*70)
+        #         print(df_investors_rank[['TeckRank_int', 'final_configuration', 'techrank']].head(10))
                 
-                print("\n" + "="*70)
-                print("TOP 10 ENTREPRISES (par TechRank)")
-                print("="*70)
-                print(df_companies_rank[['TeckRank_int', 'final_configuration', 'techrank']].head(10))
+        #         print("\n" + "="*70)
+        #         print("TOP 10 ENTREPRISES (par TechRank)")
+        #         print("="*70)
+        #         print(df_companies_rank[['TeckRank_int', 'final_configuration', 'techrank']].head(10))
         
-        # Visualisation sous-graphe
-        companies = [n for n, d in B_full.nodes(data=True) if d['bipartite'] == 0]
-        investors = [n for n, d in B_full.nodes(data=True) if d['bipartite'] == 1]
-        top_companies = sorted(companies, key=lambda n: B_full.degree(n), reverse=True)[:max_companies_plot]
-        top_investors = sorted(investors, key=lambda n: B_full.degree(n), reverse=True)[:max_investors_plot]
-        nodes_to_keep = set(top_companies) | set(top_investors)
-        B_sub = B_full.subgraph(nodes_to_keep).copy()
-        # plot_bipartite_graph(B_sub)
+        # # Visualisation sous-graphe
+        # companies = [n for n, d in B_full.nodes(data=True) if d['bipartite'] == 0]
+        # investors = [n for n, d in B_full.nodes(data=True) if d['bipartite'] == 1]
+        # top_companies = sorted(companies, key=lambda n: B_full.degree(n), reverse=True)[:max_companies_plot]
+        # top_investors = sorted(investors, key=lambda n: B_full.degree(n), reverse=True)[:max_investors_plot]
+        # nodes_to_keep = set(top_companies) | set(top_investors)
+        # B_sub = B_full.subgraph(nodes_to_keep).copy()
+        # # plot_bipartite_graph(B_sub)
 
 
 
