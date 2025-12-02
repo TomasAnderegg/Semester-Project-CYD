@@ -177,6 +177,14 @@ for i in range(args.n_runs):
   total_epoch_times = []
   train_losses = []
 
+  # ADDED BY Tomas
+  val_mrrs = []
+  val_recall_10s = []
+  val_recall_50s = []
+  new_nodes_val_mrrs = []
+  new_nodes_val_recall_10s = []
+  new_nodes_val_recall_50s = []
+
   early_stopper = EarlyStopMonitor(max_round=args.patience)
   for epoch in range(NUM_EPOCH):
     start_epoch = time.time()
@@ -249,10 +257,16 @@ for i in range(args.n_runs):
       # validation on unseen nodes
       train_memory_backup = tgn.memory.backup_memory()
 
-    val_ap, val_auc = eval_edge_prediction(model=tgn,
-                                                            negative_edge_sampler=val_rand_sampler,
-                                                            data=val_data,
-                                                            n_neighbors=NUM_NEIGHBORS)
+    # val_ap, val_auc = eval_edge_prediction(model=tgn,
+    #                                                         negative_edge_sampler=val_rand_sampler,
+    #                                                         data=val_data,
+    #                                                         n_neighbors=NUM_NEIGHBORS)
+    val_ap, val_auc, val_mrr, val_recall_10, val_recall_50 = eval_edge_prediction(
+                                                                                    model=tgn,
+                                                                                    negative_edge_sampler=val_rand_sampler,
+                                                                                    data=val_data,
+                                                                                    n_neighbors=NUM_NEIGHBORS)
+    
     if USE_MEMORY:
       val_memory_backup = tgn.memory.backup_memory()
       # Restore memory we had at the end of training to be used when validating on new nodes.
@@ -261,11 +275,16 @@ for i in range(args.n_runs):
       tgn.memory.restore_memory(train_memory_backup)
 
     # Validate on unseen nodes
-    nn_val_ap, nn_val_auc = eval_edge_prediction(model=tgn,
-                                                                        negative_edge_sampler=val_rand_sampler,
-                                                                        data=new_node_val_data,
-                                                                        n_neighbors=NUM_NEIGHBORS)
+    # nn_val_ap, nn_val_auc = eval_edge_prediction(model=tgn,
+    #                                                                     negative_edge_sampler=val_rand_sampler,
+    #                                                                     data=new_node_val_data,
+    #                                                                     n_neighbors=NUM_NEIGHBORS)
 
+    nn_val_ap, nn_val_auc, nn_val_mrr, nn_val_recall_10, nn_val_recall_50 = eval_edge_prediction(
+                                                                                                  model=tgn,
+                                                                                                  negative_edge_sampler=val_rand_sampler,
+                                                                                                  data=new_node_val_data,
+                                                                                                  n_neighbors=NUM_NEIGHBORS)
     if USE_MEMORY:
       # Restore memory we had at the end of validation
       tgn.memory.restore_memory(val_memory_backup)
@@ -274,10 +293,33 @@ for i in range(args.n_runs):
     val_aps.append(val_ap)
     train_losses.append(np.mean(m_loss))
 
+    # ADDED BY Tomas
+    val_mrrs.append(val_mrr)
+    val_recall_10s.append(val_recall_10)
+    val_recall_50s.append(val_recall_50)
+    new_nodes_val_mrrs.append(nn_val_mrr)
+    new_nodes_val_recall_10s.append(nn_val_recall_10)
+    new_nodes_val_recall_50s.append(nn_val_recall_50)
+
     # Save temporary results to disk
+    # pickle.dump({
+    #   "val_aps": val_aps,
+    #   "new_nodes_val_aps": new_nodes_val_aps,
+    #   "train_losses": train_losses,
+    #   "epoch_times": epoch_times,
+    #   "total_epoch_times": total_epoch_times
+    # }, open(results_path, "wb"))
+
+    # ADDED BY Tomas
     pickle.dump({
       "val_aps": val_aps,
+      "val_mrrs": val_mrrs,
+      "val_recall_10s": val_recall_10s,
+      "val_recall_50s": val_recall_50s,
       "new_nodes_val_aps": new_nodes_val_aps,
+      "new_nodes_val_mrrs": new_nodes_val_mrrs,
+      "new_nodes_val_recall_10s": new_nodes_val_recall_10s,
+      "new_nodes_val_recall_50s": new_nodes_val_recall_50s,
       "train_losses": train_losses,
       "epoch_times": epoch_times,
       "total_epoch_times": total_epoch_times
@@ -288,10 +330,19 @@ for i in range(args.n_runs):
 
     logger.info('epoch: {} took {:.2f}s'.format(epoch, total_epoch_time))
     logger.info('Epoch mean loss: {}'.format(np.mean(m_loss)))
-    logger.info(
-      'val auc: {}, new node val auc: {}'.format(val_auc, nn_val_auc))
-    logger.info(
-      'val ap: {}, new node val ap: {}'.format(val_ap, nn_val_ap))
+    # logger.info(
+    #   'val auc: {}, new node val auc: {}'.format(val_auc, nn_val_auc))
+    # logger.info(
+    #   'val ap: {}, new node val ap: {}'.format(val_ap, nn_val_ap))
+
+    # ADDED BY Tomas
+    logger.info('val auc: {}, new node val auc: {}'.format(val_auc, nn_val_auc))
+    logger.info('val ap: {}, new node val ap: {}'.format(val_ap, nn_val_ap))
+    logger.info('val mrr: {:.4f}, new node val mrr: {:.4f}'.format(val_mrr, nn_val_mrr))
+    logger.info('val recall@10: {:.4f}, new node val recall@10: {:.4f}'.format(
+        val_recall_10, nn_val_recall_10))
+    logger.info('val recall@50: {:.4f}, new node val recall@50: {:.4f}'.format(
+        val_recall_50, nn_val_recall_50))
 
     # Early stopping
     if early_stopper.early_stop_check(val_ap):
@@ -313,30 +364,75 @@ for i in range(args.n_runs):
 
   ### Test
   tgn.embedding_module.neighbor_finder = full_ngh_finder
-  test_ap, test_auc = eval_edge_prediction(model=tgn,
-                                                              negative_edge_sampler=test_rand_sampler,
-                                                              data=test_data,
-                                                              n_neighbors=NUM_NEIGHBORS)
+  # test_ap, test_auc = eval_edge_prediction(model=tgn,
+  #                                                             negative_edge_sampler=test_rand_sampler,
+  #                                                             data=test_data,
+  #                                                             n_neighbors=NUM_NEIGHBORS)
+
+  test_ap, test_auc, test_mrr, test_recall_10, test_recall_50 = eval_edge_prediction(
+                                                                                      model=tgn,
+                                                                                      negative_edge_sampler=test_rand_sampler,
+                                                                                      data=test_data,
+                                                                                      n_neighbors=NUM_NEIGHBORS)
 
   if USE_MEMORY:
     tgn.memory.restore_memory(val_memory_backup)
 
   # Test on unseen nodes
-  nn_test_ap, nn_test_auc = eval_edge_prediction(model=tgn,
-                                                                          negative_edge_sampler=nn_test_rand_sampler,
-                                                                          data=new_node_test_data,
-                                                                          n_neighbors=NUM_NEIGHBORS)
+  # nn_test_ap, nn_test_auc = eval_edge_prediction(model=tgn,
+  #                                                                         negative_edge_sampler=nn_test_rand_sampler,
+  #                                                                         data=new_node_test_data,
+  #                                                                         n_neighbors=NUM_NEIGHBORS)
 
+  nn_test_ap, nn_test_auc, nn_test_mrr, nn_test_recall_10, nn_test_recall_50 = eval_edge_prediction(
+                                                                                                      model=tgn,
+                                                                                                      negative_edge_sampler=nn_test_rand_sampler,
+                                                                                                      data=new_node_test_data,
+                                                                                                      n_neighbors=NUM_NEIGHBORS)
+
+
+  # logger.info(
+  #   'Test statistics: Old nodes -- auc: {}, ap: {}'.format(test_auc, test_ap))
+  # logger.info(
+  #   'Test statistics: New nodes -- auc: {}, ap: {}'.format(nn_test_auc, nn_test_ap))
+
+  # ADDED BY Tomas
   logger.info(
-    'Test statistics: Old nodes -- auc: {}, ap: {}'.format(test_auc, test_ap))
+  'Test statistics: Old nodes -- auc: {}, ap: {}, mrr: {:.4f}, recall@10: {:.4f}, recall@50: {:.4f}'.format(
+      test_auc, test_ap, test_mrr, test_recall_10, test_recall_50))
   logger.info(
-    'Test statistics: New nodes -- auc: {}, ap: {}'.format(nn_test_auc, nn_test_ap))
+  'Test statistics: New nodes -- auc: {}, ap: {}, mrr: {:.4f}, recall@10: {:.4f}, recall@50: {:.4f}'.format(
+      nn_test_auc, nn_test_ap, nn_test_mrr, nn_test_recall_10, nn_test_recall_50))
+  
   # Save results for this run
+  # pickle.dump({
+  #   "val_aps": val_aps,
+  #   "new_nodes_val_aps": new_nodes_val_aps,
+  #   "test_ap": test_ap,
+  #   "new_node_test_ap": nn_test_ap,
+  #   "epoch_times": epoch_times,
+  #   "train_losses": train_losses,
+  #   "total_epoch_times": total_epoch_times
+  # }, open(results_path, "wb"))
+
+  # ADDED BY Tomas
   pickle.dump({
     "val_aps": val_aps,
+    "val_mrrs": val_mrrs,
+    "val_recall_10s": val_recall_10s,
+    "val_recall_50s": val_recall_50s,
     "new_nodes_val_aps": new_nodes_val_aps,
+    "new_nodes_val_mrrs": new_nodes_val_mrrs,
+    "new_nodes_val_recall_10s": new_nodes_val_recall_10s,
+    "new_nodes_val_recall_50s": new_nodes_val_recall_50s,
     "test_ap": test_ap,
+    "test_mrr": test_mrr,
+    "test_recall_10": test_recall_10,
+    "test_recall_50": test_recall_50,
     "new_node_test_ap": nn_test_ap,
+    "new_node_test_mrr": nn_test_mrr,
+    "new_node_test_recall_10": nn_test_recall_10,
+    "new_node_test_recall_50": nn_test_recall_50,
     "epoch_times": epoch_times,
     "train_losses": train_losses,
     "total_epoch_times": total_epoch_times

@@ -523,9 +523,7 @@ def filter_merged_by_organizations(df_merged, df_organizations):
     return df_filtered
 
 
-# ===================================================================
-# BIPARTITE GRAPH CREATION
-# ===================================================================
+
 
 def nx_dip_graph_from_pandas(df: pd.DataFrame):
     """
@@ -558,19 +556,14 @@ def nx_dip_graph_from_pandas(df: pd.DataFrame):
         except Exception:
             return default
 
-    # =================================================================
-    # PRÉ-PASSE 1 : Collecter tous les rôles pour résoudre les conflits (Company vs Investor)
-    # =================================================================
+
     all_companies: Set[str] = set(df['org_name'].dropna().unique())
     all_investors: Set[str] = set(df['investor_name'].dropna().unique())
     
     # Entités qui sont à la fois des Compagnies et des Investisseurs (CVC)
     mixed_entities = all_companies.intersection(all_investors)
     
-    # =================================================================
-    # PRÉ-PASSE 2 : Définir les nœuds et les labelliser (0 ou 1)
-    # Règle de priorité : Si une entité est Comp ET Invest, elle est labellisée 0 (Company)
-    # =================================================================
+
 
     # 1. Ajouter toutes les entités cibles (Compagnies = 0)
     for name in all_companies:
@@ -599,9 +592,6 @@ def nx_dip_graph_from_pandas(df: pd.DataFrame):
              i = {'name': name}
          dict_invest[name] = i
     
-    # =================================================================
-    # DEUXIÈME PASSE : Ajouter les arêtes valides (0-1)
-    # =================================================================
 
     for index, row in df.iterrows():
         invest_name = row.get('investor_name', '') or ''
@@ -712,9 +702,7 @@ def nx_dip_graph_from_pandas(df: pd.DataFrame):
 #     return B
 
 
-# ===================================================================
-# VISUALIZATION
-# ===================================================================
+
 
 def plot_bipartite_graph(G, circular=False):
     """Plots the bipartite network"""
@@ -831,19 +819,19 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
 
      # ✅ NOUVEAU: Charger le fichier organizations
     df_organizations = load_data_from_csv(DATA_PATH_ORGA_CSV)
-    print(f"✓ Organisations chargées: {len(df_organizations):,} lignes")
+    print(f"Organisations chargées: {len(df_organizations):,} lignes")
     
-    print("✓ Données chargées")
+    print("Données chargées")
     
     print("\n========================== CLEANING DATA ==========================")
     df_investments_clean = clean_investments_data(df_investments)
     df_funding_clean = clean_funding_data(df_funding)
     
-    print("✓ Données nettoyées")
+    print("Données nettoyées")
     
     print("\n========================== MERGING DATA ==========================")
     df_graph_full = merge_and_clean_final(df_funding_clean, df_investments_clean)
-    print(f"✓ Données mergées : {len(df_graph_full):,} lignes")
+    print(f"Données mergées : {len(df_graph_full):,} lignes")
 
     df_graph_full['announced_on'] = pd.to_datetime(df_graph_full['announced_on'], errors='coerce')
     df_graph_full = df_graph_full.dropna(subset=['announced_on'])
