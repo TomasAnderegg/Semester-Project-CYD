@@ -39,7 +39,7 @@ SAVE_DIR_CSV = "savings/bipartite_invest_comp/csv_exports"  # ✅ NOUVEAU: dossi
 
 FLAG_FILTER = False  # Mettre True si tu veux filtrer
 FILTER_KEYWORDS = ['Quantum']  # Keywords pour filtrage optionnel
-LIMITS = [1000000]  # Nombre d'entrées à traiter
+LIMITS = [10000]  # Nombre d'entrées à traiter
 
 # ===================================================================
 # UTILS
@@ -266,7 +266,7 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
     else:
         max_node_id = -1
         
-    node_feats = np.zeros((max_node_id + 1, 200)) # 172 est la dimension par défaut/conventionnelle
+    node_feats = np.zeros((max_node_id + 1, 100)) # 172 est la dimension par défaut/conventionnelle
     np.save(f"data/{output_prefix}_node.npy", node_feats)
 
     # Sauvegarde mappings (PICKLE - format nécessaire pour TGN)
@@ -944,6 +944,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
 
         
         B_full, dict_companies_full, dict_investors_full = nx_dip_graph_from_pandas(df_graph_full)
+        print(f"nombre de noeuds", B_full.number_of_nodes())
 
         # Préparer les fichiers TGN limités au temps maximal du train
         prepare_tgn_input(
