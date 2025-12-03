@@ -190,17 +190,32 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
 
         # Extraire timestamp min/max des levées
         ts_list = []
-        for fr in data.get('funding_rounds', []): # cette condtion veut dire: "donne moi la clé 'funding_rounds' dans data, si elle n'existe pas, donne-moi une liste vide []"
-            try:
-                # Assurez-vous que 'announced_on' est bien une chaîne de format "YYYY-MM-DD"
-                announced_on_str = fr['announced_on']
-                # Tente de convertir la chaîne de date en timestamp POSIX
-                ts_list.append(datetime.strptime(announced_on_str, "%Y-%m-%d").timestamp())
-            except ValueError:
-                 # Si le format n'est pas bon ou la valeur est manquante
+        for fr in data.get('funding_rounds', []):
+            announced_on = fr.get("announced_on")
+
+            # Cas null / vide
+            if announced_on is None or announced_on == "" or pd.isna(announced_on):
                 continue
-            except TypeError:
-                 # Si fr['announced_on'] n'est pas une string (ex: est pd.NaT ou None)
+
+            # Cas : Pandas Timestamp
+            if hasattr(announced_on, "timestamp"):
+                ts_list.append(announced_on.timestamp())
+                continue
+
+            # Cas : string → tester plusieurs formats
+            possible_formats = ["%Y-%m-%d", "%d.%m.%Y", "%m/%d/%Y"]
+            parsed = False
+            for fmt in possible_formats:
+                try:
+                    dt = datetime.strptime(announced_on, fmt)
+                    ts_list.append(dt.timestamp())
+                    parsed = True
+                    break
+                except Exception:
+                    pass
+
+            if not parsed:
+                # si aucun format ne marche : on ignore
                 continue
                 
         if not ts_list:
@@ -549,7 +564,7 @@ def filter_merged_by_organizations(df_merged, df_organizations, keywords=FILTER_
     # Filtrer le DataFrame
     df_merged_keyworded = df_merged[df_merged["category_list"].apply(match_category)]
 
-    df_merged_keyworded.to_csv("debug_caca2.csv",index=False)
+    # df_merged_keyworded.to_csv("debug_caca2.csv",index=False)
 
     
     print(f"  Lignes avant filtrage: {initial_rows:,}")
@@ -905,7 +920,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
 
 
     df_graph_full = filter_merged_by_organizations(df_graph_full, df_organizations, keywords = FILTER_KEYWORDS)
-
+    df_graph_full.to_csv("debug_filtered_graph_full.csv", index=False)
     
     for limit in LIMITS:
         print(f"\n{'='*70}")
