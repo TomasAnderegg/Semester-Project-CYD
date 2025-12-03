@@ -1,0 +1,87 @@
+wandb_version: 1
+
+dataset:
+  desc: null
+  value: crunchbase
+batch_size:
+  desc: null
+  value: 200
+num_neighbors:
+  desc: null
+  value: 10
+num_epochs:
+  desc: null
+  value: 20
+num_heads:
+  desc: null
+  value: 2
+dropout:
+  desc: null
+  value: 0.1
+num_layers:
+  desc: null
+  value: 1
+learning_rate:
+  desc: null
+  value: 0.0001
+node_dim:
+  desc: null
+  value: 200
+time_dim:
+  desc: null
+  value: 200
+use_memory:
+  desc: null
+  value: true
+message_dim:
+  desc: null
+  value: 200
+memory_dim:
+  desc: null
+  value: 200
+embedding_module:
+  desc: null
+  value: graph_attention
+message_function:
+  desc: null
+  value: identity
+memory_updater:
+  desc: null
+  value: gru
+aggregator:
+  desc: null
+  value: last
+run:
+  desc: null
+  value: 0
+_wandb:
+  desc: null
+  value:
+    python_version: 3.8.20
+    cli_version: 0.16.6
+    framework: torch
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    start_time: 1764764039.0
+    t:
+      1:
+      - 1
+      - 5
+      - 53
+      - 55
+      2:
+      - 1
+      - 5
+      - 53
+      - 55
+      3:
+      - 1
+      - 13
+      - 16
+      - 23
+      4: 3.8.20
+      5: 0.16.6
+      8:
+      - 3
+      - 5
+      13: windows-amd64

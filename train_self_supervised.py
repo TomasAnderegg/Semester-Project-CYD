@@ -7,6 +7,7 @@ import torch
 import numpy as np
 import pickle
 from pathlib import Path
+import wandb  # AJOUT: Import wandb
 
 from evaluation.evaluation import eval_edge_prediction
 from model.tgn import TGN
@@ -33,23 +34,23 @@ parser.add_argument('--drop_out', type=float, default=0.1, help='Dropout probabi
 parser.add_argument('--gpu', type=int, default=0, help='Idx for the gpu to use')
 parser.add_argument('--node_dim', type=int, default=100, help='Dimensions of the node embedding')
 parser.add_argument('--time_dim', type=int, default=100, help='Dimensions of the time embedding')
-parser.add_argument('--backprop_every', type=int, default=1, help='Every how many batches to '
-                                                                  'backprop')
+parser.add_argument('--backprop_every', type=int, default=1, help='Every how many batches to backprop')
 parser.add_argument('--use_memory', action='store_true',
                     help='Whether to augment the model with a node memory')
-parser.add_argument('--embedding_module', type=str, default="graph_attention", choices=[
-  "graph_attention", "graph_sum", "identity", "time"], help='Type of embedding module')
-parser.add_argument('--message_function', type=str, default="identity", choices=[
-  "mlp", "identity"], help='Type of message function')
-parser.add_argument('--memory_updater', type=str, default="gru", choices=[
-  "gru", "rnn"], help='Type of memory updater')
-parser.add_argument('--aggregator', type=str, default="last", help='Type of message '
-                                                                        'aggregator')
+parser.add_argument('--embedding_module', type=str, default="graph_attention", 
+                    choices=["graph_attention", "graph_sum", "identity", "time"], 
+                    help='Type of embedding module')
+parser.add_argument('--message_function', type=str, default="identity", 
+                    choices=["mlp", "identity"], help='Type of message function')
+parser.add_argument('--memory_updater', type=str, default="gru", 
+                    choices=["gru", "rnn"], help='Type of memory updater')
+parser.add_argument('--aggregator', type=str, default="last", 
+                    help='Type of message aggregator')
 parser.add_argument('--memory_update_at_end', action='store_true',
                     help='Whether to update memory at the end or at the start of the batch')
 parser.add_argument('--message_dim', type=int, default=100, help='Dimensions of the messages')
-parser.add_argument('--memory_dim', type=int, default=172, help='Dimensions of the memory for '
-                                                                'each user')
+parser.add_argument('--memory_dim', type=int, default=172, 
+                    help='Dimensions of the memory for each user')
 parser.add_argument('--different_new_nodes', action='store_true',
                     help='Whether to use disjoint set of new nodes for train and val')
 parser.add_argument('--uniform', action='store_true',
@@ -62,7 +63,13 @@ parser.add_argument('--use_source_embedding_in_message', action='store_true',
                     help='Whether to use the embedding of the source node as part of the message')
 parser.add_argument('--dyrep', action='store_true',
                     help='Whether to run the dyrep model')
-
+# AJOUT: Arguments pour wandb
+parser.add_argument('--use_wandb', action='store_true',
+                    help='Whether to use Weights & Biases for logging')
+parser.add_argument('--wandb_project', type=str, default='tgn-training',
+                    help='Wandb project name')
+parser.add_argument('--wandb_entity', type=str, default=None,
+                    help='Wandb entity (username or team)')
 
 try:
   args = parser.parse_args()
@@ -70,6 +77,7 @@ except:
   parser.print_help()
   sys.exit(0)
 
+# Configuration des variables globales
 BATCH_SIZE = args.bs
 NUM_NEIGHBORS = args.n_degree
 NUM_NEG = 1
@@ -89,10 +97,9 @@ MEMORY_DIM = args.memory_dim
 Path("./saved_models/").mkdir(parents=True, exist_ok=True)
 Path("./saved_checkpoints/").mkdir(parents=True, exist_ok=True)
 MODEL_SAVE_PATH = f'./saved_models/{args.prefix}-{args.data}.pth'
-get_checkpoint_path = lambda \
-    epoch: f'./saved_checkpoints/{args.prefix}-{args.data}-{epoch}.pth'
+get_checkpoint_path = lambda epoch: f'./saved_checkpoints/{args.prefix}-{args.data}-{epoch}.pth'
 
-### set up logger
+### Set up logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
@@ -108,28 +115,21 @@ logger.addHandler(fh)
 logger.addHandler(ch)
 logger.info(args)
 
-### Extract data for training, validation and testing
+### Extract data
 node_features, edge_features, full_data, train_data, val_data, test_data, new_node_val_data, \
-new_node_test_data = get_data(DATA,
-                              different_new_nodes_between_val_and_test=args.different_new_nodes, randomize_features=args.randomize_features)
+new_node_test_data = get_data(DATA, different_new_nodes_between_val_and_test=args.different_new_nodes, 
+                              randomize_features=args.randomize_features)
 
-# Initialize training neighbor finder to retrieve temporal graph
+# Initialize neighbor finders
 train_ngh_finder = get_neighbor_finder(train_data, args.uniform)
-
-# Initialize validation and test neighbor finder to retrieve temporal graph
 full_ngh_finder = get_neighbor_finder(full_data, args.uniform)
 
-# Initialize negative samplers. Set seeds for validation and testing so negatives are the same
-# across different runs
-# NB: in the inductive setting, negatives are sampled only amongst other new nodes
+# Initialize negative samplers
 train_rand_sampler = RandEdgeSampler(train_data.sources, train_data.destinations)
 val_rand_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=0)
-nn_val_rand_sampler = RandEdgeSampler(new_node_val_data.sources, new_node_val_data.destinations,
-                                      seed=1)
+nn_val_rand_sampler = RandEdgeSampler(new_node_val_data.sources, new_node_val_data.destinations, seed=1)
 test_rand_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=2)
-nn_test_rand_sampler = RandEdgeSampler(new_node_test_data.sources,
-                                       new_node_test_data.destinations,
-                                       seed=3)
+nn_test_rand_sampler = RandEdgeSampler(new_node_test_data.sources, new_node_test_data.destinations, seed=3)
 
 # Set device
 device_string = 'cuda:{}'.format(GPU) if torch.cuda.is_available() else 'cpu'
@@ -140,6 +140,36 @@ mean_time_shift_src, std_time_shift_src, mean_time_shift_dst, std_time_shift_dst
   compute_time_statistics(full_data.sources, full_data.destinations, full_data.timestamps)
 
 for i in range(args.n_runs):
+  # AJOUT: Initialiser wandb pour chaque run
+  if args.use_wandb:
+    run_name = f"{args.prefix}_{args.data}_run{i}" if args.prefix else f"{args.data}_run{i}"
+    wandb.init(
+      project=args.wandb_project,
+      entity=args.wandb_entity,
+      name=run_name,
+      config={
+        "dataset": args.data,
+        "batch_size": BATCH_SIZE,
+        "num_neighbors": NUM_NEIGHBORS,
+        "num_epochs": NUM_EPOCH,
+        "num_heads": NUM_HEADS,
+        "dropout": DROP_OUT,
+        "num_layers": NUM_LAYER,
+        "learning_rate": LEARNING_RATE,
+        "node_dim": NODE_DIM,
+        "time_dim": TIME_DIM,
+        "use_memory": USE_MEMORY,
+        "message_dim": MESSAGE_DIM,
+        "memory_dim": MEMORY_DIM,
+        "embedding_module": args.embedding_module,
+        "message_function": args.message_function,
+        "memory_updater": args.memory_updater,
+        "aggregator": args.aggregator,
+        "run": i
+      },
+      reinit=True
+    )
+  
   results_path = "results/{}_{}.pkl".format(args.prefix, i) if i > 0 else "results/{}.pkl".format(args.prefix)
   Path("results/").mkdir(parents=True, exist_ok=True)
 
@@ -149,7 +179,7 @@ for i in range(args.n_runs):
             n_layers=NUM_LAYER,
             n_heads=NUM_HEADS, dropout=DROP_OUT, use_memory=USE_MEMORY,
             message_dimension=MESSAGE_DIM, memory_dimension=MEMORY_DIM,
-            memory_update_at_start=not args.memory_update_at_end,#False,#not args.memory_update_at_end, ajoute par Moi lol
+            memory_update_at_start=not args.memory_update_at_end,
             embedding_module_type=args.embedding_module,
             message_function=args.message_function,
             aggregator_type=args.aggregator,
@@ -160,9 +190,14 @@ for i in range(args.n_runs):
             use_destination_embedding_in_message=args.use_destination_embedding_in_message,
             use_source_embedding_in_message=args.use_source_embedding_in_message,
             dyrep=args.dyrep)
+  
   criterion = torch.nn.BCELoss()
   optimizer = torch.optim.Adam(tgn.parameters(), lr=LEARNING_RATE)
   tgn = tgn.to(device)
+
+  # AJOUT: Watch model avec wandb
+  if args.use_wandb:
+    wandb.watch(tgn, log="all", log_freq=100)
 
   num_instance = len(train_data.sources)
   num_batch = math.ceil(num_instance / BATCH_SIZE)
@@ -176,8 +211,6 @@ for i in range(args.n_runs):
   epoch_times = []
   total_epoch_times = []
   train_losses = []
-
-  # ADDED BY Tomas
   val_mrrs = []
   val_recall_10s = []
   val_recall_50s = []
@@ -186,18 +219,14 @@ for i in range(args.n_runs):
   new_nodes_val_recall_50s = []
 
   early_stopper = EarlyStopMonitor(max_round=args.patience)
+  
   for epoch in range(NUM_EPOCH):
     start_epoch = time.time()
-    #tgn.memory.__init_memory__()  # réinitialise la mémoire   #ajouté par Moi lol
- 
 
     ### Training
-
-    # Reinitialize memory of the model at the start of each epoch
     if USE_MEMORY:
       tgn.memory.__init_memory__()
 
-    # Train using only training graph
     tgn.set_neighbor_finder(train_ngh_finder)
     m_loss = []
 
@@ -206,18 +235,16 @@ for i in range(args.n_runs):
       loss = 0
       optimizer.zero_grad()
 
-      # Custom loop to allow to perform backpropagation only every a certain number of batches
       for j in range(args.backprop_every):
         batch_idx = k + j
-
         if batch_idx >= num_batch:
           continue
 
         start_idx = batch_idx * BATCH_SIZE
         end_idx = min(num_instance, start_idx + BATCH_SIZE)
-        sources_batch, destinations_batch = train_data.sources[start_idx:end_idx], \
-                                            train_data.destinations[start_idx:end_idx]
-        edge_idxs_batch = train_data.edge_idxs[start_idx: end_idx]
+        sources_batch = train_data.sources[start_idx:end_idx]
+        destinations_batch = train_data.destinations[start_idx:end_idx]
+        edge_idxs_batch = train_data.edge_idxs[start_idx:end_idx]
         timestamps_batch = train_data.timestamps[start_idx:end_idx]
 
         size = len(sources_batch)
@@ -228,20 +255,21 @@ for i in range(args.n_runs):
           neg_label = torch.zeros(size, dtype=torch.float, device=device)
 
         tgn = tgn.train()
-        pos_prob, neg_prob = tgn.compute_edge_probabilities(sources_batch, destinations_batch, negatives_batch,
-                                                            timestamps_batch, edge_idxs_batch, NUM_NEIGHBORS)
+        pos_prob, neg_prob = tgn.compute_edge_probabilities(
+          sources_batch, destinations_batch, negatives_batch,
+          timestamps_batch, edge_idxs_batch, NUM_NEIGHBORS)
 
         loss += criterion(pos_prob.squeeze(), pos_label) + criterion(neg_prob.squeeze(), neg_label)
 
       loss /= args.backprop_every
-
       loss.backward()
-      # torch.nn.utils.clip_grad_norm_(tgn.parameters(), max_norm=0.5) #Ajouté par Moi 
       optimizer.step()
       m_loss.append(loss.item())
 
-      # Detach memory after 'args.backprop_every' number of batches so we don't backpropagate to
-      # the start of time
+      # AJOUT: Log batch loss à wandb
+      if args.use_wandb:
+        wandb.log({"batch_loss": loss.item(), "batch": k})
+
       if USE_MEMORY:
         tgn.memory.detach_memory()
 
@@ -249,51 +277,29 @@ for i in range(args.n_runs):
     epoch_times.append(epoch_time)
 
     ### Validation
-    # Validation uses the full graph
     tgn.set_neighbor_finder(full_ngh_finder)
 
     if USE_MEMORY:
-      # Backup memory at the end of training, so later we can restore it and use it for the
-      # validation on unseen nodes
       train_memory_backup = tgn.memory.backup_memory()
 
-    # val_ap, val_auc = eval_edge_prediction(model=tgn,
-    #                                                         negative_edge_sampler=val_rand_sampler,
-    #                                                         data=val_data,
-    #                                                         n_neighbors=NUM_NEIGHBORS)
     val_ap, val_auc, val_mrr, val_recall_10, val_recall_50 = eval_edge_prediction(
-                                                                                    model=tgn,
-                                                                                    negative_edge_sampler=val_rand_sampler,
-                                                                                    data=val_data,
-                                                                                    n_neighbors=NUM_NEIGHBORS)
+      model=tgn, negative_edge_sampler=val_rand_sampler,
+      data=val_data, n_neighbors=NUM_NEIGHBORS)
     
     if USE_MEMORY:
       val_memory_backup = tgn.memory.backup_memory()
-      # Restore memory we had at the end of training to be used when validating on new nodes.
-      # Also backup memory after validation so it can be used for testing (since test edges are
-      # strictly later in time than validation edges)
       tgn.memory.restore_memory(train_memory_backup)
 
-    # Validate on unseen nodes
-    # nn_val_ap, nn_val_auc = eval_edge_prediction(model=tgn,
-    #                                                                     negative_edge_sampler=val_rand_sampler,
-    #                                                                     data=new_node_val_data,
-    #                                                                     n_neighbors=NUM_NEIGHBORS)
-
     nn_val_ap, nn_val_auc, nn_val_mrr, nn_val_recall_10, nn_val_recall_50 = eval_edge_prediction(
-                                                                                                  model=tgn,
-                                                                                                  negative_edge_sampler=val_rand_sampler,
-                                                                                                  data=new_node_val_data,
-                                                                                                  n_neighbors=NUM_NEIGHBORS)
+      model=tgn, negative_edge_sampler=val_rand_sampler,
+      data=new_node_val_data, n_neighbors=NUM_NEIGHBORS)
+    
     if USE_MEMORY:
-      # Restore memory we had at the end of validation
       tgn.memory.restore_memory(val_memory_backup)
 
     new_nodes_val_aps.append(nn_val_ap)
     val_aps.append(val_ap)
     train_losses.append(np.mean(m_loss))
-
-    # ADDED BY Tomas
     val_mrrs.append(val_mrr)
     val_recall_10s.append(val_recall_10)
     val_recall_50s.append(val_recall_50)
@@ -301,16 +307,24 @@ for i in range(args.n_runs):
     new_nodes_val_recall_10s.append(nn_val_recall_10)
     new_nodes_val_recall_50s.append(nn_val_recall_50)
 
-    # Save temporary results to disk
-    # pickle.dump({
-    #   "val_aps": val_aps,
-    #   "new_nodes_val_aps": new_nodes_val_aps,
-    #   "train_losses": train_losses,
-    #   "epoch_times": epoch_times,
-    #   "total_epoch_times": total_epoch_times
-    # }, open(results_path, "wb"))
+    # AJOUT: Log toutes les métriques à wandb
+    if args.use_wandb:
+      wandb.log({
+        "epoch": epoch,
+        "train_loss": np.mean(m_loss),
+        "epoch_time": epoch_time,
+        "val_ap": val_ap,
+        "val_auc": val_auc,
+        "val_mrr": val_mrr,
+        "val_recall@10": val_recall_10,
+        "val_recall@50": val_recall_50,
+        "new_nodes_val_ap": nn_val_ap,
+        "new_nodes_val_auc": nn_val_auc,
+        "new_nodes_val_mrr": nn_val_mrr,
+        "new_nodes_val_recall@10": nn_val_recall_10,
+        "new_nodes_val_recall@50": nn_val_recall_50
+      })
 
-    # ADDED BY Tomas
     pickle.dump({
       "val_aps": val_aps,
       "val_mrrs": val_mrrs,
@@ -330,12 +344,6 @@ for i in range(args.n_runs):
 
     logger.info('epoch: {} took {:.2f}s'.format(epoch, total_epoch_time))
     logger.info('Epoch mean loss: {}'.format(np.mean(m_loss)))
-    # logger.info(
-    #   'val auc: {}, new node val auc: {}'.format(val_auc, nn_val_auc))
-    # logger.info(
-    #   'val ap: {}, new node val ap: {}'.format(val_ap, nn_val_ap))
-
-    # ADDED BY Tomas
     logger.info('val auc: {}, new node val auc: {}'.format(val_auc, nn_val_auc))
     logger.info('val ap: {}, new node val ap: {}'.format(val_ap, nn_val_ap))
     logger.info('val mrr: {:.4f}, new node val mrr: {:.4f}'.format(val_mrr, nn_val_mrr))
@@ -356,66 +364,48 @@ for i in range(args.n_runs):
     else:
       torch.save(tgn.state_dict(), get_checkpoint_path(epoch))
 
-  # Training has finished, we have loaded the best model, and we want to backup its current
-  # memory (which has seen validation edges) so that it can also be used when testing on unseen
-  # nodes
   if USE_MEMORY:
     val_memory_backup = tgn.memory.backup_memory()
 
   ### Test
   tgn.embedding_module.neighbor_finder = full_ngh_finder
-  # test_ap, test_auc = eval_edge_prediction(model=tgn,
-  #                                                             negative_edge_sampler=test_rand_sampler,
-  #                                                             data=test_data,
-  #                                                             n_neighbors=NUM_NEIGHBORS)
-
   test_ap, test_auc, test_mrr, test_recall_10, test_recall_50 = eval_edge_prediction(
-                                                                                      model=tgn,
-                                                                                      negative_edge_sampler=test_rand_sampler,
-                                                                                      data=test_data,
-                                                                                      n_neighbors=NUM_NEIGHBORS)
+    model=tgn, negative_edge_sampler=test_rand_sampler,
+    data=test_data, n_neighbors=NUM_NEIGHBORS)
 
   if USE_MEMORY:
     tgn.memory.restore_memory(val_memory_backup)
 
-  # Test on unseen nodes
-  # nn_test_ap, nn_test_auc = eval_edge_prediction(model=tgn,
-  #                                                                         negative_edge_sampler=nn_test_rand_sampler,
-  #                                                                         data=new_node_test_data,
-  #                                                                         n_neighbors=NUM_NEIGHBORS)
-
   nn_test_ap, nn_test_auc, nn_test_mrr, nn_test_recall_10, nn_test_recall_50 = eval_edge_prediction(
-                                                                                                      model=tgn,
-                                                                                                      negative_edge_sampler=nn_test_rand_sampler,
-                                                                                                      data=new_node_test_data,
-                                                                                                      n_neighbors=NUM_NEIGHBORS)
+    model=tgn, negative_edge_sampler=nn_test_rand_sampler,
+    data=new_node_test_data, n_neighbors=NUM_NEIGHBORS)
 
-
-  # logger.info(
-  #   'Test statistics: Old nodes -- auc: {}, ap: {}'.format(test_auc, test_ap))
-  # logger.info(
-  #   'Test statistics: New nodes -- auc: {}, ap: {}'.format(nn_test_auc, nn_test_ap))
-
-  # ADDED BY Tomas
   logger.info(
-  'Test statistics: Old nodes -- auc: {}, ap: {}, mrr: {:.4f}, recall@10: {:.4f}, recall@50: {:.4f}'.format(
+    'Test statistics: Old nodes -- auc: {}, ap: {}, mrr: {:.4f}, recall@10: {:.4f}, recall@50: {:.4f}'.format(
       test_auc, test_ap, test_mrr, test_recall_10, test_recall_50))
   logger.info(
-  'Test statistics: New nodes -- auc: {}, ap: {}, mrr: {:.4f}, recall@10: {:.4f}, recall@50: {:.4f}'.format(
+    'Test statistics: New nodes -- auc: {}, ap: {}, mrr: {:.4f}, recall@10: {:.4f}, recall@50: {:.4f}'.format(
       nn_test_auc, nn_test_ap, nn_test_mrr, nn_test_recall_10, nn_test_recall_50))
   
-  # Save results for this run
-  # pickle.dump({
-  #   "val_aps": val_aps,
-  #   "new_nodes_val_aps": new_nodes_val_aps,
-  #   "test_ap": test_ap,
-  #   "new_node_test_ap": nn_test_ap,
-  #   "epoch_times": epoch_times,
-  #   "train_losses": train_losses,
-  #   "total_epoch_times": total_epoch_times
-  # }, open(results_path, "wb"))
-
-  # ADDED BY Tomas
+  # AJOUT: Log résultats finaux de test à wandb
+  if args.use_wandb:
+    wandb.log({
+      "test_ap": test_ap,
+      "test_auc": test_auc,
+      "test_mrr": test_mrr,
+      "test_recall@10": test_recall_10,
+      "test_recall@50": test_recall_50,
+      "new_nodes_test_ap": nn_test_ap,
+      "new_nodes_test_auc": nn_test_auc,
+      "new_nodes_test_mrr": nn_test_mrr,
+      "new_nodes_test_recall@10": nn_test_recall_10,
+      "new_nodes_test_recall@50": nn_test_recall_50
+    })
+    
+    # Sauvegarder le modèle dans wandb (avec policy=now pour Windows)
+    wandb.save(MODEL_SAVE_PATH, policy="now")
+  
+  # Save results
   pickle.dump({
     "val_aps": val_aps,
     "val_mrrs": val_mrrs,
@@ -440,7 +430,10 @@ for i in range(args.n_runs):
 
   logger.info('Saving TGN model')
   if USE_MEMORY:
-    # Restore memory at the end of validation (save a model which is ready for testing)
     tgn.memory.restore_memory(val_memory_backup)
   torch.save(tgn.state_dict(), MODEL_SAVE_PATH)
   logger.info('TGN model saved')
+  
+  # AJOUT: Terminer le run wandb
+  if args.use_wandb:
+    wandb.finish()

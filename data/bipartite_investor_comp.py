@@ -38,8 +38,8 @@ SAVE_DIR_NETWORKS = "savings/bipartite_invest_comp/networks"
 SAVE_DIR_CSV = "savings/bipartite_invest_comp/csv_exports"  # ✅ NOUVEAU: dossier pour les CSV
 
 FLAG_FILTER = False  # Mettre True si tu veux filtrer
-FILTER_KEYWORDS = ['quantum computing', 'quantum key distribution']  # Keywords pour filtrage optionnel
-LIMITS = [10000]  # Nombre d'entrées à traiter
+FILTER_KEYWORDS = ['Quantum']  # Keywords pour filtrage optionnel
+LIMITS = [1000000]  # Nombre d'entrées à traiter
 
 # ===================================================================
 # UTILS
@@ -251,7 +251,7 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
     else:
         max_node_id = -1
         
-    node_feats = np.zeros((max_node_id + 1, 172)) # 172 est la dimension par défaut/conventionnelle
+    node_feats = np.zeros((max_node_id + 1, 200)) # 172 est la dimension par défaut/conventionnelle
     np.save(f"data/{output_prefix}_node.npy", node_feats)
 
     # Sauvegarde mappings (PICKLE - format nécessaire pour TGN)
@@ -293,21 +293,6 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
     # =================================================================
 
     return df, item_map, user_map #, item_inverse, user_inverse
-
-def temporal_split(df, train_ratio=0.7, val_ratio=0.15):
-    """Split DataFrame into train/val/test based on timestamp."""
-    df_sorted = df.sort_values('announced_on').reset_index(drop=True)
-    n = len(df_sorted)
-    train_end = int(n * train_ratio)
-    val_end = int(n * (train_ratio + val_ratio))
-
-    df_train = df_sorted.iloc[:train_end].copy()
-    df_val = df_sorted.iloc[train_end:val_end].copy()
-    df_test = df_sorted.iloc[val_end:].copy()
-
-    print(f"Split: train={len(df_train)}, val={len(df_val)}, test={len(df_test)}")
-    return df_train, df_val, df_test
-
 
 
 # ===================================================================
@@ -366,6 +351,52 @@ def clean_investments_data(df):
         'created_at',
         'updated_at',   
         'rank',
+    ]
+    to_rename = {}
+    drop_if_nan = []
+    to_check_double = {}
+    sort_by = ""
+    
+    return CB_data_cleaning(df, to_drop, to_rename, to_check_double, drop_if_nan, sort_by)
+
+def clean_organization_data(df):
+    """Clean organization dataset"""
+    to_drop = [
+        'type',
+        'permalink',
+        'cb_url',   
+        'rank',
+        'created_at',
+        'updated_at',
+        'legal_name',
+        'roles',
+        'domain',
+        'homepage_url',
+        'country_code',
+        'state_code',
+        'region',
+        'city',
+        'address',
+        'postal_code',
+        'status',
+        'category_groups_list',
+        'total_funding',
+        'total_funding_currency_code',
+        'founded_on',
+        'last_funding_on',
+        'closed_on',
+        'employee_count',
+        'email',
+        'phone',
+        'facebook_url',
+        'twitter_url',
+        'linkedin_url',
+        'logo_url',
+        'alias1',
+        'alias2',
+        'alias3',
+        'primary_role',
+        'num_exits'
     ]
     to_rename = {}
     drop_if_nan = []
@@ -446,7 +477,7 @@ def merge_and_clean_final(df_funding, df_investments):
     else:
         raise ValueError("Colonnes 'org_name' ou 'investor_name' manquantes")
     
-def filter_merged_by_organizations(df_merged, df_organizations):
+def filter_merged_by_organizations(df_merged, df_organizations, keywords=FILTER_KEYWORDS):
     """
     Filtre le DataFrame mergé pour ne garder que les entreprises présentes dans df_organizations.
     
@@ -464,28 +495,28 @@ def filter_merged_by_organizations(df_merged, df_organizations):
     print(f"  Colonnes dans df_merged: {df_merged.columns.tolist()}")
     
     # Détecter la colonne UUID dans df_organizations
-    possible_uuid_cols = ['uuid', 'org_uuid', 'organization_uuid', 'id', 'organization_id']
-    uuid_col = None
+    # possible_uuid_cols = ['uuid', 'org_uuid', 'organization_uuid', 'id', 'organization_id']
+    # uuid_col = None
     
-    for col in possible_uuid_cols:
-        if col in df_organizations.columns:
-            uuid_col = col
-            print(f"  ✓ Colonne UUID détectée: '{uuid_col}'")
-            break
+    # for col in possible_uuid_cols:
+    #     if col in df_organizations.columns:
+    #         uuid_col = col
+    #         print(f"  ✓ Colonne UUID détectée: '{uuid_col}'")
+    #         break
     
-    if uuid_col is None:
-        print(f"\n  ERREUR: Aucune colonne UUID trouvée parmi {possible_uuid_cols}")
-        print(f"  Colonnes disponibles: {df_organizations.columns.tolist()}")
-        raise ValueError(f"Impossible de trouver une colonne UUID dans df_organizations")
+    # if df_organizations["uuid"] is None:
+    #     print(f"\n  ERREUR: Aucune colonne UUID trouvée parmi {possible_uuid_cols}")
+    #     print(f"  Colonnes disponibles: {df_organizations.columns.tolist()}")
+    #     raise ValueError(f"Impossible de trouver une colonne UUID dans df_organizations")
     
     # Vérifier que org_uuid existe dans df_merged
-    if 'org_uuid' not in df_merged.columns:
-        print(f"\n  ERREUR: Colonne 'org_uuid' manquante dans df_merged")
-        print(f"  Colonnes disponibles: {df_merged.columns.tolist()}")
-        raise ValueError("Colonne 'org_uuid' manquante dans df_merged")
+    # if 'org_uuid' not in df_merged.columns:
+    #     print(f"\n  ERREUR: Colonne 'org_uuid' manquante dans df_merged")
+    #     print(f"  Colonnes disponibles: {df_merged.columns.tolist()}")
+    #     raise ValueError("Colonne 'org_uuid' manquante dans df_merged")
     
     # Obtenir la liste des UUIDs à garder
-    valid_uuids = set(df_organizations[uuid_col].dropna().unique())
+    valid_uuids = set(df_organizations["uuid"].dropna().unique()) # dropna pour éviter les NaN, .unique evite les doublons
     print(f"  Nombre d'organisations de référence: {len(valid_uuids)}")
     
     # Afficher quelques exemples d'UUIDs
@@ -494,8 +525,32 @@ def filter_merged_by_organizations(df_merged, df_organizations):
     
     # Filtrer le DataFrame mergé
     initial_rows = len(df_merged)
-    df_filtered = df_merged[df_merged['org_uuid'].isin(valid_uuids)].copy()
+    df_filtered = df_merged[df_merged['org_uuid'].isin(valid_uuids)].copy() # pour s'assurer que les organisations sont dans la liste "organizations"
     final_rows = len(df_filtered)
+
+    # Crée un dictionnaire de mapping uuid -> category_list
+    uuid_to_cat = df_organizations.set_index('uuid')['category_list'].to_dict()
+
+    # Ajoute une colonne 'category_list' dans df_merged
+    df_merged['category_list'] = df_merged['org_uuid'].map(uuid_to_cat)
+    # df_merged.to_csv("debug_caca.csv",index=False)
+
+    # Filtrer chaque liste pour ne garder que les éléments contenant le mot-clé
+    def match_category(cat_string):
+        # convertir la string en liste
+        cats = [c.strip() for c in cat_string.split(",")] if isinstance(cat_string, str) else []
+        
+        # vérifier si un mot clé apparaît dans un élément de la liste
+        return any(
+            any(keyword in category for keyword in keywords)
+            for category in cats
+        )
+
+    # Filtrer le DataFrame
+    df_merged_keyworded = df_merged[df_merged["category_list"].apply(match_category)]
+
+    df_merged_keyworded.to_csv("debug_caca2.csv",index=False)
+
     
     print(f"  Lignes avant filtrage: {initial_rows:,}")
     print(f"  Lignes après filtrage: {final_rows:,}")
@@ -818,7 +873,17 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
     df_funding = load_data(use_duckdb=USE_DUCKDB, table_name=TABLE_NAME_FUNDING)
 
      # ✅ NOUVEAU: Charger le fichier organizations
-    df_organizations = load_data_from_csv(DATA_PATH_ORGA_CSV)
+    # df_organizations = load_data_from_csv(DATA_PATH_ORGA_CSV)
+    df_organizations = load_data(use_duckdb=USE_DUCKDB, table_name=TABLE_NAME_ORGA)
+
+    # Source - https://stackoverflow.com/a
+    # Posted by Andy Hayden, modified by community. See post 'Timeline' for change history
+    # Retrieved 2025-12-03, License - CC BY-SA 4.0
+
+    # df_organizations.to_csv("debug_caca.csv",index=False)
+
+    print(f"type de df_organizations: {type(df_organizations)}")
+
     print(f"Organisations chargées: {len(df_organizations):,} lignes")
     
     print("Données chargées")
@@ -826,21 +891,21 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
     print("\n========================== CLEANING DATA ==========================")
     df_investments_clean = clean_investments_data(df_investments)
     df_funding_clean = clean_funding_data(df_funding)
-    
+    df_organizations_clean = clean_organization_data(df_organizations)
+    # df_organizations_clean.to_csv("debug_caca.csv",index=False)
     print("Données nettoyées")
     
     print("\n========================== MERGING DATA ==========================")
     df_graph_full = merge_and_clean_final(df_funding_clean, df_investments_clean)
+    # df_graph_full.to_csv("debug_caca.csv",index=False)
     print(f"Données mergées : {len(df_graph_full):,} lignes")
 
     df_graph_full['announced_on'] = pd.to_datetime(df_graph_full['announced_on'], errors='coerce')
     df_graph_full = df_graph_full.dropna(subset=['announced_on'])
 
 
-    df_graph_full = filter_merged_by_organizations(df_graph_full, df_organizations)
+    df_graph_full = filter_merged_by_organizations(df_graph_full, df_organizations, keywords = FILTER_KEYWORDS)
 
-    # --- Découpe temporelle ---
-    # df_train, df_val, df_test = temporal_split(df_graph_full)
     
     for limit in LIMITS:
         print(f"\n{'='*70}")
@@ -851,7 +916,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
         df_graph = df_graph_full.head(limit).copy()
 
         # Sauvegarde temporaire pour inspection
-        df_graph.to_csv("debug_df_graph.csv", index=False)
+        # df_graph.to_csv("debug_df_graph.csv", index=False)
         print("✓ Fichier debug_df_graph.csv sauvegardé, tu peux l'ouvrir dans Excel ou VSCode pour vérifier.")
         print("Colonnes :", df_graph.columns.tolist())
         print(df_graph.head(5))
@@ -862,19 +927,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
         print("Nb de dates manquantes :", df_graph['announced_on'].isna().sum())
         print("Nb de lignes totales :", len(df_graph))
 
-        # # Créer le graphe bipartite
-        # B_train, _, _ = nx_dip_graph_from_pandas(df_train)
-        # prepare_tgn_input(B_train, output_prefix="train")
-
-        # B_val, _, _ = nx_dip_graph_from_pandas(df_val)
-        # prepare_tgn_input(B_val, output_prefix="val")
-
-        # B_test, _, _ = nx_dip_graph_from_pandas(df_test)
-        # prepare_tgn_input(B_test, output_prefix="test")
         
-        # # --- Graphe complet pour prédiction (forecast) ---
-        # max_train_time = df_train['announced_on'].max().timestamp()
-        # Créer le graphe complet pour forecast
         B_full, dict_companies_full, dict_investors_full = nx_dip_graph_from_pandas(df_graph_full)
 
         # Préparer les fichiers TGN limités au temps maximal du train
@@ -883,45 +936,6 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
             # max_time=max_train_time,
             output_prefix="crunchbase_filtered"
         )
-
-        # # --- Sauvegarde graphique et dictionnaires pour forecast ---
-        # save_graph_and_dicts(B_full, dict_companies_full, dict_investors_full, limit="forecast")
-        
-        # if run_techrank_flag:
-        #     print("\n" + "="*70)
-        #     print("LANCEMENT DE TECHRANK SUR LE GRAPHE COMPLET")
-        #     print("="*70)
-            
-        #     df_investors_rank, df_companies_rank = run_techrank_on_bipartite(
-        #         B=B_full,
-        #         dict_companies=dict_companies_full,
-        #         dict_investors=dict_investors_full,
-        #         limit=limit,
-        #         alpha=0.8,  # Tu peux ajuster ces valeurs
-        #         beta=-0.6
-        #     )
-            
-        #     # Afficher les résultats si TechRank a réussi
-        #     if df_investors_rank is not None and df_companies_rank is not None:
-        #         print("\n" + "="*70)
-        #         print("TOP 10 INVESTISSEURS (par TechRank)")
-        #         print("="*70)
-        #         print(df_investors_rank[['TeckRank_int', 'final_configuration', 'techrank']].head(10))
-                
-        #         print("\n" + "="*70)
-        #         print("TOP 10 ENTREPRISES (par TechRank)")
-        #         print("="*70)
-        #         print(df_companies_rank[['TeckRank_int', 'final_configuration', 'techrank']].head(10))
-        
-        # # Visualisation sous-graphe
-        # companies = [n for n, d in B_full.nodes(data=True) if d['bipartite'] == 0]
-        # investors = [n for n, d in B_full.nodes(data=True) if d['bipartite'] == 1]
-        # top_companies = sorted(companies, key=lambda n: B_full.degree(n), reverse=True)[:max_companies_plot]
-        # top_investors = sorted(investors, key=lambda n: B_full.degree(n), reverse=True)[:max_investors_plot]
-        # nodes_to_keep = set(top_companies) | set(top_investors)
-        # B_sub = B_full.subgraph(nodes_to_keep).copy()
-        # # plot_bipartite_graph(B_sub)
-
 
 
 if __name__ == "__main__":
