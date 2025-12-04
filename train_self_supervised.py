@@ -13,6 +13,7 @@ from evaluation.evaluation import eval_edge_prediction
 from model.tgn import TGN
 from utils.utils import EarlyStopMonitor, RandEdgeSampler, get_neighbor_finder
 from utils.data_processing import get_data, compute_time_statistics
+from tqdm import tqdm
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -220,7 +221,9 @@ for i in range(args.n_runs):
 
   early_stopper = EarlyStopMonitor(max_round=args.patience)
   
-  for epoch in range(NUM_EPOCH):
+  # for epoch in range(NUM_EPOCH):
+  for epoch in tqdm(range(NUM_EPOCH), desc='Training Progress', position=0):
+  
     start_epoch = time.time()
 
     ### Training
@@ -231,7 +234,14 @@ for i in range(args.n_runs):
     m_loss = []
 
     logger.info('start {} epoch'.format(epoch))
+
+    # Barre de progression pour les batches
+    # pbar = tqdm(range(0, num_batch, args.backprop_every), 
+    #             desc=f'Epoch {epoch}/{NUM_EPOCH}',
+    #             total=math.ceil(num_batch / args.backprop_every))
+    
     for k in range(0, num_batch, args.backprop_every):
+    # for k in pbar:
       loss = 0
       optimizer.zero_grad()
 
@@ -265,6 +275,9 @@ for i in range(args.n_runs):
       loss.backward()
       optimizer.step()
       m_loss.append(loss.item())
+
+      # Mise à jour de la barre avec la loss actuelle
+      # pbar.set_postfix({'loss': f'{loss.item():.4f}', 'avg_loss': f'{np.mean(m_loss):.4f}'})
 
       # AJOUT: Log batch loss à wandb
       if args.use_wandb:
@@ -403,7 +416,8 @@ for i in range(args.n_runs):
     })
     
     # Sauvegarder le modèle dans wandb (avec policy=now pour Windows)
-    wandb.save(MODEL_SAVE_PATH, policy="now")
+    # wandb.save(MODEL_SAVE_PATH, policy="now", base_path=None, follow_symlinks=True)
+
   
   # Save results
   pickle.dump({

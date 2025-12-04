@@ -24,6 +24,8 @@ data/*.txt
 *.txt
 *.pdf
 *.npy
+*.yaml
+*.wandb
 .DS_Store
 
 ### PyCharm ###

@@ -6,7 +6,9 @@ import duckdb
 import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import List, Dict
+from typing import List, Dict, Set
+
+
 import math
 from . import classes
 import matplotlib
@@ -38,8 +40,8 @@ SAVE_DIR_NETWORKS = "savings/bipartite_invest_comp/networks"
 SAVE_DIR_CSV = "savings/bipartite_invest_comp/csv_exports"  # ✅ NOUVEAU: dossier pour les CSV
 
 FLAG_FILTER = False  # Mettre True si tu veux filtrer
-FILTER_KEYWORDS = ['Quantum']  # Keywords pour filtrage optionnel
-LIMITS = [10000]  # Nombre d'entrées à traiter
+FILTER_KEYWORDS = ['Quantum Computing', 'Quantum Key Distribution']  # Keywords pour filtrage optionnel
+LIMITS = [1000]  # Nombre d'entrées à traiter
 
 # ===================================================================
 # UTILS
@@ -240,7 +242,7 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
         u_id, v_id = item_map[u], user_map[v]
         label = 1.0 # La transaction a eu lieu
         # Features de l'arête: Total levé, Nombre de rounds
-        feat = np.array([data.get('total_raised_amount_usd', 0), data.get('num_funding_rounds', 1)]) # l'argument de la fonctin get veut dire "Donne moi la valeur demandé ou si elle n'existe pas, donne moi 0 (ou 1 pour num_funding_rounds)"
+        feat = np.array([np.log1p(data.get('total_raised_amount_usd', 0)), data.get('num_funding_rounds', 1)]) # l'argument de la fonctin get veut dire "Donne moi la valeur demandé ou si elle n'existe pas, donne moi 0 (ou 1 pour num_funding_rounds)"
         rows.append((u_id, v_id, ts, label)) # u → company, v → investor
         feats.append(feat)
     
@@ -266,7 +268,7 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
     else:
         max_node_id = -1
         
-    node_feats = np.zeros((max_node_id + 1, 100)) # 172 est la dimension par défaut/conventionnelle
+    node_feats = np.zeros((max_node_id + 1, 172)) # 172 est la dimension par défaut/conventionnelle
     np.save(f"data/{output_prefix}_node.npy", node_feats)
 
     # Sauvegarde mappings (PICKLE - format nécessaire pour TGN)
@@ -631,7 +633,7 @@ def nx_dip_graph_from_pandas(df: pd.DataFrame):
     all_investors: Set[str] = set(df['investor_name'].dropna().unique())
     
     # Entités qui sont à la fois des Compagnies et des Investisseurs (CVC)
-    mixed_entities = all_companies.intersection(all_investors)
+    # mixed_entities = all_companies.intersection(all_investors)
     
 
 
@@ -686,25 +688,25 @@ def nx_dip_graph_from_pandas(df: pd.DataFrame):
         # On doit s'assurer que l'arête est bien entre une Compagnie (0) et un Investisseur (1).
         
         # Cas 1 : Comp (0) <- Inv (1)
-        if comp_bipartite == 0 and invest_bipartite == 1:
-            u, v = comp_name, invest_name
+        # if comp_bipartite == 0 and invest_bipartite == 1:
+        #     u, v = comp_name, invest_name
         
-        # Cas 2 : CVC (0, agissant comme Inv) <- Comp (0)
-        # (Ex: Palo Alto Networks (Investor) -> Autre Entreprise (Company))
-        # Comme Palo Alto Networks est 0, et l'autre Entreprise est 0, c'est 0-0 et ignoré.
-        # Si on veut inclure les CVC (Compagnie -> Compagnie/Compagnie), il faut ajuster la règle.
+        # # Cas 2 : CVC (0, agissant comme Inv) <- Comp (0)
+        # # (Ex: Palo Alto Networks (Investor) -> Autre Entreprise (Company))
+        # # Comme Palo Alto Networks est 0, et l'autre Entreprise est 0, c'est 0-0 et ignoré.
+        # # Si on veut inclure les CVC (Compagnie -> Compagnie/Compagnie), il faut ajuster la règle.
         
-        # POUR LA PURETÉ DU GRAPHE BIPARTITE CIBLE(0) <-> SOURCE(1) :
-        # On n'ajoute l'arête que si les deux ensembles sont distincts (0 et 1).
-        elif comp_bipartite == 0 and invest_name in mixed_entities:
-            # Si la compagnie est 0 et l'investisseur est un CVC (qui a été labellisé 0)
-            # On ignore l'arête 0-0 (si on veut un graphe strict). 
-            # Si on veut la considérer, c'est plus complexe. Restons stricts pour TGN.
-            continue
+        # # POUR LA PURETÉ DU GRAPHE BIPARTITE CIBLE(0) <-> SOURCE(1) :
+        # # On n'ajoute l'arête que si les deux ensembles sont distincts (0 et 1).
+        # elif comp_bipartite == 0 and invest_name in mixed_entities:
+        #     # Si la compagnie est 0 et l'investisseur est un CVC (qui a été labellisé 0)
+        #     # On ignore l'arête 0-0 (si on veut un graphe strict). 
+        #     # Si on veut la considérer, c'est plus complexe. Restons stricts pour TGN.
+        #     continue
             
-        else:
-            # Arête invalide (Exemple: 0-0 ou 1-1). Ignorée.
-            continue
+        # else:
+        #     # Arête invalide (Exemple: 0-0 ou 1-1). Ignorée.
+        #     continue
             
         # Détermination du timestamp (identique à votre code)
         announced_on = row.get('announced_on', '')
@@ -934,6 +936,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
         # df_graph.to_csv("debug_df_graph.csv", index=False)
         print("✓ Fichier debug_df_graph.csv sauvegardé, tu peux l'ouvrir dans Excel ou VSCode pour vérifier.")
         print("Colonnes :", df_graph.columns.tolist())
+        print("nobres de lignes dans df_graph :", len(df_graph))
         print(df_graph.head(5))
 
 
@@ -943,7 +946,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
         print("Nb de lignes totales :", len(df_graph))
 
         
-        B_full, dict_companies_full, dict_investors_full = nx_dip_graph_from_pandas(df_graph_full)
+        B_full, dict_companies_full, dict_investors_full = nx_dip_graph_from_pandas(df_graph)
         print(f"nombre de noeuds", B_full.number_of_nodes())
 
         # Préparer les fichiers TGN limités au temps maximal du train
