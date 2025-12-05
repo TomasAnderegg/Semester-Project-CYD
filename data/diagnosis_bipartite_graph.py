@@ -17,8 +17,8 @@ warnings.filterwarnings('ignore')
 # CONFIGURATION
 # ===================================================================
 
-NUM_COMP = 500
-NUM_TECH = 500
+NUM_COMP = 10000
+NUM_TECH = 10000
 FLAG_CYBERSECURITY = True
 
 SAVE_DIR_CLASSES = "savings/bipartite_invest_comp/classes"

@@ -41,7 +41,7 @@ SAVE_DIR_CSV = "savings/bipartite_invest_comp/csv_exports"  # ✅ NOUVEAU: dossi
 
 FLAG_FILTER = False  # Mettre True si tu veux filtrer
 FILTER_KEYWORDS = ['Quantum Computing', 'Quantum Key Distribution']  # Keywords pour filtrage optionnel
-LIMITS = [1000]  # Nombre d'entrées à traiter
+LIMITS = [10000]  # Nombre d'entrées à traiter
 
 # ===================================================================
 # UTILS
@@ -89,28 +89,28 @@ def load_data(use_duckdb=True, table_name=""):
         else:
             raise ValueError(f"Table name {table_name} non reconnue")
         
-def save_graph_and_dicts(B, df_companies, dict_companies, dict_tech, limit, flag_cybersecurity):
-    """Sauvegarde le graphe et les dictionnaires associés."""
-    prefix = "cybersecurity_" if flag_cybersecurity else ""
+# def save_graph_and_dicts(B, df_companies, dict_companies, dict_tech, limit, flag_cybersecurity):
+#     """Sauvegarde le graphe et les dictionnaires associés."""
+#     prefix = "cybersecurity_" if flag_cybersecurity else ""
 
-    os.makedirs(SAVE_DIR_CLASSES, exist_ok=True)
-    os.makedirs(SAVE_DIR_NETWORKS, exist_ok=True)
+#     os.makedirs(SAVE_DIR_CLASSES, exist_ok=True)
+#     os.makedirs(SAVE_DIR_NETWORKS, exist_ok=True)
 
-    # Sauvegarder les dictionnaires
-    with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_companies_ranked_{limit}.pickle', 'wb') as f:
-        pickle.dump(dict_companies, f)
+#     # Sauvegarder les dictionnaires
+#     with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_companies_ranked_{limit}.pickle', 'wb') as f:
+#         pickle.dump(dict_companies, f)
 
-    with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_tech_ranked_{limit}.pickle', 'wb') as f:
-        pickle.dump(dict_tech, f)
+#     with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_tech_ranked_{limit}.pickle', 'wb') as f:
+#         pickle.dump(dict_tech, f)
 
-    # Sauvegarder le graphe avec pickle directement (évite tout bug NetworkX)
-    with open(f"{SAVE_DIR_NETWORKS}/{prefix}bipartite_graph_{limit}.gpickle", "wb") as f:
-        pickle.dump(B, f)
+#     # Sauvegarder le graphe avec pickle directement (évite tout bug NetworkX)
+#     with open(f"{SAVE_DIR_NETWORKS}/{prefix}bipartite_graph_{limit}.gpickle", "wb") as f:
+#         pickle.dump(B, f)
 
-    # Sauvegarder le DataFrame
-    df_companies.to_csv(f'{SAVE_DIR_CLASSES}/{prefix}companies_ranked_{limit}.csv', index=False)
+#     # Sauvegarder le DataFrame
+#     df_companies.to_csv(f'{SAVE_DIR_CLASSES}/{prefix}companies_ranked_{limit}.csv', index=False)
 
-    print(f"\n✓ Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
+#     print(f"\n✓ Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
 
 def run_techrank_on_bipartite(B, dict_companies, dict_investors, limit, 
                                alpha=0.8, beta=-0.6):
@@ -268,7 +268,7 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
     else:
         max_node_id = -1
         
-    node_feats = np.zeros((max_node_id + 1, 172)) # 172 est la dimension par défaut/conventionnelle
+    node_feats = np.zeros((max_node_id + 1, 200)) # 172 est la dimension par défaut/conventionnelle
     np.save(f"data/{output_prefix}_node.npy", node_feats)
 
     # Sauvegarde mappings (PICKLE - format nécessaire pour TGN)
@@ -647,7 +647,13 @@ def nx_dip_graph_from_pandas(df: pd.DataFrame):
              c = classes.Company(id=f'org_{name}', name=name, technologies=[])
          except NameError:
              c = {'name': name}
-         dict_companies[name] = c
+        #  dict_companies[name] = c
+         dict_companies[name] = {
+            "id": f"org_{name}",
+            "name": name,
+            "technologies": []
+         }
+
 
     # 2. Ajouter les entités sources (Investisseurs = 1) qui ne sont PAS des Compagnies (0)
     for name in all_investors:
@@ -662,7 +668,14 @@ def nx_dip_graph_from_pandas(df: pd.DataFrame):
              i = classes.Investor(investor_id=f'inv_{name}', name=name, announced_on='N/A', raised_amount_usd=0, num_investors=0)
          except NameError:
              i = {'name': name}
-         dict_invest[name] = i
+        #  dict_invest[name] = i
+         dict_invest[name] = {
+            "id": f"inv_{name}",
+            "name": name,
+            "raised_amount_usd": 0,
+            "num_investors": 0
+         }
+
     
 
     for index, row in df.iterrows():
@@ -955,6 +968,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
             # max_time=max_train_time,
             output_prefix="crunchbase_filtered"
         )
+        save_graph_and_dicts(B_full, dict_companies_full, dict_investors_full, limit)
 
 
 if __name__ == "__main__":

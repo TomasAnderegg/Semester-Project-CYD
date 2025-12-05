@@ -21,7 +21,7 @@ def get_data_node_classification(dataset_name, use_validation=False):
   edge_features = np.load('./data/ml_{}.npy'.format(dataset_name))
   node_features = np.load('./data/ml_{}_node.npy'.format(dataset_name))
 
-  val_time, test_time = list(np.quantile(graph_df.ts, [0.70, 0.85]))
+  val_time, test_time = list(np.quantile(graph_df.ts, [0.80, 0.90]))
 
   sources = graph_df.u.values
   destinations = graph_df.i.values

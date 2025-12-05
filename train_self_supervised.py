@@ -8,6 +8,7 @@ import numpy as np
 import pickle
 from pathlib import Path
 import wandb  # AJOUT: Import wandb
+import shutil
 
 from evaluation.evaluation import eval_edge_prediction
 from model.tgn import TGN
@@ -81,7 +82,7 @@ except:
 # Configuration des variables globales
 BATCH_SIZE = args.bs
 NUM_NEIGHBORS = args.n_degree
-NUM_NEG = 1
+NUM_NEG = 10 # 1
 NUM_EPOCH = args.n_epoch
 NUM_HEADS = args.n_head
 DROP_OUT = args.drop_out
@@ -416,7 +417,9 @@ for i in range(args.n_runs):
     })
     
     # Sauvegarder le modèle dans wandb (avec policy=now pour Windows)
-    # wandb.save(MODEL_SAVE_PATH, policy="now", base_path=None, follow_symlinks=True)
+    wandb.save(MODEL_SAVE_PATH, policy="now", base_path=None)
+    # shutil.copy(MODEL_SAVE_PATH, wandb.run.dir)
+    # wandb.save("saved_models/tgn-attn-crunchbase.pth")
 
   
   # Save results
