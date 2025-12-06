@@ -779,6 +779,34 @@ def nx_dip_graph_from_pandas(df: pd.DataFrame):
     #         data['inv_degree_norm'] = data['inv_degree'] / max_inv
     #         dict_companies[node]['inv_degree_norm'] = data['inv_degree_norm']
 
+    # ======================================================
+    # 6) Statistiques et Ajout des Node Features de Degré
+    # ======================================================
+
+    print("\nStatistiques des levées de fonds:")
+    total_rounds = sum(B[u][v].get('num_funding_rounds', 0) for u, v in B.edges())
+    print(f"  - Total arêtes (0-1): {B.number_of_edges()}")
+    print(f"  - Total levées de fonds: {total_rounds}")
+    print(f"  - Total nœuds: {B.number_of_nodes()}")
+    
+    # -------------------------------------------------------------------
+    # Ajout du DEGRÉ comme Node Feature pour les Compagnies (bipartite=0)
+    # -------------------------------------------------------------------
+    for node, data in B.nodes(data=True):
+        if data.get('bipartite') == 0: # C'est une entreprise
+            
+            # 1. Calculer le degré
+            deg = B.degree(node)
+            
+            # 2. Stocker le degré comme attribut (feature) dans le nœud NetworkX
+            B.nodes[node]['degree'] = deg
+            
+            # 3. Stocker le degré dans le dictionnaire de sortie
+            dict_companies[node]['degree'] = deg
+
+    # Vous pouvez aussi ajouter d'autres features ici, comme le degré normalisé
+    # ou la feature 'inv_degree' que vous aviez commentée.
+
                 
     return B, dict_companies, dict_invest
 
@@ -977,11 +1005,13 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
         print(f"nombre de noeuds", B_full.number_of_nodes())
 
         # Préparer les fichiers TGN limités au temps maximal du train
-        prepare_tgn_input(
-            B_full,
-            # max_time=max_train_time,
-            output_prefix="crunchbase_filtered"
-        )
+        # Préparer les données TGN
+        df, item_map, user_map = prepare_tgn_input(B_full, output_prefix="crunchbase_filtered")
+
+        # NOUVEAU: Sauvegarder les degrés pour la weighted loss
+        from data.custom_loss import prepare_degree_weights
+        company_degrees = prepare_degree_weights(B_full, item_map, output_prefix="crunchbase_filtered")
+
         save_graph_and_dicts(B_full, dict_companies_full, dict_investors_full, limit)
 
 

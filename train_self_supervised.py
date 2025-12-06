@@ -15,6 +15,7 @@ from model.tgn import TGN
 from utils.utils import EarlyStopMonitor, RandEdgeSampler, get_neighbor_finder
 from utils.data_processing import get_data, compute_time_statistics
 from tqdm import tqdm
+from data.custom_loss import InverseDegreeWeightedBCELoss  # AJOUT: Import custom loss
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -73,6 +74,11 @@ parser.add_argument('--wandb_project', type=str, default='tgn-training',
 parser.add_argument('--wandb_entity', type=str, default=None,
                     help='Wandb entity (username or team)')
 
+parser.add_argument('--use_weighted_loss', action='store_true',
+                    help='Use inverse-degree weighted loss')
+parser.add_argument('--weight_alpha', type=float, default=1.0,
+                    help='Exponent for inverse degree weighting (1.0=linear, 2.0=quadratic)')
+
 try:
   args = parser.parse_args()
 except:
@@ -82,7 +88,7 @@ except:
 # Configuration des variables globales
 BATCH_SIZE = args.bs
 NUM_NEIGHBORS = args.n_degree
-NUM_NEG = 1 # 1
+NUM_NEG = 20 # 1
 NUM_EPOCH = args.n_epoch
 NUM_HEADS = args.n_head
 DROP_OUT = args.drop_out
@@ -193,7 +199,21 @@ for i in range(args.n_runs):
             use_source_embedding_in_message=args.use_source_embedding_in_message,
             dyrep=args.dyrep)
   
-  criterion = torch.nn.BCELoss()
+  # criterion = torch.nn.BCELoss()
+  from data.custom_loss import load_weighted_loss
+
+  # Charger les mappings
+  with open(f"data/mappings/{DATA}_filtered_company_id_map.pickle", "rb") as f:
+      item_map = pickle.load(f)
+
+  # Créer la weighted loss avec alpha=1.0 (linéaire)
+  criterion = load_weighted_loss(
+      data_name=DATA,
+      item_map=item_map,
+      alpha=1.0,      # 1.0 = linéaire, 2.0 = quadratique (plus agressif)
+      normalize=False
+  )
+  criterion = criterion.to(device)  # Déplacer sur GPU si nécessaire
   optimizer = torch.optim.Adam(tgn.parameters(), lr=LEARNING_RATE)
   scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
       optimizer, mode='max', factor=0.5, patience=3, verbose=True
@@ -274,7 +294,16 @@ for i in range(args.n_runs):
           sources_batch, destinations_batch, negatives_batch,
           timestamps_batch, edge_idxs_batch, NUM_NEIGHBORS)
 
-        loss += criterion(pos_prob.squeeze(), pos_label) + criterion(neg_prob.squeeze(), neg_label)
+        # loss += criterion(pos_prob.squeeze(), pos_label) + criterion(neg_prob.squeeze(), neg_label)
+        sources_tensor = torch.from_numpy(sources_batch).long().to(device)
+
+        if isinstance(criterion, InverseDegreeWeightedBCELoss):
+            from data.custom_loss import InverseDegreeWeightedBCELoss
+            pos_loss = criterion(pos_prob.squeeze(), pos_label, sources_tensor)
+            neg_loss = criterion(neg_prob.squeeze(), neg_label, sources_tensor)
+            loss += pos_loss + neg_loss
+        else:
+            loss += criterion(pos_prob.squeeze(), pos_label) + criterion(neg_prob.squeeze(), neg_label)
 
       loss /= args.backprop_every
       loss.backward()
