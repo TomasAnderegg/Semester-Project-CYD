@@ -535,27 +535,27 @@ def main():
     if args.use_memory:
         build_memory_from_train(args, tgn, train_data, train_ngh_finder, logger)
     tgn.set_neighbor_finder(full_ngh_finder)
-    val_ap, val_auc = eval_edge_prediction(tgn, val_rand_sampler, val_data, args.n_degree)
+    val_ap, val_auc,_,_,_ = eval_edge_prediction(tgn, val_rand_sampler, val_data, args.n_degree)
     logger.info("Validation (seen nodes) - AUC: %.4f, AP: %.4f", val_auc, val_ap)
 
     # Phase 2: Validation (new nodes)
     logger.info("Phase 2: Validation (new nodes)")
     build_memory_from_train(args, tgn, train_data, train_ngh_finder, logger)
     tgn.set_neighbor_finder(full_ngh_finder)
-    nn_val_ap, nn_val_auc = eval_edge_prediction(tgn, nn_val_rand_sampler, new_node_val_data, args.n_degree)
+    nn_val_ap, nn_val_auc,_,_,_ = eval_edge_prediction(tgn, nn_val_rand_sampler, new_node_val_data, args.n_degree)
     logger.info("Validation (new nodes) - AUC: %.4f, AP: %.4f", nn_val_auc, nn_val_ap)
 
     logger.info("Phase 3: Test (seen nodes)")
     build_memory_from_train(args, tgn, train_data, train_ngh_finder, logger)
     tgn.set_neighbor_finder(full_ngh_finder)
-    test_ap, test_auc = eval_edge_prediction(tgn, test_rand_sampler, test_data, args.n_degree)
+    test_ap, test_auc,_,_,_ = eval_edge_prediction(tgn, test_rand_sampler, test_data, args.n_degree)
     logger.info("Test (seen nodes) - AUC: %.4f, AP: %.4f", test_auc, test_ap)
 
     # Phase 4: Test (new nodes)
     logger.info("Phase 4: Test (new nodes)")
     build_memory_from_train(args, tgn, train_data, train_ngh_finder, logger)
     tgn.set_neighbor_finder(full_ngh_finder)
-    nn_test_ap, nn_test_auc = eval_edge_prediction(tgn, nn_test_rand_sampler, new_node_test_data, args.n_degree)
+    nn_test_ap, nn_test_auc,_,_,_ = eval_edge_prediction(tgn, nn_test_rand_sampler, new_node_test_data, args.n_degree)
     logger.info("Test (new nodes) - AUC: %.4f, AP: %.4f", nn_test_auc, nn_test_ap)
 
     # Load mappings

@@ -550,7 +550,7 @@ def filter_merged_by_organizations(df_merged, df_organizations, keywords=FILTER_
 
     # Ajoute une colonne 'category_list' dans df_merged
     df_merged['category_list'] = df_merged['org_uuid'].map(uuid_to_cat)
-    # df_merged.to_csv("debug_caca.csv",index=False)
+    # df_merged.to_csv("debug_caca21.csv",index=False)
 
     # Filtrer chaque liste pour ne garder que les éléments contenant le mot-clé
     def match_category(cat_string):
@@ -566,7 +566,7 @@ def filter_merged_by_organizations(df_merged, df_organizations, keywords=FILTER_
     # Filtrer le DataFrame
     df_merged_keyworded = df_merged[df_merged["category_list"].apply(match_category)]
 
-    # df_merged_keyworded.to_csv("debug_caca2.csv",index=False)
+    # df_merged_keyworded.to_csv("debug_caca212.csv",index=False)
 
     
     print(f"  Lignes avant filtrage: {initial_rows:,}")
@@ -589,10 +589,10 @@ def filter_merged_by_organizations(df_merged, df_organizations, keywords=FILTER_
     
     # Sauvegarder le résultat filtré
     csv_filtered_path = f"{SAVE_DIR_CSV}/merged_filtered_by_organizations.csv"
-    df_filtered.to_csv(csv_filtered_path, index=False)
+    df_merged_keyworded.to_csv(csv_filtered_path, index=False)
     print(f"\n✓ CSV filtré sauvegardé: {csv_filtered_path}")
     
-    return df_filtered
+    return df_merged_keyworded
 
 
 
@@ -603,17 +603,55 @@ def nx_dip_graph_from_pandas(df: pd.DataFrame):
     
     bipartite = 0 => company (org_name)
     bipartite = 1 => investor (investor_name)
-    
-    Correction: Assure que les CVC/Entités mixtes sont correctement labellisées 
-    pour le graphe bipartite avant de créer l'arête en priorisant 0 si l'entité est des deux.
-    Les arêtes non valides (0-0 ou 1-1) sont ignorées.
     """
+
+    import networkx as nx
+    from typing import Set
+
     dict_companies = {}
     dict_invest = {}
 
+    # ======================================================
+    # 1) Préparer les technologies par entreprise
+    # ======================================================
+
+    def parse_tech_list(cat):
+        '''
+        transforme: "Electronics,Quantum Computing,Semiconductor"
+        en: ["Electronics", "Quantum Computing", "Semiconductor"]
+        '''
+        if pd.isna(cat):
+            return []
+        if isinstance(cat, str):
+            return [c.strip() for c in cat.split(',') if c.strip()] # c.strip() pour enlever les espaces
+        return []
+
+    company_to_techs = {}
+
+    # On parcourt uniquement les colonnes org_name et category_list
+    sub_df = df[['org_name', 'category_list']]
+
+    # On supprime les lignes sans nom d’entreprise
+    sub_df = sub_df.dropna(subset=['org_name'])
+
+    for index, row in sub_df.iterrows():
+        
+        # Nom de l'entreprise
+        company_name = row['org_name']
+
+        # Liste des technologies à partir de category_list
+        tech_list = parse_tech_list(row['category_list'])
+
+        # On ajoute l'entrée dans le dictionnaire
+        company_to_techs[company_name] = tech_list
+
+
+    # ======================================================
+    # 2) Création du graphe bipartite
+    # ======================================================
+
     B = nx.Graph()
 
-    # helper to safely convert numbers
     def safe_int(x, default=0) -> int:
         try:
             if pd.isna(x): return default
@@ -628,146 +666,122 @@ def nx_dip_graph_from_pandas(df: pd.DataFrame):
         except Exception:
             return default
 
-
     all_companies: Set[str] = set(df['org_name'].dropna().unique())
     all_investors: Set[str] = set(df['investor_name'].dropna().unique())
-    
-    # Entités qui sont à la fois des Compagnies et des Investisseurs (CVC)
-    # mixed_entities = all_companies.intersection(all_investors)
-    
 
+    # ======================================================
+    # 3) Ajouter toutes les Company nodes (bipartite=0)
+    # ======================================================
 
-    # 1. Ajouter toutes les entités cibles (Compagnies = 0)
     for name in all_companies:
-         B.add_node(name, bipartite=0) # COMPAGNIE = 0
-         
-         # Création de l'objet classe (pour TechRank)
-         try:
-             # Assurez-vous que la classe Company existe ou adaptez l'implémentation
-             c = classes.Company(id=f'org_{name}', name=name, technologies=[])
-         except NameError:
-             c = {'name': name}
-        #  dict_companies[name] = c
-         dict_companies[name] = {
+        B.add_node(name, bipartite=0)
+
+        techs = company_to_techs.get(name, [])
+
+        dict_companies[name] = {
             "id": f"org_{name}",
             "name": name,
-            "technologies": []
-         }
+            "technologies": techs,
+            "number_of_tech": len(techs)
+        }
 
+    # ======================================================
+    # 4) Ajouter Investor nodes (bipartite=1)
+    # ======================================================
 
-    # 2. Ajouter les entités sources (Investisseurs = 1) qui ne sont PAS des Compagnies (0)
     for name in all_investors:
-         # SI l'entité n'a pas déjà été ajoutée comme Compagnie (bipartite=0),
-         # ALORS on l'ajoute comme Investisseur (bipartite=1)
-         if name not in B.nodes or B.nodes[name].get('bipartite') != 0:
-             B.add_node(name, bipartite=1) # INVESTISSEUR = 1
-             
-         # Création de l'objet classe (pour TechRank)
-         try:
-             # Assurez-vous que la classe Investor existe ou adaptez l'implémentation
-             i = classes.Investor(investor_id=f'inv_{name}', name=name, announced_on='N/A', raised_amount_usd=0, num_investors=0)
-         except NameError:
-             i = {'name': name}
-        #  dict_invest[name] = i
-         dict_invest[name] = {
+        if name not in B.nodes:  # seulement si pas déjà Company
+            B.add_node(name, bipartite=1)
+
+        dict_invest[name] = {
             "id": f"inv_{name}",
             "name": name,
             "raised_amount_usd": 0,
             "num_investors": 0
-         }
+        }
 
-    
+    # ======================================================
+    # 5) Construire les arêtes valides (0 -> 1)
+    # ======================================================
 
-    for index, row in df.iterrows():
+    for idx, row in df.iterrows():
+
         invest_name = row.get('investor_name', '') or ''
         comp_name = row.get('org_name', '') or ''
-        
+
         if not invest_name or not comp_name:
             continue
-            
-        # Récupérer les labels (qui ont été définis dans la pré-passe)
-        # On utilise le nom de l'entité comme clé
-        comp_bipartite = B.nodes.get(comp_name, {}).get('bipartite')
-        invest_bipartite = B.nodes.get(invest_name, {}).get('bipartite')
 
-        # Si l'arête est du type 0 -> 1, elle est valide.
-        if (comp_bipartite == 0 and invest_bipartite == 1):
-            # Le nom de la Compagnie est u, le nom de l'Investisseur est v
-            u, v = comp_name, invest_name 
-            
-        # Cas des CVC : l'entité (Compagnie 0) investit dans elle-même ou dans une autre Compagnie 0
-        # Mais dans le graphe bipartite Compagnie/Investisseur, on considère l'interaction 0-1.
-        # Le CVC a été étiqueté 0 (Compagnie), mais dans cette ligne, il agit comme un Investisseur.
-        # On doit s'assurer que l'arête est bien entre une Compagnie (0) et un Investisseur (1).
-        
-        # Cas 1 : Comp (0) <- Inv (1)
-        # if comp_bipartite == 0 and invest_bipartite == 1:
-        #     u, v = comp_name, invest_name
-        
-        # # Cas 2 : CVC (0, agissant comme Inv) <- Comp (0)
-        # # (Ex: Palo Alto Networks (Investor) -> Autre Entreprise (Company))
-        # # Comme Palo Alto Networks est 0, et l'autre Entreprise est 0, c'est 0-0 et ignoré.
-        # # Si on veut inclure les CVC (Compagnie -> Compagnie/Compagnie), il faut ajuster la règle.
-        
-        # # POUR LA PURETÉ DU GRAPHE BIPARTITE CIBLE(0) <-> SOURCE(1) :
-        # # On n'ajoute l'arête que si les deux ensembles sont distincts (0 et 1).
-        # elif comp_bipartite == 0 and invest_name in mixed_entities:
-        #     # Si la compagnie est 0 et l'investisseur est un CVC (qui a été labellisé 0)
-        #     # On ignore l'arête 0-0 (si on veut un graphe strict). 
-        #     # Si on veut la considérer, c'est plus complexe. Restons stricts pour TGN.
-        #     continue
-            
-        # else:
-        #     # Arête invalide (Exemple: 0-0 ou 1-1). Ignorée.
-        #     continue
-            
-        # Détermination du timestamp (identique à votre code)
+        comp_b = B.nodes.get(comp_name, {}).get('bipartite')
+        inv_b = B.nodes.get(invest_name, {}).get('bipartite')
+
+        if comp_b == 0 and inv_b == 1:
+            u, v = comp_name, invest_name
+        else:
+            continue  # ignore 0-0 ou 1-1
+
+        # Timestamp
         announced_on = row.get('announced_on', '')
         if pd.notna(announced_on):
-            if isinstance(announced_on, pd.Timestamp):
-                announced_on = str(announced_on.date()) 
-            else:
-                try:
-                    announced_on = str(pd.to_datetime(announced_on).date())
-                except Exception:
-                    announced_on = ''
-        else:
-            announced_on = ''
-            
+            try:
+                announced_on = str(pd.to_datetime(announced_on).date())
+            except Exception:
+                announced_on = ''
+
         raised_amt = safe_float(row.get('raised_amount_usd', 0))
 
-        # Ajout ou mise à jour de l'arête
+        # Ajouter ou mettre à jour l'arête
         if B.has_edge(u, v):
-            existing_data = B[u][v]
-            existing_data['funding_rounds'].append({
+            data = B[u][v]
+            data['funding_rounds'].append({
                 'funding_round_uuid': row.get('funding_round_uuid', ''),
                 'announced_on': announced_on,
                 'raised_amount_usd': raised_amt,
                 'investment_type': row.get('investment_type', '')
             })
-            existing_data['total_raised_amount_usd'] = safe_float(existing_data.get('total_raised_amount_usd', 0)) + raised_amt
-            existing_data['num_funding_rounds'] = existing_data.get('num_funding_rounds', 0) + 1
+            data['total_raised_amount_usd'] = safe_float(data.get('total_raised_amount_usd', 0)) + raised_amt
+            data['num_funding_rounds'] = data.get('num_funding_rounds', 0) + 1
+
         else:
-            B.add_edge(u, v,
-                       funding_rounds=[{
-                           'funding_round_uuid': row.get('funding_round_uuid', ''),
-                           'announced_on': announced_on,
-                           'raised_amount_usd': raised_amt,
-                           'investment_type': row.get('investment_type', '')
-                       }],
-                       total_raised_amount_usd=raised_amt,
-                       num_funding_rounds=1
-                       )
+            B.add_edge(
+                u, v,
+                funding_rounds=[{
+                    'funding_round_uuid': row.get('funding_round_uuid', ''),
+                    'announced_on': announced_on,
+                    'raised_amount_usd': raised_amt,
+                    'investment_type': row.get('investment_type', '')
+                }],
+                total_raised_amount_usd=raised_amt,
+                num_funding_rounds=1
+            )
 
-    # Stats
-    print(f"\nStatistiques des levées de fonds:")
-    total_funding_rounds = sum([B[u][v].get('num_funding_rounds', 0) for u, v in B.edges()])
-    print(f"  - Total arêtes (paires Comp(0)-Inv(1)): {B.number_of_edges()}")
-    print(f"  - Total levées de fonds (somme des rounds): {total_funding_rounds}")
+    # ======================================================
+    # 6) Statistiques
+    # ======================================================
+
+    print("\nStatistiques des levées de fonds:")
+    total_rounds = sum(B[u][v].get('num_funding_rounds', 0) for u, v in B.edges())
+    print(f"  - Total arêtes (0-1): {B.number_of_edges()}")
+    print(f"  - Total levées de fonds: {total_rounds}")
     print(f"  - Total nœuds: {B.number_of_nodes()}")
+    
+    # for node, data in B.nodes(data=True):
+    #         if data.get('bipartite') == 0:
+    #             deg = B.degree(node)
+    #             inv_deg = 1 / deg if deg > 0 else 0.0
+    #             B.nodes[node]['inv_degree'] = inv_deg
+    #             dict_companies[node]['inv_degree'] = inv_deg
 
-    # Rendu des dictionnaires et du graphe
+    # # Normalisation
+    # max_inv = max([B.nodes[n]['inv_degree'] for n in B.nodes if B.nodes[n].get('bipartite')==0])
+    # for node, data in B.nodes(data=True):
+    #     if data.get('bipartite') == 0:
+    #         data['inv_degree_norm'] = data['inv_degree'] / max_inv
+    #         dict_companies[node]['inv_degree_norm'] = data['inv_degree_norm']
+
+                
     return B, dict_companies, dict_invest
+
 
 
 
@@ -927,7 +941,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
     
     print("\n========================== MERGING DATA ==========================")
     df_graph_full = merge_and_clean_final(df_funding_clean, df_investments_clean)
-    # df_graph_full.to_csv("debug_caca.csv",index=False)
+    df_graph_full.to_csv("debug_caca.csv",index=False)
     print(f"Données mergées : {len(df_graph_full):,} lignes")
 
     df_graph_full['announced_on'] = pd.to_datetime(df_graph_full['announced_on'], errors='coerce')
@@ -935,7 +949,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
 
 
     df_graph_full = filter_merged_by_organizations(df_graph_full, df_organizations, keywords = FILTER_KEYWORDS)
-    df_graph_full.to_csv("debug_filtered_graph_full.csv", index=False)
+    # df_graph_full.to_csv("debug_filtered_graph_full.csv", index=False)
     
     for limit in LIMITS:
         print(f"\n{'='*70}")
@@ -946,7 +960,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
         df_graph = df_graph_full.head(limit).copy()
 
         # Sauvegarde temporaire pour inspection
-        # df_graph.to_csv("debug_df_graph.csv", index=False)
+        # df_graph.to_csv("debug_df_graphcaca21.csv", index=False)
         print("✓ Fichier debug_df_graph.csv sauvegardé, tu peux l'ouvrir dans Excel ou VSCode pour vérifier.")
         print("Colonnes :", df_graph.columns.tolist())
         print("nobres de lignes dans df_graph :", len(df_graph))

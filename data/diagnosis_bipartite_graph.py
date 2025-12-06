@@ -54,6 +54,8 @@ def load_graph_and_matrix(num_comp, num_tech, flag_cybersecurity):
 
     with open(f'{SAVE_DIR_CLASSES}/dict_companies_{num_comp}.pickle', 'rb') as f:
         dict_companies = pickle.load(f)
+
+    print(dict_companies.keys())
     
     with open(f'{SAVE_DIR_CLASSES}/dict_investors_{num_tech}.pickle', 'rb') as f:
         dict_tech = pickle.load(f)
@@ -85,29 +87,29 @@ def extract_nodes(G, bipartite_set) -> List:
     return nodes
 
 def create_biadjacency_matrix(B):    
-    set0 = extract_nodes(B, 0)
-    set1 = extract_nodes(B, 1)
+    set0 = extract_nodes(B, 0) # companies
+    set1 = extract_nodes(B, 1)  # investors 
     
     # Vérifier que l'ordre est cohérent
     print(f"Vérification: {len(set0)} companies, {len(set1)} technologies")
     
     # Créer un mapping des noms aux indices
     company_to_idx = {company: i for i, company in enumerate(set0)}
-    tech_to_idx = {tech: i for i, tech in enumerate(set1)}
+    invest_to_idx = {tech: i for i, tech in enumerate(set1)}
     
     # Construire la matrice manuellement pour vérifier
     M_manual = np.zeros((len(set0), len(set1)), dtype=int)
     
     edges_counted = 0
     for u, v in B.edges():
-        if u in company_to_idx and v in tech_to_idx:
+        if u in company_to_idx and v in invest_to_idx:
             i = company_to_idx[u]
-            j = tech_to_idx[v]
+            j = invest_to_idx[v]
             M_manual[i, j] = 1
             edges_counted += 1
-        elif v in company_to_idx and u in tech_to_idx:
+        elif v in company_to_idx and u in invest_to_idx:
             i = company_to_idx[v]
-            j = tech_to_idx[u]
+            j = invest_to_idx[u]
             M_manual[i, j] = 1
             edges_counted += 1
     
@@ -123,17 +125,17 @@ def analyze_graph_structure(B):
     print("="*70)
     
     companies = [n for n, d in B.nodes(data=True) if d.get('bipartite') == 0]
-    techs = [n for n, d in B.nodes(data=True) if d.get('bipartite') == 1]
+    invests = [n for n, d in B.nodes(data=True) if d.get('bipartite') == 1]
     
     print(f"\n📊 COMPOSITION:")
     print(f"  - Companies: {len(companies)}")
-    print(f"  - Technologies: {len(techs)}")
+    print(f"  - Technologies: {len(invests)}")
     print(f"  - Arêtes: {B.number_of_edges()}")
     print(f"  - Densité: {nx.density(B):.4f}")
     
     # Degrés
     company_degrees = [B.degree(node) for node in companies]
-    tech_degrees = [B.degree(node) for node in techs]
+    invest_degrees = [B.degree(node) for node in invests]
     
     print(f"\n📈 DEGRÉS:")
     print(f"  Companies:")
@@ -143,10 +145,10 @@ def analyze_graph_structure(B):
     print(f"    - Écart-type: {np.std(company_degrees):.2f}")
     
     print(f"  Technologies:")
-    print(f"    - Moyen: {np.mean(tech_degrees):.2f}")
-    print(f"    - Médian: {np.median(tech_degrees):.2f}")
-    print(f"    - Min/Max: {np.min(tech_degrees)}/{np.max(tech_degrees)}")
-    print(f"    - Écart-type: {np.std(tech_degrees):.2f}")
+    print(f"    - Moyen: {np.mean(invest_degrees):.2f}")
+    print(f"    - Médian: {np.median(invest_degrees):.2f}")
+    print(f"    - Min/Max: {np.min(invest_degrees)}/{np.max(invest_degrees)}")
+    print(f"    - Écart-type: {np.std(invest_degrees):.2f}")
     
     # Nœuds isolés
     isolated = list(nx.isolates(B))
@@ -166,9 +168,9 @@ def analyze_graph_structure(B):
     
     return {
         'companies': companies,
-        'techs': techs,
+        'invests': invests,
         'company_degrees': company_degrees,
-        'tech_degrees': tech_degrees,
+        'invest_degrees': invest_degrees,
         'components': components
     }
 
@@ -200,7 +202,7 @@ def analyze_matrix_properties(M):
     print(f"    - Min/Max: {np.min(row_sums):.0f}/{np.max(row_sums):.0f}")
     print(f"    - Companies sans connexion: {np.sum(row_sums == 0)}")
     
-    print(f"  Par technologie (colonnes):")
+    print(f"  Par investor (colonnes):")
     print(f"    - Moyenne: {np.mean(col_sums):.2f}")
     print(f"    - Médiane: {np.median(col_sums):.2f}")
     print(f"    - Min/Max: {np.min(col_sums):.0f}/{np.max(col_sums):.0f}")
@@ -272,12 +274,12 @@ def filter_nodes_by_degree(G, percentage=10, set1=None, set2=None):
     
     # Trouver les seuils
     comp_threshold = np.percentile(list(company_degrees.values()), percentage)
-    tech_threshold = np.percentile(list(tech_degrees.values()), percentage)
+    invest_threshold = np.percentile(list(tech_degrees.values()), percentage)
     
     # Nœuds à supprimer
     to_delete = []
     to_delete.extend([node for node in set1 if company_degrees[node] <= comp_threshold])
-    to_delete.extend([node for node in set2 if tech_degrees[node] <= tech_threshold])
+    to_delete.extend([node for node in set2 if tech_degrees[node] <= invest_threshold])
     
     print(f"Filtrage: suppression de {len(to_delete)} nœuds (degré < {percentage}ème percentile)")
     return to_delete
@@ -445,12 +447,12 @@ def plot_degree_distributions(graph_data, matrix_data):
     axes[0, 0].grid(True, alpha=0.3)
     
     # Distribution des degrés - Technologies
-    axes[0, 1].hist(graph_data['tech_degrees'], bins=30, edgecolor='black', alpha=0.7, color='blue')
+    axes[0, 1].hist(graph_data['invest_degrees'], bins=30, edgecolor='black', alpha=0.7, color='blue')
     axes[0, 1].set_xlabel('Degré')
     axes[0, 1].set_ylabel('Fréquence')
-    axes[0, 1].set_title('Distribution des degrés - Technologies')
-    axes[0, 1].axvline(np.mean(graph_data['tech_degrees']), color='black', 
-                       linestyle='--', label=f'Moyenne: {np.mean(graph_data["tech_degrees"]):.2f}')
+    axes[0, 1].set_title('Distribution des degrés - Investors')
+    axes[0, 1].axvline(np.mean(graph_data['invest_degrees']), color='black', 
+                       linestyle='--', label=f'Moyenne: {np.mean(graph_data["invest_degrees"]):.2f}')
     axes[0, 1].legend()
     axes[0, 1].grid(True, alpha=0.3)
     
@@ -464,12 +466,12 @@ def plot_degree_distributions(graph_data, matrix_data):
     axes[1, 0].grid(True, alpha=0.3)
     
     # Log-log plot - Technologies
-    hist, bins = np.histogram(graph_data['tech_degrees'], bins=50)
+    hist, bins = np.histogram(graph_data['invest_degrees'], bins=50)
     bin_centers = (bins[:-1] + bins[1:]) / 2
     axes[1, 1].loglog(bin_centers, hist, 'bo-', alpha=0.6)
     axes[1, 1].set_xlabel('Degré (log)')
     axes[1, 1].set_ylabel('Fréquence (log)')
-    axes[1, 1].set_title('Distribution log-log - Technologies')
+    axes[1, 1].set_title('Distribution log-log - Investors')
     axes[1, 1].grid(True, alpha=0.3)
     
     plt.tight_layout()
@@ -483,7 +485,7 @@ def plot_matrix_visualization(M):
     
     # Matrice brute
     axes[0].imshow(M, cmap='bone', interpolation='nearest', aspect='auto')
-    axes[0].set_xlabel('Technologies')
+    axes[0].set_xlabel('Investors')
     axes[0].set_ylabel('Companies')
     axes[0].set_title('Matrice d\'adjacence (brute)')
     
@@ -497,9 +499,9 @@ def plot_matrix_visualization(M):
     M_sorted = M[row_order, :][:, col_order]
     
     axes[1].imshow(M_sorted, cmap='bone', interpolation='nearest', aspect='auto')
-    axes[1].set_xlabel('Technologies (triées)')
-    axes[1].set_ylabel('Companies (triées)')
-    axes[1].set_title('Matrice d\'adjacence (triée par degré)')
+    axes[1].set_xlabel('Investors')
+    axes[1].set_ylabel('Companies')
+    axes[1].set_title('Adjacency Matrix (sorted by degree)')
     
     plt.tight_layout()
     plt.savefig(f'{SAVE_DIR_ANALYSIS}/matrix_visualization.png', dpi=300, bbox_inches='tight')
@@ -689,15 +691,77 @@ def generate_analysis_report(B, M, dict_companies, dict_tech):
     # 8. Bipartite validation
     print("bipartite validation:", is_bipartite(B))
 
+def analyze_degree_vs_tech_count_scatter(B, dict_companies, top_n_labels=5):
+    """
+    Analyse le lien entre le degré d'une company et le nombre de technologies avec un scatter plot.
+    
+    Args:
+        B: Graphe bipartite (companies-investors)
+        dict_companies: dictionnaire des companies avec leur liste de technologies
+        top_n_labels: nombre de companies à annoter (celles avec le plus d'investisseurs)
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import pandas as pd
+
+    # Préparer les données
+    companies = [n for n, d in B.nodes(data=True) if d.get('bipartite') == 0]
+    data = []
+    for c in companies:
+        degree = B.degree(c)
+        num_techs = len(dict_companies[c]['technologies'])
+        data.append((c, num_techs, degree))
+
+    df = pd.DataFrame(data, columns=['company', 'num_technologies', 'degree'])
+
+    # Scatter plot avec ligne de régression
+    plt.figure(figsize=(12,7))
+    sns.scatterplot(x='num_technologies', y='degree', data=df, alpha=0.6, s=100, color='steelblue')
+    sns.regplot(x='num_technologies', y='degree', data=df, scatter=False, color='red', line_kws={'linewidth':2})
+
+    # Annoter les top_n_labels entreprises (celles avec le plus d'investisseurs)
+    top_companies = df.nlargest(top_n_labels, 'degree')
+    for _, row in top_companies.iterrows():
+        plt.text(row['num_technologies'] + 0.2, row['degree'], row['company'], 
+                 fontsize=9, fontweight='bold', color='darkred', alpha=0.8)
+
+    plt.xlabel('Nombre de technologies', fontsize=12)
+    plt.ylabel('Degré (nombre d\'investisseurs)', fontsize=12)
+    plt.title('Relation entre le nombre de technologies et le nombre d\'investisseurs', fontsize=14, fontweight='bold')
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    # Statistiques
+    corr = df['num_technologies'].corr(df['degree'])
+    print(f"📊 Corrélation Pearson : {corr:.2f}")
+    print(f"📈 Nombre d'entreprises analysées : {len(df)}")
+    print(f"📊 Médiane degré : {df['degree'].median():.1f}")
+    print(f"📊 Médiane technologies : {df['num_technologies'].median():.1f}")
+
+    return df, corr
+
+
+
+
+
+
 # ===================================================================
 # MAIN
 # ===================================================================
 
 if __name__ == "__main__":
     # Charger les données
-    B, M, dict_companies, dict_tech = load_graph_and_matrix(
-        NUM_COMP, NUM_TECH, FLAG_CYBERSECURITY
-    )
+    # B, M, dict_companies, dict_tech = load_graph_and_matrix(
+    #     NUM_COMP, NUM_TECH, FLAG_CYBERSECURITY
+    # )
+
+    # ==============================================
+    # Exemple d'utilisation après avoir chargé B et dict_companies
+    # ==============================================
+    # _,_ =analyze_degree_vs_tech_count_scatter(B, dict_companies)
     
+    arr = np.load("data/crunchbase_filtered_node.npy")
+    print(arr.shape)
     # Générer le rapport complet
-    generate_analysis_report(B, M, dict_companies, dict_tech)
+    # generate_analysis_report(B, M, dict_companies, dict_tech)

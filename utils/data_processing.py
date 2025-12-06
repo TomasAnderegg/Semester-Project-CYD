@@ -83,8 +83,8 @@ def get_data(dataset_name, different_new_nodes_between_val_and_test=False, rando
     set(destinations[timestamps > val_time]))
   # Sample nodes which we keep as new nodes (to test inductiveness), so than we have to remove all
   # their edges from training
-  # new_test_node_set = set(random.sample(test_node_set, int(0.1 * n_total_unique_nodes)))
-  new_test_node_set = set(random.sample(test_node_set, max(1, int(0.02 * n_total_unique_nodes))))
+  new_test_node_set = set(random.sample(test_node_set, int(0.1 * n_total_unique_nodes)))
+  # new_test_node_set = set(random.sample(test_node_set, max(1, int(0.02 * n_total_unique_nodes))))
 
   # Mask saying for each source and destination whether they are new test nodes
   new_test_source_mask = graph_df.u.map(lambda x: x in new_test_node_set).values
@@ -160,31 +160,31 @@ def get_data(dataset_name, different_new_nodes_between_val_and_test=False, rando
     len(new_test_node_set)))
   
   #----------------ajouté par Tomas---------------------------
-  # Fonction utilitaire pour trier les objets Data selon le temps
-  def sort_data_by_time(data_obj):
-      idx = np.argsort(data_obj.timestamps)
-      data_obj.sources = data_obj.sources[idx]
-      data_obj.destinations = data_obj.destinations[idx]
-      data_obj.timestamps = data_obj.timestamps[idx]
-      data_obj.edge_idxs = data_obj.edge_idxs[idx]
-      data_obj.labels = data_obj.labels[idx]
-      return data_obj
+  # # Fonction utilitaire pour trier les objets Data selon le temps
+  # def sort_data_by_time(data_obj):
+  #     idx = np.argsort(data_obj.timestamps)
+  #     data_obj.sources = data_obj.sources[idx]
+  #     data_obj.destinations = data_obj.destinations[idx]
+  #     data_obj.timestamps = data_obj.timestamps[idx]
+  #     data_obj.edge_idxs = data_obj.edge_idxs[idx]
+  #     data_obj.labels = data_obj.labels[idx]
+  #     return data_obj
 
-  # Appliquer le tri chronologique sur chaque split
-  train_data = sort_data_by_time(train_data)
-  val_data = sort_data_by_time(val_data)
-  test_data = sort_data_by_time(test_data)
-  new_node_val_data = sort_data_by_time(new_node_val_data)
-  new_node_test_data = sort_data_by_time(new_node_test_data)
+  # # Appliquer le tri chronologique sur chaque split
+  # train_data = sort_data_by_time(train_data)
+  # val_data = sort_data_by_time(val_data)
+  # test_data = sort_data_by_time(test_data)
+  # new_node_val_data = sort_data_by_time(new_node_val_data)
+  # new_node_test_data = sort_data_by_time(new_node_test_data)
 
-  # Tri aussi sur full_data pour cohérence globale
-  idx = np.argsort(full_data.timestamps)
-  full_data.sources = full_data.sources[idx]
-  full_data.destinations = full_data.destinations[idx]
-  full_data.timestamps = full_data.timestamps[idx]
-  full_data.edge_idxs = full_data.edge_idxs[idx]
-  full_data.labels = full_data.labels[idx]
-
+  # # Tri aussi sur full_data pour cohérence globale
+  # idx = np.argsort(full_data.timestamps)
+  # full_data.sources = full_data.sources[idx]
+  # full_data.destinations = full_data.destinations[idx]
+  # full_data.timestamps = full_data.timestamps[idx]
+  # full_data.edge_idxs = full_data.edge_idxs[idx]
+  # full_data.labels = full_data.labels[idx]
+  
 #----------------------------------------------------------
 
   return node_features, edge_features, full_data, train_data, val_data, test_data, \

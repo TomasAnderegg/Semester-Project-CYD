@@ -82,7 +82,7 @@ except:
 # Configuration des variables globales
 BATCH_SIZE = args.bs
 NUM_NEIGHBORS = args.n_degree
-NUM_NEG = 10 # 1
+NUM_NEG = 1 # 1
 NUM_EPOCH = args.n_epoch
 NUM_HEADS = args.n_head
 DROP_OUT = args.drop_out
@@ -195,9 +195,9 @@ for i in range(args.n_runs):
   
   criterion = torch.nn.BCELoss()
   optimizer = torch.optim.Adam(tgn.parameters(), lr=LEARNING_RATE)
-  # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-  #     optimizer, mode='max', factor=0.5, patience=3, verbose=True
-  # )
+  scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+      optimizer, mode='max', factor=0.5, patience=3, verbose=True
+  )
 
   tgn = tgn.to(device)
 
@@ -325,7 +325,7 @@ for i in range(args.n_runs):
     new_nodes_val_recall_10s.append(nn_val_recall_10)
     new_nodes_val_recall_50s.append(nn_val_recall_50)
     # Scheduler step
-    # scheduler.step(val_ap)  # tu peux aussi utiliser val_auc si tu préfères
+    scheduler.step(val_ap)  # tu peux aussi utiliser val_auc si tu préfères
 
     # AJOUT: Log toutes les métriques à wandb
     if args.use_wandb:
