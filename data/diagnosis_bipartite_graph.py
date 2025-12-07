@@ -752,9 +752,9 @@ def analyze_degree_vs_tech_count_scatter(B, dict_companies, top_n_labels=5):
 
 if __name__ == "__main__":
     # Charger les données
-    # B, M, dict_companies, dict_tech = load_graph_and_matrix(
-    #     NUM_COMP, NUM_TECH, FLAG_CYBERSECURITY
-    # )
+    B, M, dict_companies, dict_tech = load_graph_and_matrix(
+        NUM_COMP, NUM_TECH, FLAG_CYBERSECURITY
+    )
 
     # ==============================================
     # Exemple d'utilisation après avoir chargé B et dict_companies
@@ -764,4 +764,4 @@ if __name__ == "__main__":
     arr = np.load("data/crunchbase_filtered_node.npy")
     print(arr.shape)
     # Générer le rapport complet
-    # generate_analysis_report(B, M, dict_companies, dict_tech)
+    generate_analysis_report(B, M, dict_companies, dict_tech)

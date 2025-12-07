@@ -199,21 +199,21 @@ for i in range(args.n_runs):
             use_source_embedding_in_message=args.use_source_embedding_in_message,
             dyrep=args.dyrep)
   
-  # criterion = torch.nn.BCELoss()
-  from data.custom_loss import load_weighted_loss
+  criterion = torch.nn.BCELoss()
+  # from data.custom_loss import load_weighted_loss
 
-  # Charger les mappings
-  with open(f"data/mappings/{DATA}_filtered_company_id_map.pickle", "rb") as f:
-      item_map = pickle.load(f)
+  # # Charger les mappings
+  # with open(f"data/mappings/{DATA}_filtered_company_id_map.pickle", "rb") as f:
+  #     item_map = pickle.load(f)
 
-  # Créer la weighted loss avec alpha=1.0 (linéaire)
-  criterion = load_weighted_loss(
-      data_name=DATA,
-      item_map=item_map,
-      alpha=1.0,      # 1.0 = linéaire, 2.0 = quadratique (plus agressif)
-      normalize=False
-  )
-  criterion = criterion.to(device)  # Déplacer sur GPU si nécessaire
+  # # Créer la weighted loss avec alpha=1.0 (linéaire)
+  # criterion = load_weighted_loss(
+  #     data_name=DATA,
+  #     item_map=item_map,
+  #     alpha=1.0,      # 1.0 = linéaire, 2.0 = quadratique (plus agressif)
+  #     normalize=False
+  # )
+  # criterion = criterion.to(device)  # Déplacer sur GPU si nécessaire
   optimizer = torch.optim.Adam(tgn.parameters(), lr=LEARNING_RATE)
   scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
       optimizer, mode='max', factor=0.5, patience=3, verbose=True
@@ -294,16 +294,16 @@ for i in range(args.n_runs):
           sources_batch, destinations_batch, negatives_batch,
           timestamps_batch, edge_idxs_batch, NUM_NEIGHBORS)
 
-        # loss += criterion(pos_prob.squeeze(), pos_label) + criterion(neg_prob.squeeze(), neg_label)
-        sources_tensor = torch.from_numpy(sources_batch).long().to(device)
+        loss += criterion(pos_prob.squeeze(), pos_label) + criterion(neg_prob.squeeze(), neg_label)
+        # sources_tensor = torch.from_numpy(sources_batch).long().to(device)
 
-        if isinstance(criterion, InverseDegreeWeightedBCELoss):
-            from data.custom_loss import InverseDegreeWeightedBCELoss
-            pos_loss = criterion(pos_prob.squeeze(), pos_label, sources_tensor)
-            neg_loss = criterion(neg_prob.squeeze(), neg_label, sources_tensor)
-            loss += pos_loss + neg_loss
-        else:
-            loss += criterion(pos_prob.squeeze(), pos_label) + criterion(neg_prob.squeeze(), neg_label)
+        # if isinstance(criterion, InverseDegreeWeightedBCELoss):
+        #     from data.custom_loss import InverseDegreeWeightedBCELoss
+        #     pos_loss = criterion(pos_prob.squeeze(), pos_label, sources_tensor)
+        #     neg_loss = criterion(neg_prob.squeeze(), neg_label, sources_tensor)
+        #     loss += pos_loss + neg_loss
+        # else:
+        #     loss += criterion(pos_prob.squeeze(), pos_label) + criterion(neg_prob.squeeze(), neg_label)
 
       loss /= args.backprop_every
       loss.backward()
