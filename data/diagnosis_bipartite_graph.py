@@ -6,11 +6,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
-from scipy.stats import powerlaw
-from networkx.algorithms.bipartite.matrix import biadjacency_matrix
+from scipy.stats import skew, kurtosis
 import warnings
 from networkx.algorithms.bipartite import is_bipartite
-from typing import List
+from typing import List, Dict, Tuple, Any
 warnings.filterwarnings('ignore')
 
 # ===================================================================
@@ -23,745 +22,755 @@ FLAG_CYBERSECURITY = True
 
 SAVE_DIR_CLASSES = "savings/bipartite_invest_comp/classes"
 SAVE_DIR_NETWORKS = "savings/bipartite_invest_comp/networks"
-SAVE_DIR_M = "savings/bipartite_tech_comp/M"
 SAVE_DIR_ANALYSIS = "analysis/graph_quality"
 
 # ===================================================================
-# CHARGEMENT DES DONNÉES
+# FONCTIONS DE CALCUL DES MÉTRIQUES
 # ===================================================================
 
-def load_graph_and_matrix(num_comp, num_tech, flag_cybersecurity):
-    """Charge le graphe et la matrice d'adjacence"""
-    prefix = "cybersecurity_" if flag_cybersecurity else ""
+def gini_coefficient(values: np.ndarray) -> float:
+    """Coefficient de Gini (0=égalité parfaite, 1=max inégalité)"""
+    values = np.sort(values)
+    n = len(values)
+    if n == 0:
+        return 0
+    index = np.arange(1, n + 1)
+    return (np.sum((2 * index - n - 1) * values)) / (n * np.sum(values))
+
+def calculate_degree_statistics(G, investors: List, companies: List) -> Dict:
+    """Calcule les statistiques de degré pour les deux partitions"""
+    deg_inv = [G.degree(i) for i in investors]
+    deg_comp = [G.degree(c) for c in companies]
+    
+    return {
+        'investors': {
+            'degrees': deg_inv,
+            'mean': np.mean(deg_inv),
+            'median': np.median(deg_inv),
+            'std': np.std(deg_inv),
+            'max': np.max(deg_inv),
+            'min': np.min(deg_inv),
+            'skewness': skew(deg_inv) if len(deg_inv) > 1 else 0,
+            'kurtosis': kurtosis(deg_inv) if len(deg_inv) > 1 else 0,
+            'gini': gini_coefficient(np.array(deg_inv)),
+            'isolated': sum(1 for d in deg_inv if d == 0),
+            'total': len(deg_inv)
+        },
+        'companies': {
+            'degrees': deg_comp,
+            'mean': np.mean(deg_comp),
+            'median': np.median(deg_comp),
+            'std': np.std(deg_comp),
+            'max': np.max(deg_comp),
+            'min': np.min(deg_comp),
+            'skewness': skew(deg_comp) if len(deg_comp) > 1 else 0,
+            'kurtosis': kurtosis(deg_comp) if len(deg_comp) > 1 else 0,
+            'gini': gini_coefficient(np.array(deg_comp)),
+            'isolated': sum(1 for d in deg_comp if d == 0),
+            'total': len(deg_comp)
+        }
+    }
+
+def calculate_bipartite_density(G, investors: List, companies: List) -> Dict:
+    """Calcule les métriques de densité et sparsité"""
+    m = G.number_of_edges()
+    max_possible = len(investors) * len(companies)
+    density = m / max_possible if max_possible > 0 else 0
+    
+    return {
+        'edges': m,
+        'max_possible_edges': max_possible,
+        'density': density,
+        'sparsity_percentage': (1 - density) * 100,
+        'edges_per_investor': m / len(investors) if investors else 0,
+        'edges_per_company': m / len(companies) if companies else 0
+    }
+
+def calculate_imbalance_metrics(G, investors: List, companies: List, deg_stats: Dict) -> Dict:
+    """Calcule les métriques de déséquilibre"""
+    n_inv = len(investors)
+    n_comp = len(companies)
+    
+    # Ratio structurel
+    ratio_ie = n_inv / n_comp if n_comp > 0 else float('inf')
+    
+    # Ratio de degré moyen
+    avg_deg_inv = deg_stats['investors']['mean']
+    avg_deg_comp = deg_stats['companies']['mean']
+    deg_ratio = avg_deg_inv / avg_deg_comp if avg_deg_comp > 0 else float('inf')
+    
+    # Taux de déséquilibre pour prédiction (edge prediction imbalance)
+    # Pour chaque investisseur, ratio liens existants / liens possibles
+    imbalance_scores = []
+    for investor in investors:
+        existing_edges = G.degree(investor)
+        possible_edges = len(companies)
+        if possible_edges > 0:
+            imbalance_scores.append(existing_edges / possible_edges)
+    
+    avg_positive_rate = np.mean(imbalance_scores) if imbalance_scores else 0
+    neg_pos_ratio = (1 - avg_positive_rate) / avg_positive_rate if avg_positive_rate > 0 else float('inf')
+    
+    return {
+        'ratio_investors_companies': ratio_ie,
+        'ratio_avg_degree': deg_ratio,
+        'avg_positive_rate': avg_positive_rate,
+        'negative_positive_ratio': neg_pos_ratio,
+        'size_imbalance': abs(n_inv - n_comp) / (n_inv + n_comp) if (n_inv + n_comp) > 0 else 0
+    }
+
+def calculate_connectivity_metrics(G, investors: List, companies: List) -> Dict:
+    """Calcule les métriques de connectivité"""
+    # Composantes connexes
+    components = list(nx.connected_components(G))
+    component_sizes = [len(c) for c in components]
+    
+    if component_sizes:
+        largest_component = max(components, key=len)
+        largest_size = len(largest_component)
+        largest_percentage = largest_size / G.number_of_nodes() * 100
+    else:
+        largest_size = 0
+        largest_percentage = 0
+    
+    # Assortativité sur les projections
+    try:
+        # Projection investisseurs
+        G_inv = nx.projected_graph(G, investors)
+        assortativity_inv = nx.degree_assortativity_coefficient(G_inv) if G_inv.number_of_edges() > 0 else 0
+        
+        # Projection entreprises
+        G_comp = nx.projected_graph(G, companies)
+        assortativity_comp = nx.degree_assortativity_coefficient(G_comp) if G_comp.number_of_edges() > 0 else 0
+    except:
+        assortativity_inv = 0
+        assortativity_comp = 0
+    
+    return {
+        'num_components': len(components),
+        'largest_component_size': largest_size,
+        'largest_component_percentage': largest_percentage,
+        'component_sizes': component_sizes,
+        'assortativity_investors': assortativity_inv,
+        'assortativity_companies': assortativity_comp,
+        'is_connected': nx.is_connected(G),
+        'isolated_nodes': len(list(nx.isolates(G)))
+    }
+
+def calculate_temporal_metrics(events: List = None) -> Dict:
+    """Calcule les métriques temporelles si des données temporelles sont disponibles"""
+    if events is None or len(events) == 0:
+        return {
+            'has_temporal_data': False,
+            'temporal_coverage': 0,
+            'event_rate': 0
+        }
+    
+    # Si tu as des données temporelles, les analyser ici
+    timestamps = [e['timestamp'] for e in events]
+    time_span = max(timestamps) - min(timestamps)
+    
+    return {
+        'has_temporal_data': True,
+        'num_events': len(events),
+        'time_span_days': time_span / (24 * 3600) if time_span > 0 else 0,
+        'events_per_day': len(events) / (time_span / (24 * 3600)) if time_span > 0 else 0,
+        'min_timestamp': min(timestamps),
+        'max_timestamp': max(timestamps)
+    }
+
+def calculate_power_law_fit(degrees: List) -> Dict:
+    """Teste si la distribution suit une loi de puissance"""
+    from scipy.optimize import curve_fit
+    
+    if len(degrees) < 10:
+        return {'is_power_law': False, 'alpha': 0, 'xmin': 0}
+    
+    # Histogramme
+    hist, bin_edges = np.histogram(degrees, bins='auto')
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    
+    # Filtrer les zéros
+    mask = (hist > 0) & (bin_centers > 0)
+    x = bin_centers[mask]
+    y = hist[mask]
+    
+    if len(x) < 3:
+        return {'is_power_law': False, 'alpha': 0, 'xmin': 0}
+    
+    # Ajustement puissance
+    try:
+        def power_law(x, alpha, C):
+            return C * np.power(x, -alpha)
+        
+        # Log-log pour régression linéaire
+        log_x = np.log(x)
+        log_y = np.log(y)
+        
+        # Régression linéaire
+        coeffs = np.polyfit(log_x, log_y, 1)
+        alpha = -coeffs[0]  # Exposant de la loi de puissance
+        
+        # Calcul du R²
+        y_pred = np.polyval(coeffs, log_x)
+        ss_res = np.sum((log_y - y_pred) ** 2)
+        ss_tot = np.sum((log_y - np.mean(log_y)) ** 2)
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+        
+        return {
+            'is_power_law': r_squared > 0.8,  # Seuil arbitraire
+            'alpha': alpha,
+            'r_squared': r_squared,
+            'xmin': np.min(x),
+            'xmax': np.max(x)
+        }
+    except:
+        return {'is_power_law': False, 'alpha': 0, 'r_squared': 0}
+
+# ===================================================================
+# DIAGNOSTIC COMPLET
+# ===================================================================
+
+def comprehensive_graph_diagnosis(G, investors: List, companies: List) -> Dict:
+    """
+    Diagnostic complet du graphe avec évaluation des problèmes potentiels
+    et recommandations pour le TGN.
+    """
+    print("\n" + "="*80)
+    print("DIAGNOSTIC COMPLET DU GRAPHE POUR TGN")
+    print("="*80)
+    
+    # 1. Calculer toutes les métriques
+    print("\n📊 CALCUL DES MÉTRIQUES...")
+    deg_stats = calculate_degree_statistics(G, investors, companies)
+    density_stats = calculate_bipartite_density(G, investors, companies)
+    imbalance_stats = calculate_imbalance_metrics(G, investors, companies, deg_stats)
+    connectivity_stats = calculate_connectivity_metrics(G, investors, companies)
+    
+    # 2. Détecter les problèmes
+    problems = []
+    warnings = []
+    recommendations = []
+    
+    print("\n🔍 DÉTECTION DES PROBLÈMES...")
+    
+    # A. Vérifier la sparsité
+    if density_stats['density'] < 0.0001:
+        problems.append("⚠️  HYPER SPARSE: densité < 0.01% - risque de sur-apprentissage élevé")
+        recommendations.append("• Utiliser negative sampling intelligent avec hard negatives")
+        recommendations.append("• Ajouter des features de graphe globales (PageRank, centralité)")
+        recommendations.append("• Considérer data augmentation via métapaths")
+    elif density_stats['density'] < 0.001:
+        warnings.append("⚠️  Très sparse: densité < 0.1% - nécessite techniques spéciales")
+        recommendations.append("• Augmenter le batch size pour mieux explorer l'espace")
+        recommendations.append("• Utiliser des embeddings pré-entraînés si disponibles")
+    
+    # B. Vérifier l'inégalité des degrés (Gini)
+    if deg_stats['investors']['gini'] > 0.8 or deg_stats['companies']['gini'] > 0.8:
+        problems.append("⚠️  INÉGALITÉ EXTRÊME: Gini > 0.8 - quelques hubs dominent le réseau")
+        recommendations.append("• Pondération inverse des fréquences dans la loss")
+        recommendations.append("• Downsampling des hubs ou oversampling des nœuds périphériques")
+        recommendations.append("• Utiliser des techniques robustes aux outliers")
+    elif deg_stats['investors']['gini'] > 0.6 or deg_stats['companies']['gini'] > 0.6:
+        warnings.append("⚠️  Inégalité forte: Gini > 0.6 - réseau très hétérogène")
+        recommendations.append("• Normaliser les degrés dans les features")
+    
+    # C. Vérifier le déséquilibre pour edge prediction
+    if imbalance_stats['avg_positive_rate'] < 0.01:
+        problems.append(f"⚠️  DÉSÉQUILIBRE EXTRÊME: seulement {imbalance_stats['avg_positive_rate']*100:.2f}% de liens positifs")
+        recommendations.append("• Utiliser Focal Loss ou autre loss adaptative")
+        recommendations.append("• Oversampling agressif des positifs")
+        recommendations.append("• Génération synthétique de positifs (SMOTE-like)")
+    elif imbalance_stats['avg_positive_rate'] < 0.05:
+        warnings.append(f"⚠️  Déséquilibre important: {imbalance_stats['avg_positive_rate']*100:.2f}% de positifs")
+        recommendations.append("• Balanced batch sampling")
+        recommendations.append("• Poids de classe dans la loss")
+    
+    # D. Vérifier les nœuds isolés
+    isolated_total = deg_stats['investors']['isolated'] + deg_stats['companies']['isolated']
+    total_nodes = len(investors) + len(companies)
+    isolated_percentage = isolated_total / total_nodes * 100
+    
+    if isolated_percentage > 20:
+        problems.append(f"⚠️  COLD START: {isolated_percentage:.1f}% de nœuds isolés")
+        recommendations.append("• Ajouter des features externes (secteur, localisation)")
+        recommendations.append("• Transfer learning depuis nœuds similaires")
+        recommendations.append("• Modèle à deux étages: pré-entraînement sur sous-graphe connecté")
+    elif isolated_percentage > 10:
+        warnings.append(f"⚠️  Nombre significatif de nœuds isolés: {isolated_percentage:.1f}%")
+    
+    # E. Vérifier la connectivité
+    if not connectivity_stats['is_connected'] and connectivity_stats['largest_component_percentage'] < 80:
+        warnings.append(f"⚠️  Graphe fragmenté: plus grande composante = {connectivity_stats['largest_component_percentage']:.1f}%")
+        recommendations.append("• Analyser chaque composante séparément si elles ont des dynamiques différentes")
+        recommendations.append("• Se concentrer sur la plus grande composante pour l'entraînement")
+    
+    # F. Vérifier l'assortativité
+    if abs(connectivity_stats['assortativity_investors']) > 0.4:
+        warnings.append(f"⚠️  Assortativité forte chez les investisseurs: {connectivity_stats['assortativité_investors']:.2f}")
+        recommendations.append("• Intégrer l'assortativité comme feature contextuelle")
+    
+    # 3. Calculer un score de santé
+    print("\n💯 CALCUL DU SCORE DE SANTÉ...")
+    health_score = 100
+    
+    # Pénalités
+    if density_stats['density'] < 0.0001: health_score -= 40
+    elif density_stats['density'] < 0.001: health_score -= 20
+    elif density_stats['density'] < 0.01: health_score -= 10
+    
+    if deg_stats['investors']['gini'] > 0.8 or deg_stats['companies']['gini'] > 0.8: health_score -= 30
+    elif deg_stats['investors']['gini'] > 0.6 or deg_stats['companies']['gini'] > 0.6: health_score -= 15
+    
+    if imbalance_stats['avg_positive_rate'] < 0.01: health_score -= 25
+    elif imbalance_stats['avg_positive_rate'] < 0.05: health_score -= 10
+    
+    if isolated_percentage > 20: health_score -= 20
+    elif isolated_percentage > 10: health_score -= 10
+    
+    if not connectivity_stats['is_connected'] and connectivity_stats['largest_component_percentage'] < 50:
+        health_score -= 15
+    
+    health_score = max(0, health_score)
+    
+    # 4. Afficher le rapport
+    print("\n" + "="*80)
+    print("RAPPORT DE DIAGNOSTIC")
+    print("="*80)
+    
+    print(f"\n📈 MÉTRIQUES CLÉS:")
+    print(f"  • Investisseurs: {len(investors)}")
+    print(f"  • Entreprises: {len(companies)}")
+    print(f"  • Arêtes: {density_stats['edges']}")
+    print(f"  • Densité: {density_stats['density']:.6f} ({density_stats['sparsity_percentage']:.1f}% de sparsité)")
+    print(f"  • Ratio I/E: {imbalance_stats['ratio_investors_companies']:.2f}")
+    print(f"  • Taux de positifs: {imbalance_stats['avg_positive_rate']*100:.4f}%")
+    print(f"  • Ratio Nég/Pos: {imbalance_stats['negative_positive_ratio']:.1f}:1")
+    print(f"  • Gini investisseurs: {deg_stats['investors']['gini']:.3f}")
+    print(f"  • Gini entreprises: {deg_stats['companies']['gini']:.3f}")
+    print(f"  • Nœuds isolés: {isolated_total} ({isolated_percentage:.1f}%)")
+    print(f"  • Plus grande composante: {connectivity_stats['largest_component_percentage']:.1f}%")
+    print(f"  • Assortativité investisseurs: {connectivity_stats['assortativity_investors']:.3f}")
+    print(f"  • Assortativité entreprises: {connectivity_stats['assortativity_companies']:.3f}")
+    
+    print(f"\n📊 DISTRIBUTION DES DEGRÉS:")
+    print(f"  Investisseurs: μ={deg_stats['investors']['mean']:.2f}, σ={deg_stats['investors']['std']:.2f}, "
+          f"skew={deg_stats['investors']['skewness']:.2f}, kurt={deg_stats['investors']['kurtosis']:.2f}")
+    print(f"  Entreprises: μ={deg_stats['companies']['mean']:.2f}, σ={deg_stats['companies']['std']:.2f}, "
+          f"skew={deg_stats['companies']['skewness']:.2f}, kurt={deg_stats['companies']['kurtosis']:.2f}")
+    
+    # Analyser la distribution de puissance
+    power_law_inv = calculate_power_law_fit(deg_stats['investors']['degrees'])
+    power_law_comp = calculate_power_law_fit(deg_stats['companies']['degrees'])
+    
+    if power_law_inv['is_power_law']:
+        print(f"  ✓ Distribution investisseurs suit une loi de puissance (α={power_law_inv['alpha']:.2f}, R²={power_law_inv['r_squared']:.2f})")
+    if power_law_comp['is_power_law']:
+        print(f"  ✓ Distribution entreprises suit une loi de puissance (α={power_law_comp['alpha']:.2f}, R²={power_law_comp['r_squared']:.2f})")
+    
+    print(f"\n🎯 SCORE DE SANTÉ: {health_score:.0f}/100")
+    if health_score >= 80:
+        print("  ✅ EXCELLENT - TGN devrait bien performer")
+    elif health_score >= 60:
+        print("  ⚠️  BON - Quelques ajustements nécessaires")
+    elif health_score >= 40:
+        print("  ⚠️  MOYEN - Techniques spéciales requises")
+    else:
+        print("  ❌ DIFFICILE - Repenser l'approche ou enrichir les données")
+    
+    if problems:
+        print(f"\n❌ PROBLÈMES CRITIQUES ({len(problems)}):")
+        for i, problem in enumerate(problems, 1):
+            print(f"  {i}. {problem}")
+    
+    if warnings:
+        print(f"\n⚠️  AVERTISSEMENTS ({len(warnings)}):")
+        for i, warning in enumerate(warnings, 1):
+            print(f"  {i}. {warning}")
+    
+    if recommendations:
+        print(f"\n💡 RECOMMANDATIONS ({len(set(recommendations))}):")
+        for i, rec in enumerate(sorted(set(recommendations)), 1):
+            print(f"  {i}. {rec}")
+    
+    print("\n" + "="*80)
+    
+    # 5. Retourner tous les résultats
+    return {
+        'health_score': health_score,
+        'problems': problems,
+        'warnings': warnings,
+        'recommendations': list(set(recommendations)),
+        'metrics': {
+            'degree_statistics': deg_stats,
+            'density_statistics': density_stats,
+            'imbalance_statistics': imbalance_stats,
+            'connectivity_statistics': connectivity_stats,
+            'power_law_analysis': {
+                'investors': power_law_inv,
+                'companies': power_law_comp
+            }
+        }
+    }
+
+# ===================================================================
+# VISUALISATIONS DES MÉTRIQUES
+# ===================================================================
+
+def visualize_metrics_dashboard(diagnosis_results: Dict, save_path: str = None):
+    """Crée un dashboard visuel des métriques de diagnostic"""
+    metrics = diagnosis_results['metrics']
+    
+    fig = plt.figure(figsize=(20, 16))
+    
+    # 1. Score de santé (gauge chart simplifié)
+    ax1 = plt.subplot(3, 3, 1)
+    health_score = diagnosis_results['health_score']
+    
+    # Créer un gauge chart simple
+    colors = ['#FF6B6B', '#FFD166', '#06D6A0', '#118AB2']
+    if health_score < 40:
+        color = colors[0]
+    elif health_score < 60:
+        color = colors[1]
+    elif health_score < 80:
+        color = colors[2]
+    else:
+        color = colors[3]
+    
+    ax1.pie([health_score, 100-health_score], colors=[color, '#f0f0f0'], startangle=90)
+    centre_circle = plt.Circle((0,0),0.70,fc='white')
+    ax1.add_artist(centre_circle)
+    ax1.text(0, 0, f'{health_score:.0f}', ha='center', va='center', fontsize=24, fontweight='bold')
+    ax1.set_title('Score de Santé du Graphe', fontsize=14, fontweight='bold', pad=20)
+    ax1.annotate('Difficile\n<40', xy=(-0.5, -0.8), ha='center', fontsize=9)
+    ax1.annotate('Moyen\n40-60', xy=(-0.2, -1.0), ha='center', fontsize=9)
+    ax1.annotate('Bon\n60-80', xy=(0.2, -1.0), ha='center', fontsize=9)
+    ax1.annotate('Excellent\n≥80', xy=(0.5, -0.8), ha='center', fontsize=9)
+    
+    # 2. Distribution des degrés (log-log)
+    ax2 = plt.subplot(3, 3, 2)
+    deg_inv = metrics['degree_statistics']['investors']['degrees']
+    deg_comp = metrics['degree_statistics']['companies']['degrees']
+    
+    # Histogramme log-log
+    hist_inv, bins_inv = np.histogram(deg_inv, bins=50)
+    bin_centers_inv = (bins_inv[:-1] + bins_inv[1:]) / 2
+    hist_comp, bins_comp = np.histogram(deg_comp, bins=50)
+    bin_centers_comp = (bins_comp[:-1] + bins_comp[1:]) / 2
+    
+    ax2.loglog(bin_centers_inv[hist_inv > 0], hist_inv[hist_inv > 0], 'ro-', 
+               alpha=0.7, label='Investisseurs', markersize=4)
+    ax2.loglog(bin_centers_comp[hist_comp > 0], hist_comp[hist_comp > 0], 'bo-', 
+               alpha=0.7, label='Entreprises', markersize=4)
+    
+    ax2.set_xlabel('Degré (log)')
+    ax2.set_ylabel('Fréquence (log)')
+    ax2.set_title('Distribution des degrés (log-log)', fontsize=12)
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    # 3. Coefficients de Gini
+    ax3 = plt.subplot(3, 3, 3)
+    gini_inv = metrics['degree_statistics']['investors']['gini']
+    gini_comp = metrics['degree_statistics']['companies']['gini']
+    
+    bars = ax3.bar(['Investisseurs', 'Entreprises'], [gini_inv, gini_comp], 
+                   color=['#FF6B6B', '#118AB2'], alpha=0.7)
+    ax3.set_ylabel('Coefficient de Gini')
+    ax3.set_title('Inégalité des connexions', fontsize=12)
+    ax3.axhline(y=0.8, color='red', linestyle='--', alpha=0.5, label='Extrême (>0.8)')
+    ax3.axhline(y=0.6, color='orange', linestyle='--', alpha=0.5, label='Forte (>0.6)')
+    ax3.legend(fontsize=9)
+    ax3.grid(True, alpha=0.3, axis='y')
+    
+    # Ajouter les valeurs sur les barres
+    for bar, val in zip(bars, [gini_inv, gini_comp]):
+        height = bar.get_height()
+        ax3.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                f'{val:.3f}', ha='center', va='bottom', fontsize=10)
+    
+    # 4. Déséquilibre edge prediction
+    ax4 = plt.subplot(3, 3, 4)
+    positive_rate = metrics['imbalance_statistics']['avg_positive_rate'] * 100
+    negative_rate = 100 - positive_rate
+    
+    wedges, texts, autotexts = ax4.pie([positive_rate, negative_rate], 
+                                       labels=['Positifs', 'Négatifs'],
+                                       colors=['#06D6A0', '#FFD166'],
+                                       autopct='%1.2f%%', startangle=90)
+    
+    for autotext in autotexts:
+        autotext.set_color('white')
+        autotext.set_fontweight('bold')
+    
+    ax4.set_title(f'Déséquilibre pour prédiction\n({metrics["imbalance_statistics"]["negative_positive_ratio"]:.1f}:1 Nég/Pos)', 
+                  fontsize=12)
+    
+    # 5. Matrice des problèmes
+    ax5 = plt.subplot(3, 3, 5)
+    
+    # Créer une matrice de sévérité
+    problems = diagnosis_results.get('problems', [])
+    warnings_list = diagnosis_results.get('warnings', [])
+    
+    categories = ['Sparsité', 'Inégalité', 'Déséquilibre', 'Connectivité', 'Cold Start']
+    severity = np.zeros(len(categories))
+    
+    # Mapper les problèmes aux catégories
+    for problem in problems:
+        if 'SPARSE' in problem.upper():
+            severity[0] = 2  # Critique
+        elif 'INÉGALITÉ' in problem.upper():
+            severity[1] = 2
+        elif 'DÉSÉQUILIBRE' in problem.upper():
+            severity[2] = 2
+        elif 'COLD START' in problem.upper():
+            severity[4] = 2
+    
+    for warning in warnings_list:
+        if 'sparse' in warning.lower():
+            severity[0] = max(severity[0], 1)  # Avertissement
+        elif 'inégalité' in warning.lower():
+            severity[1] = max(severity[1], 1)
+        elif 'déséquilibre' in warning.lower():
+            severity[2] = max(severity[2], 1)
+        elif 'fragmenté' in warning.lower():
+            severity[3] = max(severity[3], 1)
+        elif 'isolés' in warning.lower():
+            severity[4] = max(severity[4], 1)
+    
+    # Heatmap
+    im = ax5.imshow([severity], cmap='YlOrRd', aspect='auto')
+    ax5.set_xticks(range(len(categories)))
+    ax5.set_xticklabels(categories, rotation=45, ha='right')
+    ax5.set_yticks([0])
+    ax5.set_yticklabels(['Sévérité'])
+    ax5.set_title('Problèmes détectés', fontsize=12)
+    
+    # Ajouter les valeurs
+    for i in range(len(categories)):
+        if severity[i] > 0:
+            text = 'CRITIQUE' if severity[i] == 2 else 'Avert.'
+            color = 'white' if severity[i] == 2 else 'black'
+            ax5.text(i, 0, text, ha='center', va='center', color=color, fontweight='bold')
+    
+    # 6. Comparaison degrés investisseurs vs entreprises
+    ax6 = plt.subplot(3, 3, 6)
+    
+    deg_inv_mean = metrics['degree_statistics']['investors']['mean']
+    deg_comp_mean = metrics['degree_statistics']['companies']['mean']
+    
+    x_pos = np.arange(2)
+    bars = ax6.bar(x_pos, [deg_inv_mean, deg_comp_mean], 
+                   color=['#FF6B6B', '#118AB2'], alpha=0.7)
+    
+    ax6.set_xticks(x_pos)
+    ax6.set_xticklabels(['Investisseurs', 'Entreprises'])
+    ax6.set_ylabel('Degré moyen')
+    ax6.set_title('Comparaison degrés moyens', fontsize=12)
+    ax6.grid(True, alpha=0.3, axis='y')
+    
+    # Ajouter les valeurs
+    for bar, val in zip(bars, [deg_inv_mean, deg_comp_mean]):
+        height = bar.get_height()
+        ax6.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                f'{val:.2f}', ha='center', va='bottom', fontsize=10)
+    
+    # 7. Assortativité
+    ax7 = plt.subplot(3, 3, 7)
+    assort_inv = metrics['connectivity_statistics']['assortativity_investors']
+    assort_comp = metrics['connectivity_statistics']['assortativity_companies']
+    
+    ax7.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax7.axhspan(-0.3, 0.3, alpha=0.1, color='gray')
+    
+    ax7.scatter([0, 1], [assort_inv, assort_comp], 
+                s=200, c=['#FF6B6B', '#118AB2'], alpha=0.7)
+    
+    ax7.set_xticks([0, 1])
+    ax7.set_xticklabels(['Investisseurs', 'Entreprises'])
+    ax7.set_ylabel('Coefficient d\'assortativité')
+    ax7.set_title('Assortativité des projections', fontsize=12)
+    ax7.grid(True, alpha=0.3)
+    
+    # Ajouter les valeurs
+    for i, val in enumerate([assort_inv, assort_comp]):
+        ax7.text(i, val + 0.02 * np.sign(val), f'{val:.3f}', 
+                ha='center', va='bottom' if val >= 0 else 'top', fontsize=10)
+    
+    # 8. Densité et sparsité
+    ax8 = plt.subplot(3, 3, 8)
+    density = metrics['density_statistics']['density'] * 100  # En pourcentage
+    
+    ax8.bar(['Densité'], [density], color='#06D6A0', alpha=0.7)
+    ax8.axhline(y=0.1, color='red', linestyle='--', alpha=0.5, label='Très sparse')
+    ax8.axhline(y=1.0, color='orange', linestyle='--', alpha=0.5, label='Sparse')
+    ax8.axhline(y=10.0, color='green', linestyle='--', alpha=0.5, label='Dense')
+    
+    ax8.set_ylabel('Densité (%)')
+    ax8.set_title(f'Densité du graphe\n{metrics["density_statistics"]["edges"]} arêtes / {metrics["density_statistics"]["max_possible_edges"]} possibles', 
+                  fontsize=12)
+    ax8.legend(fontsize=9)
+    ax8.grid(True, alpha=0.3, axis='y')
+    
+    # Ajouter la valeur
+    ax8.text(0, density + 0.1, f'{density:.4f}%', 
+             ha='center', va='bottom', fontsize=10, fontweight='bold')
+    
+    # 9. Légende et informations
+    ax9 = plt.subplot(3, 3, 9)
+    ax9.axis('off')
+    
+    summary_text = f"""
+    RÉSUMÉ DU DIAGNOSTIC
+    
+    • Score de santé: {health_score:.0f}/100
+    • Problèmes critiques: {len(problems)}
+    • Avertissements: {len(warnings_list)}
+    
+    MÉTRIQUES CLÉS:
+    • Nœuds: {len(deg_inv) + len(deg_comp)}
+    • Arêtes: {metrics['density_statistics']['edges']}
+    • Composantes: {metrics['connectivity_statistics']['num_components']}
+    • Isolés: {metrics['connectivity_statistics']['isolated_nodes']}
+    
+    RECOMMANDATIONS:
+    """
+    
+    # Limiter le nombre de recommandations affichées
+    recs = diagnosis_results.get('recommendations', [])
+    display_recs = recs[:3]  # Afficher seulement les 3 premières
+    
+    for i, rec in enumerate(display_recs, 1):
+        summary_text += f"\n  {i}. {rec}"
+    
+    if len(recs) > 3:
+        summary_text += f"\n  ... et {len(recs) - 3} de plus"
+    
+    ax9.text(0.05, 0.95, summary_text, transform=ax9.transAxes,
+             fontsize=10, verticalalignment='top',
+             bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.5))
+    
+    plt.suptitle('DASHBOARD DE DIAGNOSTIC DU GRAPHE POUR TGN', 
+                 fontsize=16, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"✓ Dashboard sauvegardé: {save_path}")
+    
+    plt.show()
+
+# ===================================================================
+# UTILITAIRE POUR EXTRACTION DES NŒUDS
+# ===================================================================
+
+def extract_nodes(G, bipartite_set: int) -> List:
+    """Extract nodes from one of the bipartite sets"""
+    nodes = [n for n, d in G.nodes(data=True) if d.get("bipartite") == bipartite_set]
+    return nodes
+
+# ===================================================================
+# FONCTION PRINCIPALE
+# ===================================================================
+
+def main_graph_analysis():
+    """Fonction principale pour l'analyse du graphe"""
+    print("="*80)
+    print("ANALYSE DE CARACTÉRISATION DU GRAPHE BIPARTI")
+    print("="*80)
+    
+    # Charger les données (adapté à ton code existant)
+    prefix = "cybersecurity_" if FLAG_CYBERSECURITY else ""
     
     # Charger le graphe
-    # graph_path = f'{SAVE_DIR_NETWORKS}/{prefix}bipartite_graph_{num_comp}.gpickle'
-    graph_path = f'{SAVE_DIR_NETWORKS}/bipartite_graph_{num_comp}.gpickle'
+    graph_path = f'{SAVE_DIR_NETWORKS}/bipartite_graph_{NUM_COMP}.gpickle'
     with open(graph_path, 'rb') as f:
         B = pickle.load(f)
     
-    # Charger la matrice
-    # matrix_path = f'{SAVE_DIR_M}/{prefix}comp_{num_comp}_tech_{num_tech}.npy'
-    # M = np.load(matrix_path)
-    M = create_biadjacency_matrix(B)
-    
     # Charger les dictionnaires
-    # with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_companies_ranked_{num_comp}.pickle', 'rb') as f:
-    #     dict_companies = pickle.load(f)
-    
-    # with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_tech_ranked_{num_tech}.pickle', 'rb') as f:
-    #     dict_tech = pickle.load(f)
-
-    with open(f'{SAVE_DIR_CLASSES}/dict_companies_{num_comp}.pickle', 'rb') as f:
+    with open(f'{SAVE_DIR_CLASSES}/dict_companies_{NUM_COMP}.pickle', 'rb') as f:
         dict_companies = pickle.load(f)
-
-    print(dict_companies.keys())
     
-    with open(f'{SAVE_DIR_CLASSES}/dict_investors_{num_tech}.pickle', 'rb') as f:
+    with open(f'{SAVE_DIR_CLASSES}/dict_investors_{NUM_TECH}.pickle', 'rb') as f:
         dict_tech = pickle.load(f)
     
     print(f"✓ Données chargées:")
     print(f"  - Graphe: {B.number_of_nodes()} nœuds, {B.number_of_edges()} arêtes")
-    # print(f"  - Matrice: {M.shape}")
-    print(f"  - Dictionnaires: {len(dict_companies)} companies, {len(dict_tech)} technologies")
+    print(f"  - Dictionnaires: {len(dict_companies)} companies, {len(dict_tech)} investors")
     
-    return B, M, dict_companies, dict_tech
-
-
-# ===================================================================
-# ANALYSES STRUCTURELLES DU GRAPHE
-# ===================================================================
-def extract_nodes(G, bipartite_set) -> List:
-    """Extract nodes from the nodes of one of the bipartite sets
-
-    Args:
-        - G: graph
-        - bipartite_set: select one of the two sets (0 or 1)
-
-    Return:
-        - nodes: list of nodes of that set
-    """
-
-    nodes = [n for n, d in G.nodes(data=True) if d["bipartite"] == bipartite_set]
-
-    return nodes
-
-def create_biadjacency_matrix(B):    
-    set0 = extract_nodes(B, 0) # companies
-    set1 = extract_nodes(B, 1)  # investors 
+    # Extraire les nœuds des deux partitions
+    companies = extract_nodes(B, 0)  # Companies
+    investors = extract_nodes(B, 1)  # Investors
     
-    # Vérifier que l'ordre est cohérent
-    print(f"Vérification: {len(set0)} companies, {len(set1)} technologies")
-    
-    # Créer un mapping des noms aux indices
-    company_to_idx = {company: i for i, company in enumerate(set0)}
-    invest_to_idx = {tech: i for i, tech in enumerate(set1)}
-    
-    # Construire la matrice manuellement pour vérifier
-    M_manual = np.zeros((len(set0), len(set1)), dtype=int)
-    
-    edges_counted = 0
-    for u, v in B.edges():
-        if u in company_to_idx and v in invest_to_idx:
-            i = company_to_idx[u]
-            j = invest_to_idx[v]
-            M_manual[i, j] = 1
-            edges_counted += 1
-        elif v in company_to_idx and u in invest_to_idx:
-            i = company_to_idx[v]
-            j = invest_to_idx[u]
-            M_manual[i, j] = 1
-            edges_counted += 1
-    
-    print(f"Arêtes comptées manuellement: {edges_counted}")
-    print(f"Arêtes dans le graphe: {B.number_of_edges()}")
-    
-    return M_manual
-
-def analyze_graph_structure(B):
-    """Analyse détaillée de la structure du graphe bipartite"""
-    print("\n" + "="*70)
-    print("ANALYSE STRUCTURELLE DU GRAPHE")
-    print("="*70)
-    
-    companies = [n for n, d in B.nodes(data=True) if d.get('bipartite') == 0]
-    invests = [n for n, d in B.nodes(data=True) if d.get('bipartite') == 1]
-    
-    print(f"\n📊 COMPOSITION:")
+    print(f"\n📊 COMPOSITION DU GRAPHE:")
     print(f"  - Companies: {len(companies)}")
-    print(f"  - Technologies: {len(invests)}")
-    print(f"  - Arêtes: {B.number_of_edges()}")
-    print(f"  - Densité: {nx.density(B):.4f}")
+    print(f"  - Investors: {len(investors)}")
     
-    # Degrés
-    company_degrees = [B.degree(node) for node in companies]
-    invest_degrees = [B.degree(node) for node in invests]
+    # Vérifier que c'est bien bipartite
+    if not is_bipartite(B):
+        print("❌ ERREUR: Le graphe n'est pas bipartite!")
+        return
     
-    print(f"\n📈 DEGRÉS:")
-    print(f"  Companies:")
-    print(f"    - Moyen: {np.mean(company_degrees):.2f}")
-    print(f"    - Médian: {np.median(company_degrees):.2f}")
-    print(f"    - Min/Max: {np.min(company_degrees)}/{np.max(company_degrees)}")
-    print(f"    - Écart-type: {np.std(company_degrees):.2f}")
+    # Exécuter le diagnostic complet
+    diagnosis_results = comprehensive_graph_diagnosis(B, investors, companies)
     
-    print(f"  Technologies:")
-    print(f"    - Moyen: {np.mean(invest_degrees):.2f}")
-    print(f"    - Médian: {np.median(invest_degrees):.2f}")
-    print(f"    - Min/Max: {np.min(invest_degrees)}/{np.max(invest_degrees)}")
-    print(f"    - Écart-type: {np.std(invest_degrees):.2f}")
-    
-    # Nœuds isolés
-    isolated = list(nx.isolates(B))
-    print(f"\n⚠️  NŒUDS ISOLÉS: {len(isolated)}")
-    if isolated:
-        print(f"  Exemples: {isolated[:5]}")
-    
-    # Composantes connexes
-    components = list(nx.connected_components(B))
-    print(f"\n🔗 COMPOSANTES CONNEXES: {len(components)}")
-    
-    if len(components) > 1:
-        comp_sizes = sorted([len(c) for c in components], reverse=True)
-        print(f"  Tailles: {comp_sizes[:10]}")
-        largest = max(components, key=len)
-        print(f"  Plus grande composante: {len(largest)} nœuds ({len(largest)/B.number_of_nodes()*100:.1f}%)")
-    
-    return {
-        'companies': companies,
-        'invests': invests,
-        'company_degrees': company_degrees,
-        'invest_degrees': invest_degrees,
-        'components': components
-    }
-
-
-def analyze_matrix_properties(M):
-    """Analyse détaillée de la matrice d'adjacence"""
-    print("\n" + "="*70)
-    print("ANALYSE DE LA MATRICE D'ADJACENCE")
-    print("="*70)
-    
-    print(f"\n📐 DIMENSIONS:")
-    print(f"  - Shape: {M.shape}")
-    print(f"  - Companies (lignes): {M.shape[0]}")
-    print(f"  - Technologies (colonnes): {M.shape[1]}")
-    
-    print(f"\n🔢 STATISTIQUES:")
-    print(f"  - Somme totale: {np.sum(M):.0f}")
-    print(f"  - Densité: {np.sum(M) / (M.shape[0] * M.shape[1]):.4f}")
-    print(f"  - Valeurs uniques: {np.unique(M)}")
-    
-    # Distribution des connexions
-    row_sums = np.sum(M, axis=1)
-    col_sums = np.sum(M, axis=0)
-    
-    print(f"\n📊 DISTRIBUTION DES CONNEXIONS:")
-    print(f"  Par company (lignes):")
-    print(f"    - Moyenne: {np.mean(row_sums):.2f}")
-    print(f"    - Médiane: {np.median(row_sums):.2f}")
-    print(f"    - Min/Max: {np.min(row_sums):.0f}/{np.max(row_sums):.0f}")
-    print(f"    - Companies sans connexion: {np.sum(row_sums == 0)}")
-    
-    print(f"  Par investor (colonnes):")
-    print(f"    - Moyenne: {np.mean(col_sums):.2f}")
-    print(f"    - Médiane: {np.median(col_sums):.2f}")
-    print(f"    - Min/Max: {np.min(col_sums):.0f}/{np.max(col_sums):.0f}")
-    print(f"    - Technologies sans connexion: {np.sum(col_sums == 0)}")
-    
-    # Vérifications de cohérence
-    print(f"\n✅ VÉRIFICATIONS:")
-    print(f"  - Matrice binaire: {np.all((M == 0) | (M == 1))}")
-    print(f"  - Pas de NaN: {not np.any(np.isnan(M))}")
-    print(f"  - Pas d'infini: {not np.any(np.isinf(M))}")
-    
-    return {
-        'row_sums': row_sums,
-        'col_sums': col_sums
-    }
-
-
-def check_matrix_graph_consistency(B, M):
-    """Vérifie la cohérence entre le graphe et la matrice"""
-    print("\n" + "="*70)
-    print("VÉRIFICATION COHÉRENCE GRAPHE ↔ MATRICE")
-    print("="*70)
-    
-    companies = [n for n, d in B.nodes(data=True) if d.get('bipartite') == 0]
-    techs = [n for n, d in B.nodes(data=True) if d.get('bipartite') == 1]
-    
-    # Comparer les dimensions
-    print(f"\n📏 DIMENSIONS:")
-    print(f"  Graphe: {len(companies)} companies × {len(techs)} technologies")
-    print(f"  Matrice: {M.shape[0]} × {M.shape[1]}")
-    
-    dim_match = (len(companies) == M.shape[0]) and (len(techs) == M.shape[1])
-    print(f"  ✓ Dimensions cohérentes: {dim_match}")
-    
-    # Comparer le nombre d'arêtes
-    edges_graph = B.number_of_edges()
-    edges_matrix = int(np.sum(M))
-    
-    print(f"\n🔗 ARÊTES:")
-    print(f"  Graphe: {edges_graph}")
-    print(f"  Matrice: {edges_matrix}")
-    print(f"  Différence: {abs(edges_graph - edges_matrix)}")
-    
-    edges_match = (edges_graph == edges_matrix)
-    print(f"  ✓ Nombre d'arêtes cohérent: {edges_match}")
-    
-    if edges_match and dim_match:
-        print(f"\n✅ GRAPHE ET MATRICE SONT COHÉRENTS")
-    else:
-        print(f"\n⚠️  INCOHÉRENCE DÉTECTÉE!")
-    
-    return dim_match and edges_match
-
-
-# ===================================================================
-# VISUALISATIONS DU GRAPHE - NOUVELLES FONCTIONS
-# ===================================================================
-
-def filter_nodes_by_degree(G, percentage=10, set1=None, set2=None):
-    """Filtre les nœuds avec faible degré"""
-    if set1 is None:
-        set1 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 0]
-    if set2 is None:
-        set2 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 1]
-    
-    # Calculer les degrés
-    company_degrees = dict(G.degree(set1))
-    tech_degrees = dict(G.degree(set2))
-    
-    # Trouver les seuils
-    comp_threshold = np.percentile(list(company_degrees.values()), percentage)
-    invest_threshold = np.percentile(list(tech_degrees.values()), percentage)
-    
-    # Nœuds à supprimer
-    to_delete = []
-    to_delete.extend([node for node in set1 if company_degrees[node] <= comp_threshold])
-    to_delete.extend([node for node in set2 if tech_degrees[node] <= invest_threshold])
-    
-    print(f"Filtrage: suppression de {len(to_delete)} nœuds (degré < {percentage}ème percentile)")
-    return to_delete
-
-def plot_bipartite_graph(G, small_degree=True, percentage=10, circular=False, figsize=(20, 15)):
-    """Plot le graphe bipartite avec options de filtrage"""
-    
-    set1 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 0]
-    set2 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 1]
-
-    if not small_degree:  # Filtrer les nœuds avec faible degré
-        to_delete = filter_nodes_by_degree(G, percentage, set1, set2)
-        
-        G_filtered = G.copy()
-        G_filtered.remove_nodes_from(to_delete)
-        G_filtered.remove_nodes_from(list(nx.isolates(G_filtered)))
-        
-        print(f"Graphe filtré: {G_filtered.number_of_nodes()} nœuds, {G_filtered.number_of_edges()} arêtes")
-        G = G_filtered
-        set1 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 0]
-        set2 = [node for node in G.nodes() if G.nodes[node]['bipartite'] == 1]
-
-    if circular:
-        pos = nx.circular_layout(G)
-    else:
-        pos = nx.spring_layout(G, k=3/np.sqrt(G.number_of_nodes()), iterations=50)
-
-    # Créer la figure avec une taille adaptative
-    plt.figure(figsize=figsize)
-    plt.axis('off')
-
-    # Calculer les degrés pour la taille des nœuds
-    company_degree = dict(G.degree(set1))
-    tech_degree = dict(G.degree(set2))
-
-    # Nœuds - Companies (rouge)
-    nx.draw_networkx_nodes(G, pos, nodelist=set1,
-                          node_color='red', node_size=[v * 50 + 100 for v in company_degree.values()],
-                          alpha=0.7, edgecolors='darkred', linewidths=1)
-
-    # Nœuds - Technologies (bleu)
-    nx.draw_networkx_nodes(G, pos, nodelist=set2,
-                          node_color='blue', node_size=[v * 30 + 100 for v in tech_degree.values()],
-                          alpha=0.7, edgecolors='darkblue', linewidths=1)
-
-    # Labels - seulement pour les nœuds importants
-    important_companies = [node for node in set1 if company_degree[node] > np.percentile(list(company_degree.values()), 70)]
-    important_techs = [node for node in set2 if tech_degree[node] > np.percentile(list(tech_degree.values()), 70)]
-    
-    nx.draw_networkx_labels(G, pos, {n: n for n in important_companies}, 
-                           font_size=8, font_color='darkred', font_weight='bold')
-    nx.draw_networkx_labels(G, pos, {n: n for n in important_techs}, 
-                           font_size=8, font_color='darkblue', font_weight='bold')
-
-    # Arêtes
-    nx.draw_networkx_edges(G, pos, width=0.5, alpha=0.3, edge_color='gray')
-
-    # Légende
-    plt.legend(['Companies', 'Technologies'], loc='upper right')
-
-    plt.title(f'Graphe Bipartite Companies-Technologies\n'
-              f'{len(set1)} companies, {len(set2)} technologies, {G.number_of_edges()} connexions',
-              fontsize=14, pad=20)
-    
-    plt.tight_layout()
-    return pos, G
-
-def plot_interactive_bipartite(B, max_nodes_for_detailed=100):
-    """Crée plusieurs visualisations avec différents niveaux de détail"""
-    
-    total_nodes = B.number_of_nodes()
-    
-    if total_nodes <= max_nodes_for_detailed:
-        # Graphe complet détaillé
-        print("\n📊 Visualisation du graphe complet (détaillé)")
-        pos, _ = plot_bipartite_graph(B, small_degree=True, circular=False, figsize=(20, 15))
-        plt.savefig(f'{SAVE_DIR_ANALYSIS}/bipartite_graph_detailed.png', dpi=300, bbox_inches='tight')
-        plt.show()
-        
-    else:
-        # Graphe filtré (seulement nœuds importants)
-        print("\n📊 Visualisation du graphe filtré (nœuds importants seulement)")
-        pos, filtered_G = plot_bipartite_graph(B, small_degree=False, percentage=30, circular=False, figsize=(20, 15))
-        plt.savefig(f'{SAVE_DIR_ANALYSIS}/bipartite_graph_filtered.png', dpi=300, bbox_inches='tight')
-        plt.show()
-        
-        # Graphe très filtré pour voir la structure centrale
-        print("\n📊 Visualisation du cœur du graphe (nœuds très connectés)")
-        pos, core_G = plot_bipartite_graph(B, small_degree=False, percentage=50, circular=False, figsize=(15, 10))
-        plt.savefig(f'{SAVE_DIR_ANALYSIS}/bipartite_graph_core.png', dpi=300, bbox_inches='tight')
-        plt.show()
-
-def create_zoomable_plot(B, region='center', focus_nodes=None, figsize=(15, 10)):
-    """Crée un plot zoomable sur une région spécifique"""
-    
-    if focus_nodes is None:
-        # Sélectionner automatiquement des nœuds focus
-        if region == 'center':
-            # Nœuds les plus centraux
-            centrality = nx.degree_centrality(B)
-            focus_nodes = sorted(centrality.items(), key=lambda x: x[1], reverse=True)[:20]
-            focus_nodes = [node for node, _ in focus_nodes]
-        elif region == 'high_degree':
-            # Nœuds avec haut degré
-            degrees = dict(B.degree())
-            focus_nodes = sorted(degrees.items(), key=lambda x: x[1], reverse=True)[:15]
-            focus_nodes = [node for node, _ in focus_nodes]
-    
-    # Créer un sous-graphe avec les nœuds focus et leurs voisins
-    neighbors = set()
-    for node in focus_nodes:
-        neighbors.update(B.neighbors(node))
-    
-    subgraph_nodes = set(focus_nodes).union(neighbors)
-    H = B.subgraph(subgraph_nodes)
-    
-    print(f"Sous-graphe de zoom: {H.number_of_nodes()} nœuds, {H.number_of_edges()} arêtes")
-    
-    # Plot du sous-graphe
-    plt.figure(figsize=figsize)
-    pos = nx.spring_layout(H, k=1.5/np.sqrt(H.number_of_nodes()), iterations=100)
-    
-    set1 = [node for node in H.nodes() if H.nodes[node]['bipartite'] == 0]
-    set2 = [node for node in H.nodes() if H.nodes[node]['bipartite'] == 1]
-    
-    # Nœuds
-    nx.draw_networkx_nodes(H, pos, nodelist=set1, node_color='red', 
-                          node_size=500, alpha=0.8, edgecolors='darkred')
-    nx.draw_networkx_nodes(H, pos, nodelist=set2, node_color='blue', 
-                          node_size=500, alpha=0.8, edgecolors='darkblue')
-    
-    # Labels pour tous les nœuds (puisque c'est un sous-ensemble)
-    nx.draw_networkx_labels(H, pos, font_size=8, font_weight='bold')
-    
-    # Arêtes
-    nx.draw_networkx_edges(H, pos, width=1.0, alpha=0.5, edge_color='gray')
-    
-    plt.title(f'Zoom sur {region}\n{H.number_of_nodes()} nœuds, {H.number_of_edges()} connexions', 
-              fontsize=12)
-    plt.axis('on')  # Garder les axes pour le contexte
-    plt.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(f'{SAVE_DIR_ANALYSIS}/bipartite_zoom_{region}.png', dpi=300, bbox_inches='tight')
-    plt.show()
-    
-    return H, pos
-
-# ===================================================================
-# VISUALISATIONS EXISTANTES (gardées pour compatibilité)
-# ===================================================================
-
-def plot_degree_distributions(graph_data, matrix_data):
-    """Visualise les distributions de degrés"""
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    
-    # Distribution des degrés - Companies
-    axes[0, 0].hist(graph_data['company_degrees'], bins=30, edgecolor='black', alpha=0.7, color='red')
-    axes[0, 0].set_xlabel('Degré')
-    axes[0, 0].set_ylabel('Fréquence')
-    axes[0, 0].set_title('Distribution des degrés - Companies')
-    axes[0, 0].axvline(np.mean(graph_data['company_degrees']), color='black', 
-                       linestyle='--', label=f'Moyenne: {np.mean(graph_data["company_degrees"]):.2f}')
-    axes[0, 0].legend()
-    axes[0, 0].grid(True, alpha=0.3)
-    
-    # Distribution des degrés - Technologies
-    axes[0, 1].hist(graph_data['invest_degrees'], bins=30, edgecolor='black', alpha=0.7, color='blue')
-    axes[0, 1].set_xlabel('Degré')
-    axes[0, 1].set_ylabel('Fréquence')
-    axes[0, 1].set_title('Distribution des degrés - Investors')
-    axes[0, 1].axvline(np.mean(graph_data['invest_degrees']), color='black', 
-                       linestyle='--', label=f'Moyenne: {np.mean(graph_data["invest_degrees"]):.2f}')
-    axes[0, 1].legend()
-    axes[0, 1].grid(True, alpha=0.3)
-    
-    # Log-log plot - Companies
-    hist, bins = np.histogram(graph_data['company_degrees'], bins=50)
-    bin_centers = (bins[:-1] + bins[1:]) / 2
-    axes[1, 0].loglog(bin_centers, hist, 'ro-', alpha=0.6)
-    axes[1, 0].set_xlabel('Degré (log)')
-    axes[1, 0].set_ylabel('Fréquence (log)')
-    axes[1, 0].set_title('Distribution log-log - Companies')
-    axes[1, 0].grid(True, alpha=0.3)
-    
-    # Log-log plot - Technologies
-    hist, bins = np.histogram(graph_data['invest_degrees'], bins=50)
-    bin_centers = (bins[:-1] + bins[1:]) / 2
-    axes[1, 1].loglog(bin_centers, hist, 'bo-', alpha=0.6)
-    axes[1, 1].set_xlabel('Degré (log)')
-    axes[1, 1].set_ylabel('Fréquence (log)')
-    axes[1, 1].set_title('Distribution log-log - Investors')
-    axes[1, 1].grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(f'{SAVE_DIR_ANALYSIS}/degree_distributions.png', dpi=300, bbox_inches='tight')
-    print(f"✓ Graphique sauvegardé: {SAVE_DIR_ANALYSIS}/degree_distributions.png")
-    plt.show()
-
-def plot_matrix_visualization(M):
-    """Visualise la matrice d'adjacence triée"""
-    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
-    
-    # Matrice brute
-    axes[0].imshow(M, cmap='bone', interpolation='nearest', aspect='auto')
-    axes[0].set_xlabel('Investors')
-    axes[0].set_ylabel('Companies')
-    axes[0].set_title('Matrice d\'adjacence (brute)')
-    
-    # Matrice triée (triangularité)
-    row_sums = np.sum(M, axis=1)
-    col_sums = np.sum(M, axis=0)
-    
-    row_order = np.argsort(row_sums)
-    col_order = np.argsort(col_sums)
-    
-    M_sorted = M[row_order, :][:, col_order]
-    
-    axes[1].imshow(M_sorted, cmap='bone', interpolation='nearest', aspect='auto')
-    axes[1].set_xlabel('Investors')
-    axes[1].set_ylabel('Companies')
-    axes[1].set_title('Adjacency Matrix (sorted by degree)')
-    
-    plt.tight_layout()
-    plt.savefig(f'{SAVE_DIR_ANALYSIS}/matrix_visualization.png', dpi=300, bbox_inches='tight')
-    print(f"✓ Graphique sauvegardé: {SAVE_DIR_ANALYSIS}/matrix_visualization.png")
-    plt.show()
-
-def plot_connectivity_heatmap(matrix_data):
-    """Heatmap de la connectivité"""
-    fig, axes = plt.subplots(1, 2, figsize=(15, 5))
-    
-    # Distribution des connexions par company
-    row_sums = matrix_data['row_sums']
-    bins_comp = np.linspace(0, np.max(row_sums), 20)
-    axes[0].hist(row_sums, bins=bins_comp, edgecolor='black', alpha=0.7, color='red')
-    axes[0].set_xlabel('Nombre de technologies')
-    axes[0].set_ylabel('Nombre de companies')
-    axes[0].set_title('Connexions par company')
-    axes[0].axvline(np.mean(row_sums), color='black', linestyle='--', 
-                    label=f'Moyenne: {np.mean(row_sums):.2f}')
-    axes[0].legend()
-    axes[0].grid(True, alpha=0.3)
-    
-    # Distribution des connexions par technologie
-    col_sums = matrix_data['col_sums']
-    bins_tech = np.linspace(0, np.max(col_sums), 20)
-    axes[1].hist(col_sums, bins=bins_tech, edgecolor='black', alpha=0.7, color='blue')
-    axes[1].set_xlabel('Nombre de companies')
-    axes[1].set_ylabel('Nombre de technologies')
-    axes[1].set_title('Connexions par technologie')
-    axes[1].axvline(np.mean(col_sums), color='black', linestyle='--', 
-                    label=f'Moyenne: {np.mean(col_sums):.2f}')
-    axes[1].legend()
-    axes[1].grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(f'{SAVE_DIR_ANALYSIS}/connectivity_heatmap.png', dpi=300, bbox_inches='tight')
-    print(f"✓ Graphique sauvegardé: {SAVE_DIR_ANALYSIS}/connectivity_heatmap.png")
-    plt.show()
-
-# ===================================================================
-# ANALYSE POUR TECHRANK
-# ===================================================================
-
-def assess_techrank_readiness(B, M, graph_data, matrix_data):
-    """Évalue si le graphe est prêt pour TechRank"""
-    print("\n" + "="*70)
-    print("ÉVALUATION DE LA PRÉPARATION POUR TECHRANK")
-    print("="*70)
-    
-    issues = []
-    warnings_list = []
-    
-    # 1. Vérifier les nœuds isolés
-    isolated = list(nx.isolates(B))
-    if len(isolated) > 0:
-        issues.append(f"⚠️  {len(isolated)} nœuds isolés détectés")
-    
-    # 2. Vérifier les companies sans connexion
-    row_sums = matrix_data['row_sums']
-    zero_degree_companies = np.sum(row_sums == 0)
-    if zero_degree_companies > 0:
-        issues.append(f"⚠️  {zero_degree_companies} companies sans connexion")
-    
-    # 3. Vérifier les technologies sans connexion
-    col_sums = matrix_data['col_sums']
-    zero_degree_techs = np.sum(col_sums == 0)
-    if zero_degree_techs > 0:
-        issues.append(f"⚠️  {zero_degree_techs} technologies sans connexion")
-    
-    # 4. Vérifier la composante connexe principale
-    components = graph_data['components']
-    if len(components) > 1:
-        largest_comp_size = len(max(components, key=len))
-        coverage = largest_comp_size / B.number_of_nodes() * 100
-        if coverage < 90:
-            warnings_list.append(f"⚠️  Composante principale couvre seulement {coverage:.1f}% du graphe")
-    
-    # 5. Vérifier la densité
-    density = nx.density(B)
-    if density < 0.001:
-        warnings_list.append(f"⚠️  Graphe très sparse (densité: {density:.6f})")
-    
-    # 6. Vérifier la distribution des degrés
-    company_degrees = graph_data['company_degrees']
-    tech_degrees = graph_data['tech_degrees']
-    
-    if np.std(company_degrees) / np.mean(company_degrees) > 2:
-        warnings_list.append(f"⚠️  Forte hétérogénéité des degrés companies (CV: {np.std(company_degrees) / np.mean(company_degrees):.2f})")
-    
-    if np.std(tech_degrees) / np.mean(tech_degrees) > 2:
-        warnings_list.append(f"⚠️  Forte hétérogénéité des degrés technologies (CV: {np.std(tech_degrees) / np.mean(tech_degrees):.2f})")
-    
-    # Afficher les résultats
-    if not issues and not warnings_list:
-        print("\n✅ GRAPHE PRÊT POUR TECHRANK")
-        print("  Aucun problème critique détecté")
-    else:
-        if issues:
-            print("\n❌ PROBLÈMES CRITIQUES:")
-            for issue in issues:
-                print(f"  {issue}")
-        
-        if warnings_list:
-            print("\n⚠️  AVERTISSEMENTS:")
-            for warning in warnings_list:
-                print(f"  {warning}")
-    
-    # Recommandations
-    print("\n💡 RECOMMANDATIONS:")
-    if zero_degree_companies > 0 or zero_degree_techs > 0:
-        print("  1. Supprimer les nœuds sans connexion avant d'appliquer TechRank")
-    
-    if len(components) > 1:
-        print("  2. Considérer d'analyser uniquement la composante connexe principale")
-    
-    if density < 0.001:
-        print("  3. Le graphe sparse peut nécessiter plus d'itérations pour converger")
-    
-    return len(issues) == 0
-
-# ===================================================================
-# RAPPORT COMPLET
-# ===================================================================
-
-def generate_analysis_report(B, M, dict_companies, dict_tech):
-    """Génère un rapport d'analyse complet"""
+    # Créer et sauvegarder le dashboard
     Path(SAVE_DIR_ANALYSIS).mkdir(parents=True, exist_ok=True)
+    dashboard_path = f'{SAVE_DIR_ANALYSIS}/graph_diagnosis_dashboard.png'
+    visualize_metrics_dashboard(diagnosis_results, dashboard_path)
     
-    print("\n" + "="*70)
-    print("GÉNÉRATION DU RAPPORT D'ANALYSE")
-    print("="*70)
+    # Sauvegarder les résultats détaillés
+    results_path = f'{SAVE_DIR_ANALYSIS}/diagnosis_results.pkl'
+    with open(results_path, 'wb') as f:
+        pickle.dump(diagnosis_results, f)
     
-    # 1. Analyse structurelle
-    graph_data = analyze_graph_structure(B)
+    print(f"\n✅ ANALYSE TERMINÉE")
+    print(f"   - Dashboard: {dashboard_path}")
+    print(f"   - Résultats détaillés: {results_path}")
     
-    # 2. Analyse de la matrice
-    matrix_data = analyze_matrix_properties(M)
-    
-    # 3. Vérification de cohérence
-    is_consistent = check_matrix_graph_consistency(B, M)
-    
-    # 4. Visualisations
-    print("\n📊 Génération des visualisations...")
-    plot_degree_distributions(graph_data, matrix_data)
-    plot_matrix_visualization(M)
-    plot_connectivity_heatmap(matrix_data)
-    
-    # 5. NOUVEAU: Visualisations du graphe
-    print("\n🎨 Génération des visualisations du graphe...")
-    plot_interactive_bipartite(B)
-    
-    # Zoom sur les régions intéressantes
-    print("\n🔍 Génération des vues zoomées...")
-    create_zoomable_plot(B, region='high_degree')
-    create_zoomable_plot(B, region='center')
-    
-    # 6. Évaluation TechRank
-    is_ready = assess_techrank_readiness(B, M, graph_data, matrix_data)
-    
-    # 7. Sauvegarder un résumé textuel
-    summary_path = f'{SAVE_DIR_ANALYSIS}/analysis_summary.txt'
-    with open(summary_path, 'w', encoding='utf-8') as f:
-        f.write("="*70 + "\n")
-        f.write("RAPPORT D'ANALYSE DU GRAPHE BIPARTITE\n")
-        f.write("="*70 + "\n\n")
-        
-        f.write("COMPOSITION:\n")
-        f.write(f"  - Companies: {len(graph_data['companies'])}\n")
-        f.write(f"  - Technologies: {len(graph_data['techs'])}\n")
-        f.write(f"  - Arêtes: {B.number_of_edges()}\n")
-        f.write(f"  - Densité: {nx.density(B):.6f}\n\n")
-        
-        f.write("DEGRÉS MOYENS:\n")
-        f.write(f"  - Companies: {np.mean(graph_data['company_degrees']):.2f}\n")
-        f.write(f"  - Technologies: {np.mean(graph_data['tech_degrees']):.2f}\n\n")
-        
-        f.write("COHÉRENCE GRAPHE-MATRICE:\n")
-        f.write(f"  - Cohérent: {'OUI' if is_consistent else 'NON'}\n\n")
-        
-        f.write("PRÊT POUR TECHRANK:\n")
-        f.write(f"  - {'OUI' if is_ready else 'NON - voir avertissements ci-dessus'}\n")
-    
-    print(f"\n✓ Résumé sauvegardé: {summary_path}")
-    print(f"\n✅ ANALYSE COMPLÈTE TERMINÉE")
-    print(f"   Tous les résultats sont dans: {SAVE_DIR_ANALYSIS}/")
-
-    # 8. Bipartite validation
-    print("bipartite validation:", is_bipartite(B))
-
-def analyze_degree_vs_tech_count_scatter(B, dict_companies, top_n_labels=5):
-    """
-    Analyse le lien entre le degré d'une company et le nombre de technologies avec un scatter plot.
-    
-    Args:
-        B: Graphe bipartite (companies-investors)
-        dict_companies: dictionnaire des companies avec leur liste de technologies
-        top_n_labels: nombre de companies à annoter (celles avec le plus d'investisseurs)
-    """
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    import pandas as pd
-
-    # Préparer les données
-    companies = [n for n, d in B.nodes(data=True) if d.get('bipartite') == 0]
-    data = []
-    for c in companies:
-        degree = B.degree(c)
-        num_techs = len(dict_companies[c]['technologies'])
-        data.append((c, num_techs, degree))
-
-    df = pd.DataFrame(data, columns=['company', 'num_technologies', 'degree'])
-
-    # Scatter plot avec ligne de régression
-    plt.figure(figsize=(12,7))
-    sns.scatterplot(x='num_technologies', y='degree', data=df, alpha=0.6, s=100, color='steelblue')
-    sns.regplot(x='num_technologies', y='degree', data=df, scatter=False, color='red', line_kws={'linewidth':2})
-
-    # Annoter les top_n_labels entreprises (celles avec le plus d'investisseurs)
-    top_companies = df.nlargest(top_n_labels, 'degree')
-    for _, row in top_companies.iterrows():
-        plt.text(row['num_technologies'] + 0.2, row['degree'], row['company'], 
-                 fontsize=9, fontweight='bold', color='darkred', alpha=0.8)
-
-    plt.xlabel('Nombre de technologies', fontsize=12)
-    plt.ylabel('Degré (nombre d\'investisseurs)', fontsize=12)
-    plt.title('Relation entre le nombre de technologies et le nombre d\'investisseurs', fontsize=14, fontweight='bold')
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    plt.show()
-
-    # Statistiques
-    corr = df['num_technologies'].corr(df['degree'])
-    print(f"📊 Corrélation Pearson : {corr:.2f}")
-    print(f"📈 Nombre d'entreprises analysées : {len(df)}")
-    print(f"📊 Médiane degré : {df['degree'].median():.1f}")
-    print(f"📊 Médiane technologies : {df['num_technologies'].median():.1f}")
-
-    return df, corr
-
-
-
-
-
+    # Retourner les résultats pour utilisation ultérieure
+    return diagnosis_results, B, companies, investors
 
 # ===================================================================
-# MAIN
+# EXÉCUTION
 # ===================================================================
 
 if __name__ == "__main__":
-    # Charger les données
-    B, M, dict_companies, dict_tech = load_graph_and_matrix(
-        NUM_COMP, NUM_TECH, FLAG_CYBERSECURITY
-    )
-
-    # ==============================================
-    # Exemple d'utilisation après avoir chargé B et dict_companies
-    # ==============================================
-    # _,_ =analyze_degree_vs_tech_count_scatter(B, dict_companies)
+    # Exécuter l'analyse complète
+    results = main_graph_analysis()
     
-    arr = np.load("data/crunchbase_filtered_node.npy")
-    print(arr.shape)
-    # Générer le rapport complet
-    generate_analysis_report(B, M, dict_companies, dict_tech)
+    # Si tu veux accéder aux résultats dans le notebook:
+    if results:
+        diagnosis_results, B, companies, investors = results
+        
+        print("\n" + "="*80)
+        print("UTILISATION DES RÉSULTATS POUR TGN")
+        print("="*80)
+        
+        # Exemple d'utilisation des résultats pour configurer TGN
+        health_score = diagnosis_results['health_score']
+        metrics = diagnosis_results['metrics']
+        
+        print(f"\n🎯 CONFIGURATION RECOMMANDÉE POUR TGN:")
+        
+        if health_score >= 80:
+            print("  • Utiliser l'architecture TGN standard")
+            print("  • Batch size: 512")
+            print("  • Negative sampling: 10 négatifs par positif")
+            print("  • Pas besoin de techniques spéciales")
+        elif health_score >= 60:
+            print("  • Batch size: 1024 (plus grand pour explorer l'espace)")
+            print("  • Negative sampling: 20 négatifs par positif")
+            print("  • Ajouter des features de graphe globales")
+        elif health_score >= 40:
+            print("  • Batch size: 2048")
+            print("  • Negative sampling: hard negative mining")
+            print("  • Utiliser Focal Loss ou balanced loss")
+            print("  • Ajouter régularisation forte")
+        else:
+            print("  • Repenser l'approche - le graphe est trop déséquilibré")
+            print("  • Considérer data augmentation")
+            print("  • Entraîner sur sous-ensembles")
+            print("  • Utiliser transfer learning")
