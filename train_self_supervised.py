@@ -9,6 +9,7 @@ import pickle
 from pathlib import Path
 import wandb  # AJOUT: Import wandb
 import shutil
+import pandas as pd
 
 from evaluation.evaluation import eval_edge_prediction
 from model.tgn import TGN
@@ -88,7 +89,7 @@ except:
 # Configuration des variables globales
 BATCH_SIZE = args.bs
 NUM_NEIGHBORS = args.n_degree
-NUM_NEG = 20 # 1
+NUM_NEG = 1
 NUM_EPOCH = args.n_epoch
 NUM_HEADS = args.n_head
 DROP_OUT = args.drop_out
@@ -489,3 +490,99 @@ for i in range(args.n_runs):
   # AJOUT: Terminer le run wandb
   if args.use_wandb:
     wandb.finish()
+
+def extract_features(B, edges):
+    """Build features for edges: ONLY temporal features (no degrees)."""
+    X, y = [], []
+    for u, v, label, edge_ts in edges:
+        # NO DEGREES — only temporal features
+        total_raised_raw = 0.0
+        num_rounds = 0
+        edge_data = B.get_edge_data(u, v)
+        if edge_data:
+            for fr in edge_data.get("funding_rounds", []):
+                ann = fr.get("announced_on", None)
+                if not ann:
+                    continue
+                try:
+                    ann_ts = pd.to_datetime(ann).timestamp()
+                except:
+                    continue
+                if ann_ts <= edge_ts:
+                    raised = fr.get("raised_amount_usd", fr.get("raised_amount", 0)) or 0
+                    try:
+                        total_raised_raw += float(raised)
+                    except:
+                        continue
+                    num_rounds += 1
+
+        total_raised = np.log1p(total_raised_raw)
+        # Only 2 features now: [total_raised, num_rounds]
+        feat = [total_raised, num_rounds]
+        X.append(feat)
+        y.append(label)
+
+    return np.array(X), np.array(y)
+
+
+def compute_mrr_recall_at_k(B, model, test_edges, k_list=[10, 50]):
+    """Ranking: for each investor, compute features for all candidate companies (NO DEGREES)."""
+    inv_to_true = {}
+    for u, v, label, first_ts in test_edges:
+        inv_to_true.setdefault(v, []).append((u, first_ts))
+
+    nodes_comp = [n for n, d in B.nodes(data=True) if d["bipartite"] == 0]
+
+    MRRs = []
+    recalls = {k: [] for k in k_list}
+
+    for inv, true_list in tqdm(inv_to_true.items(), desc="Computing MRR/Recall"):
+        cutoff_ts = min(ts for _, ts in true_list)
+
+        X_candidates = []
+        comps_list = []
+        for comp in nodes_comp:
+            # NO DEGREES — only temporal features
+            edge_data = B.get_edge_data(comp, inv)
+
+            total_raised_raw = 0.0
+            num_rounds = 0
+            if edge_data:
+                for fr in edge_data.get("funding_rounds", []):
+                    ann = fr.get("announced_on", None)
+                    if not ann:
+                        continue
+                    try:
+                        ann_ts = pd.to_datetime(ann).timestamp()
+                    except:
+                        continue
+                    if ann_ts <= cutoff_ts:
+                        raised = fr.get("raised_amount_usd", fr.get("raised_amount", 0)) or 0
+                        try:
+                            total_raised_raw += float(raised)
+                        except:
+                            continue
+                        num_rounds += 1
+
+            total_raised = np.log1p(total_raised_raw)
+            # Only 2 features: [total_raised, num_rounds]
+            feat = [total_raised, num_rounds]
+            X_candidates.append(feat)
+            comps_list.append(comp)
+
+        scores = model.predict_proba(np.array(X_candidates))[:, 1]
+        ranking = [x for _, x in sorted(zip(scores, comps_list), reverse=True)]
+
+        true_comps = [tc for tc, _ in true_list]
+        ranks = [ranking.index(tc) + 1 for tc in true_comps if tc in ranking]
+        MRRs.append(1.0 / min(ranks) if ranks else 0.0)
+
+        for k in k_list:
+            top_k = set(ranking[:k])
+            hits = len(set(true_comps) & top_k)
+            recalls[k].append(hits / len(true_comps))
+
+    return np.mean(MRRs), {k: np.mean(v) for k, v in recalls.items()}
+
+print(f"\nFeature Importances (temporal only): {rf.feature_importances_}")
+print(f"Feature names: ['total_raised', 'num_rounds']")
