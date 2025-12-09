@@ -15,7 +15,7 @@ from model.tgn import TGN
 from utils.utils import EarlyStopMonitor, RandEdgeSampler, get_neighbor_finder
 from utils.data_processing import get_data, compute_time_statistics
 from tqdm import tqdm
-from data.custom_loss import InverseDegreeWeightedBCELoss  # AJOUT: Import custom loss
+# from data.custom_loss import create_business_aware_loss  # AJOUT: Nouvelle loss
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -213,7 +213,7 @@ for i in range(args.n_runs):
   #     alpha=1.0,      # 1.0 = linéaire, 2.0 = quadratique (plus agressif)
   #     normalize=False
   # )
-  # criterion = criterion.to(device)  # Déplacer sur GPU si nécessaire
+  criterion = criterion.to(device)  # Déplacer sur GPU si nécessaire
   optimizer = torch.optim.Adam(tgn.parameters(), lr=LEARNING_RATE)
   scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
       optimizer, mode='max', factor=0.5, patience=3, verbose=True
@@ -452,7 +452,7 @@ for i in range(args.n_runs):
     })
     
     # Sauvegarder le modèle dans wandb (avec policy=now pour Windows)
-    wandb.save(MODEL_SAVE_PATH, policy="now", base_path=None)
+    # wandb.save(MODEL_SAVE_PATH, policy="now", base_path=None)
     # shutil.copy(MODEL_SAVE_PATH, wandb.run.dir)
     # wandb.save("saved_models/tgn-attn-crunchbase.pth")
 

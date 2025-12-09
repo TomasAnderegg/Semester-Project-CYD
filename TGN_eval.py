@@ -234,7 +234,7 @@ def filter_edges_after_training(full_data, train_data, logger):
     else:
         train_max_ts = -np.inf
 
-    mask_after_train = edge_times >= train_max_ts
+    mask_after_train = edge_times > train_max_ts
 
     count_total = len(edge_times)
     count_after = mask_after_train.sum()
@@ -500,6 +500,7 @@ def main():
     logger.info("Dataset loaded: %d interactions (full)", len(full_data.sources))
 
     train_ngh_finder = get_neighbor_finder(train_data, args.uniform)
+    # test_ngh_finder = get_neighbor_finder(test_data, args.uniform)
     full_ngh_finder = get_neighbor_finder(full_data, args.uniform)
 
     val_rand_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=0)
