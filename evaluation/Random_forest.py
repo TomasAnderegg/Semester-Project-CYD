@@ -13,31 +13,24 @@ warnings.filterwarnings('ignore')
 TGN_EDGES_PATH = "data/crunchbase_filtered.csv"
 COMPANY_MAP_PATH = "data/mappings/crunchbase_filtered_company_id_map.pickle"
 INVESTOR_MAP_PATH = "data/mappings/crunchbase_filtered_investor_id_map.pickle"
-
-# Chemin vers votre CSV brut avec toutes les transactions
-RAW_DATA_PATH = "debug_df_graphcaca21.csv"  # Le CSV avec toutes les données
+RAW_DATA_PATH = "debug_df_graphcaca21.csv"
 
 def load_data():
     """Charge toutes les données nécessaires"""
     print("📁 Chargement des données...")
     
-    # 1. Données TGN (edges positives seulement)
     tgn_edges = pd.read_csv(TGN_EDGES_PATH)
     print(f"  Edges TGN chargées: {len(tgn_edges):,}")
     
-    # 2. Données brutes avec toutes les transactions
     raw_data = pd.read_csv(RAW_DATA_PATH)
     print(f"  Données brutes chargées: {len(raw_data):,}")
-    print(f"  Colonnes: {raw_data.columns.tolist()}")
     
-    # 3. Mappings
     with open(COMPANY_MAP_PATH, 'rb') as f:
         company_map = pickle.load(f)
     
     with open(INVESTOR_MAP_PATH, 'rb') as f:
         investor_map = pickle.load(f)
     
-    # Inverser les mappings
     id_to_company = {v: k for k, v in company_map.items()}
     id_to_investor = {v: k for k, v in investor_map.items()}
     
@@ -45,10 +38,8 @@ def load_data():
 
 def create_temporal_splits(tgn_edges):
     """Crée des splits temporels pour prédiction FUTURE"""
-    # Trier par timestamp
     tgn_edges = tgn_edges.sort_values('ts')
     
-    # Split temporel (70/15/15)
     train_cutoff = tgn_edges['ts'].quantile(0.70)
     val_cutoff = tgn_edges['ts'].quantile(0.85)
     
@@ -57,14 +48,12 @@ def create_temporal_splits(tgn_edges):
     print(f"  Val:   {train_cutoff} < ts ≤ {val_cutoff}")
     print(f"  Test:  ts > {val_cutoff}")
     
-    # Convertir en datetime pour faciliter
     tgn_edges['datetime'] = pd.to_datetime(tgn_edges['ts'], unit='s')
     
     return train_cutoff, val_cutoff, tgn_edges
 
 def compute_company_features(raw_data, company, timestamp):
-    """Calcule les features d'une compagnie JUSQU'À timestamp (pas après)"""
-    # Filtrer les transactions de cette compagnie AVANT timestamp
+    """Calcule les features d'une compagnie JUSQU'À timestamp"""
     company_data = raw_data[
         (raw_data['org_name'] == company) & 
         (pd.to_datetime(raw_data['announced_on']) <= pd.to_datetime(timestamp, unit='s'))
@@ -76,16 +65,14 @@ def compute_company_features(raw_data, company, timestamp):
             'num_rounds': 0,
             'num_investors': 0,
             'avg_round_size': 0,
-            'days_since_last_round': 365*5  # 5 ans par défaut
+            'days_since_last_round': 365*5
         }
     
-    # Features
     total_raised = company_data['raised_amount_usd'].sum()
     num_rounds = len(company_data)
     num_investors = company_data['investor_name'].nunique()
     avg_round_size = total_raised / num_rounds if num_rounds > 0 else 0
     
-    # Temps depuis le dernier round
     last_round_date = pd.to_datetime(company_data['announced_on']).max()
     current_date = pd.to_datetime(timestamp, unit='s')
     days_since_last = (current_date - last_round_date).days
@@ -100,7 +87,6 @@ def compute_company_features(raw_data, company, timestamp):
 
 def compute_investor_features(raw_data, investor, timestamp):
     """Calcule les features d'un investisseur JUSQU'À timestamp"""
-    # Filtrer les transactions de cet investisseur AVANT timestamp
     investor_data = raw_data[
         (raw_data['investor_name'] == investor) & 
         (pd.to_datetime(raw_data['announced_on']) <= pd.to_datetime(timestamp, unit='s'))
@@ -112,16 +98,14 @@ def compute_investor_features(raw_data, investor, timestamp):
             'num_investments': 0,
             'num_companies': 0,
             'avg_investment_size': 0,
-            'days_since_last_investment': 365*2  # 2 ans par défaut
+            'days_since_last_investment': 365*2
         }
     
-    # Features
     total_invested = investor_data['raised_amount_usd'].sum()
     num_investments = len(investor_data)
     num_companies = investor_data['org_name'].nunique()
     avg_investment_size = total_invested / num_investments if num_investments > 0 else 0
     
-    # Temps depuis le dernier investissement
     last_invest_date = pd.to_datetime(investor_data['announced_on']).max()
     current_date = pd.to_datetime(timestamp, unit='s')
     days_since_last = (current_date - last_invest_date).days
@@ -136,13 +120,11 @@ def compute_investor_features(raw_data, investor, timestamp):
 
 def compute_pair_features(raw_data, company, investor, timestamp):
     """Calcule les features de la paire basées sur l'historique COMMUN"""
-    # 1. Historique de l'investisseur avec des compagnies similaires
     investor_history = raw_data[
         (raw_data['investor_name'] == investor) & 
         (pd.to_datetime(raw_data['announced_on']) <= pd.to_datetime(timestamp, unit='s'))
     ]
     
-    # 2. Catégories préférées de l'investisseur
     investor_companies = investor_history['org_name'].unique()
     investor_categories = set()
     
@@ -153,7 +135,6 @@ def compute_pair_features(raw_data, company, investor, timestamp):
             if isinstance(cats, str):
                 investor_categories.update([c.strip() for c in cats.split(',')])
     
-    # 3. Catégories de la compagnie
     company_data = raw_data[raw_data['org_name'] == company]
     company_categories = set()
     if not company_data.empty and 'category_list' in company_data.columns:
@@ -161,13 +142,11 @@ def compute_pair_features(raw_data, company, investor, timestamp):
         if isinstance(cats, str):
             company_categories.update([c.strip() for c in cats.split(',')])
     
-    # 4. Similarité de catégories
     if investor_categories and company_categories:
         category_overlap = len(investor_categories & company_categories) / len(investor_categories | company_categories)
     else:
         category_overlap = 0
     
-    # 5. Co-investisseurs communs (réseau)
     company_investors = set(raw_data[
         (raw_data['org_name'] == company) & 
         (pd.to_datetime(raw_data['announced_on']) <= pd.to_datetime(timestamp, unit='s'))
@@ -177,7 +156,6 @@ def compute_pair_features(raw_data, company, investor, timestamp):
     for other_inv in company_investors:
         if other_inv == investor:
             continue
-        # Vérifier si cet autre investisseur a investi dans les mêmes compagnies que notre investisseur
         other_inv_companies = set(raw_data[
             (raw_data['investor_name'] == other_inv) & 
             (pd.to_datetime(raw_data['announced_on']) <= pd.to_datetime(timestamp, unit='s'))
@@ -190,19 +168,44 @@ def compute_pair_features(raw_data, company, investor, timestamp):
     return {
         'category_overlap': category_overlap,
         'common_co_investors': common_co_investors,
-        'investor_experience_with_similar': len(investor_companies)  # Nombre total d'investissements
+        'investor_experience_with_similar': len(investor_companies)
     }
+
+def extract_features(raw_data, company, investor, timestamp):
+    """Extract features for a company-investor pair"""
+    company_feats = compute_company_features(raw_data, company, timestamp)
+    investor_feats = compute_investor_features(raw_data, investor, timestamp)
+    pair_feats = compute_pair_features(raw_data, company, investor, timestamp)
+    
+    features = [
+        np.log1p(company_feats['total_raised']),
+        np.log1p(company_feats['num_rounds'] + 1),
+        company_feats['num_investors'],
+        np.log1p(company_feats['avg_round_size']),
+        np.log1p(company_feats['days_since_last_round'] + 1),
+        
+        np.log1p(investor_feats['total_invested']),
+        np.log1p(investor_feats['num_investments'] + 1),
+        investor_feats['num_companies'],
+        np.log1p(investor_feats['avg_investment_size']),
+        np.log1p(investor_feats['days_since_last_investment'] + 1),
+        
+        pair_feats['category_overlap'],
+        pair_feats['common_co_investors'],
+        np.log1p(pair_feats['investor_experience_with_similar'] + 1)
+    ]
+    
+    return features
 
 def create_positive_samples(tgn_edges, raw_data, id_to_company, id_to_investor, split_type='test'):
     """Crée des échantillons POSITIFS pour la prédiction FUTURE"""
     positives = []
     
-    # Filtrer selon le split
     if split_type == 'train':
         edges = tgn_edges[tgn_edges['ts'] <= train_cutoff]
     elif split_type == 'val':
         edges = tgn_edges[(tgn_edges['ts'] > train_cutoff) & (tgn_edges['ts'] <= val_cutoff)]
-    else:  # test
+    else:
         edges = tgn_edges[tgn_edges['ts'] > val_cutoff]
     
     print(f"\n🔍 Création des positifs ({split_type}): {len(edges)} edges")
@@ -212,33 +215,7 @@ def create_positive_samples(tgn_edges, raw_data, id_to_company, id_to_investor, 
         investor = id_to_investor.get(int(row['i']), f"investor_{row['i']}")
         timestamp = row['ts']
         
-        # Features de la compagnie (AVANT timestamp)
-        company_feats = compute_company_features(raw_data, company, timestamp)
-        
-        # Features de l'investisseur (AVANT timestamp)
-        investor_feats = compute_investor_features(raw_data, investor, timestamp)
-        
-        # Features de la paire (AVANT timestamp)
-        pair_feats = compute_pair_features(raw_data, company, investor, timestamp)
-        
-        # Combiner toutes les features
-        features = [
-            np.log1p(company_feats['total_raised']),
-            np.log1p(company_feats['num_rounds'] + 1),
-            company_feats['num_investors'],
-            np.log1p(company_feats['avg_round_size']),
-            np.log1p(company_feats['days_since_last_round'] + 1),
-            
-            np.log1p(investor_feats['total_invested']),
-            np.log1p(investor_feats['num_investments'] + 1),
-            investor_feats['num_companies'],
-            np.log1p(investor_feats['avg_investment_size']),
-            np.log1p(investor_feats['days_since_last_investment'] + 1),
-            
-            pair_feats['category_overlap'],
-            pair_feats['common_co_investors'],
-            np.log1p(pair_feats['investor_experience_with_similar'] + 1)
-        ]
+        features = extract_features(raw_data, company, investor, timestamp)
         
         positives.append({
             'company': company,
@@ -254,7 +231,6 @@ def create_negative_samples(positives, raw_data, num_negatives_per_positive=1):
     """Crée des échantillons NÉGATIFS plausibles"""
     negatives = []
     
-    # Liste de toutes les compagnies et investisseurs
     all_companies = raw_data['org_name'].unique()
     all_investors = raw_data['investor_name'].unique()
     
@@ -265,44 +241,20 @@ def create_negative_samples(positives, raw_data, num_negatives_per_positive=1):
         investor = pos['investor']
         timestamp = pos['timestamp']
         
-        # Trouver des compagnies que cet investisseur n'a PAS financées avant ce timestamp
         funded_companies = set(raw_data[
             (raw_data['investor_name'] == investor) & 
             (pd.to_datetime(raw_data['announced_on']) <= pd.to_datetime(timestamp, unit='s'))
         ]['org_name'].unique())
         
-        # Candidates: compagnies non financées par cet investisseur
         candidate_companies = [c for c in all_companies 
                               if c not in funded_companies and c != company]
         
-        # Prendre quelques négatifs aléatoires
         num_to_sample = min(num_negatives_per_positive, len(candidate_companies))
         if num_to_sample > 0:
             negative_companies = np.random.choice(candidate_companies, size=num_to_sample, replace=False)
             
             for neg_company in negative_companies:
-                # Mêmes features que pour les positifs
-                company_feats = compute_company_features(raw_data, neg_company, timestamp)
-                investor_feats = compute_investor_features(raw_data, investor, timestamp)
-                pair_feats = compute_pair_features(raw_data, neg_company, investor, timestamp)
-                
-                features = [
-                    np.log1p(company_feats['total_raised']),
-                    np.log1p(company_feats['num_rounds'] + 1),
-                    company_feats['num_investors'],
-                    np.log1p(company_feats['avg_round_size']),
-                    np.log1p(company_feats['days_since_last_round'] + 1),
-                    
-                    np.log1p(investor_feats['total_invested']),
-                    np.log1p(investor_feats['num_investments'] + 1),
-                    investor_feats['num_companies'],
-                    np.log1p(investor_feats['avg_investment_size']),
-                    np.log1p(investor_feats['days_since_last_investment'] + 1),
-                    
-                    pair_feats['category_overlap'],
-                    pair_feats['common_co_investors'],
-                    np.log1p(pair_feats['investor_experience_with_similar'] + 1)
-                ]
+                features = extract_features(raw_data, neg_company, investor, timestamp)
                 
                 negatives.append({
                     'company': neg_company,
@@ -313,6 +265,123 @@ def create_negative_samples(positives, raw_data, num_negatives_per_positive=1):
                 })
     
     return negatives
+
+def create_ranking_samples(tgn_edges, raw_data, id_to_company, id_to_investor, split_type='test', num_negatives=100):
+    """
+    Crée des échantillons pour l'évaluation RANKING (MRR, Recall@K)
+    Pour chaque positive edge, on crée K candidats négatifs
+    """
+    ranking_samples = []
+    
+    if split_type == 'train':
+        edges = tgn_edges[tgn_edges['ts'] <= train_cutoff]
+    elif split_type == 'val':
+        edges = tgn_edges[(tgn_edges['ts'] > train_cutoff) & (tgn_edges['ts'] <= val_cutoff)]
+    else:
+        edges = tgn_edges[tgn_edges['ts'] > val_cutoff]
+    
+    all_companies = raw_data['org_name'].unique()
+    
+    print(f"\n🎯 Création des samples de RANKING ({split_type}): {len(edges)} queries")
+    
+    for idx, row in tqdm(edges.iterrows(), total=len(edges), desc=f"Processing {split_type} ranking"):
+        true_company = id_to_company.get(int(row['u']), f"company_{row['u']}")
+        investor = id_to_investor.get(int(row['i']), f"investor_{row['i']}")
+        timestamp = row['ts']
+        
+        # Historique de l'investisseur
+        funded_companies = set(raw_data[
+            (raw_data['investor_name'] == investor) & 
+            (pd.to_datetime(raw_data['announced_on']) <= pd.to_datetime(timestamp, unit='s'))
+        ]['org_name'].unique())
+        
+        # Candidats négatifs: compagnies non financées
+        candidate_companies = [c for c in all_companies 
+                              if c not in funded_companies and c != true_company]
+        
+        if len(candidate_companies) < num_negatives:
+            num_negatives_sample = len(candidate_companies)
+        else:
+            num_negatives_sample = num_negatives
+        
+        if num_negatives_sample > 0:
+            negative_companies = np.random.choice(candidate_companies, 
+                                                  size=num_negatives_sample, 
+                                                  replace=False)
+            
+            # Créer un groupe de ranking: 1 positive + K negatives
+            candidates = []
+            
+            # Positive (label=1)
+            pos_features = extract_features(raw_data, true_company, investor, timestamp)
+            candidates.append({
+                'company': true_company,
+                'investor': investor,
+                'features': pos_features,
+                'label': 1
+            })
+            
+            # Negatives (label=0)
+            for neg_company in negative_companies:
+                neg_features = extract_features(raw_data, neg_company, investor, timestamp)
+                candidates.append({
+                    'company': neg_company,
+                    'investor': investor,
+                    'features': neg_features,
+                    'label': 0
+                })
+            
+            ranking_samples.append({
+                'investor': investor,
+                'timestamp': timestamp,
+                'candidates': candidates
+            })
+    
+    return ranking_samples
+
+def compute_ranking_metrics(model, ranking_samples, k_values=[10, 50]):
+    """
+    Calcule MRR, Recall@K pour les échantillons de ranking
+    """
+    mrr_scores = []
+    recall_at_k = {k: [] for k in k_values}
+    
+    print(f"\n📊 Calcul des métriques de ranking sur {len(ranking_samples)} queries...")
+    
+    for sample in tqdm(ranking_samples, desc="Computing ranking metrics"):
+        candidates = sample['candidates']
+        
+        # Extraire features et labels
+        X = np.array([c['features'] for c in candidates])
+        y_true = np.array([c['label'] for c in candidates])
+        
+        # Prédire les scores
+        y_scores = model.predict_proba(X)[:, 1]
+        
+        # Trier par score décroissant
+        sorted_indices = np.argsort(-y_scores)
+        sorted_labels = y_true[sorted_indices]
+        
+        # MRR: position du premier vrai positif
+        positive_positions = np.where(sorted_labels == 1)[0]
+        if len(positive_positions) > 0:
+            rank = positive_positions[0] + 1  # +1 car on compte à partir de 1
+            mrr_scores.append(1.0 / rank)
+        else:
+            mrr_scores.append(0.0)
+        
+        # Recall@K
+        for k in k_values:
+            top_k_labels = sorted_labels[:k]
+            if np.sum(sorted_labels) > 0:  # Si au moins un positif existe
+                recall = np.sum(top_k_labels) / np.sum(sorted_labels)
+                recall_at_k[k].append(recall)
+    
+    # Moyennes
+    mrr = np.mean(mrr_scores)
+    recall_k = {k: np.mean(scores) for k, scores in recall_at_k.items()}
+    
+    return mrr, recall_k
 
 def prepare_dataset(positives, negatives):
     """Prépare les matrices X et y pour l'entraînement"""
@@ -331,9 +400,9 @@ def prepare_dataset(positives, negatives):
     return X, y
 
 def main():
-    print("="*70)
-    print("RANDOM FOREST - Prédiction de liens FUTURS (sans leakage)")
-    print("="*70)
+    print("="*80)
+    print("RANDOM FOREST BASELINE - Toutes les métriques (AUROC, AP, MRR, Recall@K)")
+    print("="*80)
     
     # 1. Charger les données
     tgn_edges, raw_data, id_to_company, id_to_investor = load_data()
@@ -346,25 +415,33 @@ def main():
     raw_data['announced_on'] = pd.to_datetime(raw_data['announced_on'], errors='coerce')
     raw_data = raw_data.dropna(subset=['announced_on', 'org_name', 'investor_name'])
     
-    # 4. Créer les datasets
-    print("\n" + "="*70)
-    print("CRÉATION DES DATASETS")
-    print("="*70)
+    # 4. Créer les datasets pour CLASSIFICATION (AUROC, AP)
+    print("\n" + "="*80)
+    print("CRÉATION DES DATASETS - CLASSIFICATION")
+    print("="*80)
     
-    # Train
     train_positives = create_positive_samples(tgn_edges, raw_data, id_to_company, id_to_investor, 'train')
     train_negatives = create_negative_samples(train_positives, raw_data, num_negatives_per_positive=1)
     X_train, y_train = prepare_dataset(train_positives, train_negatives)
     
-    # Test
     test_positives = create_positive_samples(tgn_edges, raw_data, id_to_company, id_to_investor, 'test')
     test_negatives = create_negative_samples(test_positives, raw_data, num_negatives_per_positive=1)
     X_test, y_test = prepare_dataset(test_positives, test_negatives)
     
-    # 5. Entraînement
-    print("\n" + "="*70)
+    # 5. Créer les datasets pour RANKING (MRR, Recall@K)
+    print("\n" + "="*80)
+    print("CRÉATION DES DATASETS - RANKING")
+    print("="*80)
+    
+    test_ranking_samples = create_ranking_samples(
+        tgn_edges, raw_data, id_to_company, id_to_investor, 
+        split_type='test', num_negatives=100
+    )
+    
+    # 6. Entraînement
+    print("\n" + "="*80)
     print("ENTRAÎNEMENT DU RANDOM FOREST")
-    print("="*70)
+    print("="*80)
     
     rf = RandomForestClassifier(
         n_estimators=200,
@@ -381,23 +458,35 @@ def main():
     print("\n🔧 Entraînement en cours...")
     rf.fit(X_train, y_train)
     
-    # 6. Évaluation
-    print("\n" + "="*70)
-    print("ÉVALUATION")
-    print("="*70)
+    # 7. Évaluation - CLASSIFICATION METRICS
+    print("\n" + "="*80)
+    print("ÉVALUATION - CLASSIFICATION METRICS")
+    print("="*80)
     
     y_pred_proba = rf.predict_proba(X_test)[:, 1]
     auc = roc_auc_score(y_test, y_pred_proba)
     ap = average_precision_score(y_test, y_pred_proba)
     
-    print(f"📊 Résultats:")
-    print(f"  AUC-ROC: {auc:.4f}")
-    print(f"  Average Precision: {ap:.4f}")
+    print(f"\n📊 Métriques de Classification:")
+    print(f"  AUROC:               {auc:.4f}")
+    print(f"  Average Precision:   {ap:.4f}")
     
-    # 7. Analyse
-    print("\n" + "="*70)
-    print("ANALYSE")
-    print("="*70)
+    # 8. Évaluation - RANKING METRICS
+    print("\n" + "="*80)
+    print("ÉVALUATION - RANKING METRICS")
+    print("="*80)
+    
+    mrr, recall_k = compute_ranking_metrics(rf, test_ranking_samples, k_values=[10, 50])
+    
+    print(f"\n📊 Métriques de Ranking:")
+    print(f"  MRR:                 {mrr:.4f}")
+    print(f"  Recall@10:           {recall_k[10]:.4f}")
+    print(f"  Recall@50:           {recall_k[50]:.4f}")
+    
+    # 9. Analyse des features
+    print("\n" + "="*80)
+    print("ANALYSE DES FEATURES")
+    print("="*80)
     
     feature_names = [
         'log_company_total_raised',
@@ -422,35 +511,60 @@ def main():
     
     print("\n📈 Top 10 des features les plus importantes:")
     for i in range(min(10, len(feature_names))):
-        print(f"  {i+1:2d}. {feature_names[indices[i]]:<30} {importances[indices[i]]:.4f}")
+        print(f"  {i+1:2d}. {feature_names[indices[i]]:<35} {importances[indices[i]]:.4f}")
     
-    # 8. Résumé
-    print("\n" + "="*70)
-    print("RÉSUMÉ POUR COMPARAISON AVEC TGN")
-    print("="*70)
+    # 10. Résumé final
+    print("\n" + "="*80)
+    print("RÉSUMÉ FINAL - COMPARAISON AVEC TGN")
+    print("="*80)
     
     print(f"""
-    🎯 RANDOM FOREST (prédiction FUTURE, sans leakage):
-       - Test AUC: {auc:.4f}
-       - Test AP:  {ap:.4f}
-       - {len(feature_names)} features temporelles/historiques
+    🎯 RANDOM FOREST BASELINE (toutes métriques):
     
-    🔍 INTERPRÉTATION:
-       - AUC attendue: 0.65-0.80 (réaliste)
-       - Si AUC < 0.6: Tâche très difficile
-       - Si AUC > 0.85: Vérifier d'éventuels leakages
+    Classification Metrics:
+       - AUROC:             {auc:.4f}
+       - Average Precision: {ap:.4f}
     
-    🎯 POUR TGN:
-       - Objectif: AUC > {auc + 0.05:.4f} (+5%)
-       - Si TGN a AUC < {auc:.4f}: Il sous-performe le RF simple
-       - Si TGN a AUC > {auc + 0.10:.4f}: Il capture bien la dynamique temporelle
+    Ranking Metrics:
+       - MRR:               {mrr:.4f}
+       - Recall@10:         {recall_k[10]:.4f}
+       - Recall@50:         {recall_k[50]:.4f}
     
-    ✅ CE QUI A CHANGÉ:
-       1. Features calculées UNIQUEMENT sur l'historique (pas de futur)
-       2. Mêmes features pour positifs ET négatifs
-       3. Prédiction de liens FUTURS (pas reconnaissance de liens existants)
-       4. Pas de features spécifiques à la paire (comme total_raised entre C et I)
+    📋 INTERPRÉTATION:
+       - Ces scores représentent la baseline pour votre TGN
+       - TGN devrait améliorer ces scores grâce à la capture de la dynamique temporelle
+       - Si TGN < RF: problème dans l'implémentation TGN
+       - Si TGN ≈ RF: TGN ne capture pas mieux la temporalité
+       - Si TGN > RF (+5-15%): TGN fonctionne bien!
+    
+    🎯 OBJECTIFS POUR TGN:
+       - AUROC:     > {auc + 0.05:.4f} (+5%)
+       - AP:        > {ap + 0.05:.4f} (+5%)
+       - MRR:       > {mrr + 0.05:.4f} (+5%)
+       - Recall@10: > {recall_k[10] + 0.05:.4f} (+5%)
+       - Recall@50: > {recall_k[50] + 0.05:.4f} (+5%)
+    
+    ✅ IMPORTANT:
+       - Même évaluation temporelle que TGN (prédiction FUTURE uniquement)
+       - Pas de data leakage (features calculées sur historique uniquement)
+       - 5 métriques identiques pour comparaison directe
     """)
+    
+    # 11. Sauvegarde des résultats
+    results = {
+        'auroc': auc,
+        'ap': ap,
+        'mrr': mrr,
+        'recall@10': recall_k[10],
+        'recall@50': recall_k[50],
+        'feature_importances': dict(zip(feature_names, importances))
+    }
+    
+    import json
+    with open('rf_baseline_results.json', 'w') as f:
+        json.dump(results, f, indent=2)
+    
+    print("\n✅ Résultats sauvegardés dans: rf_baseline_results.json")
 
 if __name__ == "__main__":
     main()
