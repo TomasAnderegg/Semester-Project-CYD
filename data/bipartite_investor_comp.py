@@ -988,7 +988,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
         df_graph = df_graph_full.head(limit).copy()
 
         # Sauvegarde temporaire pour inspection
-        # df_graph.to_csv("debug_df_graphcaca21.csv", index=False)
+        df_graph.to_csv("debug_df_graphcaca21.csv", index=False)
         print("✓ Fichier debug_df_graph.csv sauvegardé, tu peux l'ouvrir dans Excel ou VSCode pour vérifier.")
         print("Colonnes :", df_graph.columns.tolist())
         print("nobres de lignes dans df_graph :", len(df_graph))
