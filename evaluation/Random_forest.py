@@ -70,7 +70,7 @@ def compute_company_features(raw_data, company, timestamp):
     
     total_raised = company_data['raised_amount_usd'].sum()
     num_rounds = len(company_data)
-    num_investors = company_data['investor_name'].nunique()
+    num_investors = company_data['investor_name'].nunique() # comptage du nombre d'investisseurs uniques
     avg_round_size = total_raised / num_rounds if num_rounds > 0 else 0
     
     last_round_date = pd.to_datetime(company_data['announced_on']).max()
@@ -198,7 +198,7 @@ def extract_features(raw_data, company, investor, timestamp):
     return features
 
 def create_positive_samples(tgn_edges, raw_data, id_to_company, id_to_investor, split_type='test'):
-    """Crée des échantillons POSITIFS pour la prédiction FUTURE"""
+    """Crée des échantillons POSITIFS (label=1) pour la prédiction FUTURE"""
     positives = []
     
     if split_type == 'train':
@@ -228,7 +228,7 @@ def create_positive_samples(tgn_edges, raw_data, id_to_company, id_to_investor, 
     return positives
 
 def create_negative_samples(positives, raw_data, num_negatives_per_positive=1):
-    """Crée des échantillons NÉGATIFS plausibles"""
+    """Crée des échantillons NÉGATIFS (label = 0) plausibles"""
     negatives = []
     
     all_companies = raw_data['org_name'].unique()

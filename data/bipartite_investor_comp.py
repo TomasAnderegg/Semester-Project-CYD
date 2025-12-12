@@ -1008,9 +1008,9 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
         # Préparer les données TGN
         df, item_map, user_map = prepare_tgn_input(B_full, output_prefix="crunchbase_filtered")
 
-        # NOUVEAU: Sauvegarder les degrés pour la weighted loss
-        from data.custom_loss import prepare_degree_weights
-        company_degrees = prepare_degree_weights(B_full, item_map, output_prefix="crunchbase_filtered")
+        # # NOUVEAU: Sauvegarder les degrés pour la weighted loss
+        # from data.custom_loss import prepare_degree_weights
+        # company_degrees = prepare_degree_weights(B_full, item_map, output_prefix="crunchbase_filtered")
 
         save_graph_and_dicts(B_full, dict_companies_full, dict_investors_full, limit)
 
