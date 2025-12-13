@@ -584,5 +584,5 @@ def compute_mrr_recall_at_k(B, model, test_edges, k_list=[10, 50]):
 
     return np.mean(MRRs), {k: np.mean(v) for k, v in recalls.items()}
 
-print(f"\nFeature Importances (temporal only): {rf.feature_importances_}")
-print(f"Feature names: ['total_raised', 'num_rounds']")
+# print(f"\nFeature Importances (temporal only): {rf.feature_importances_}")
+# print(f"Feature names: ['total_raised', 'num_rounds']")

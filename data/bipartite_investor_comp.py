@@ -41,7 +41,7 @@ SAVE_DIR_CSV = "savings/bipartite_invest_comp/csv_exports"  # ✅ NOUVEAU: dossi
 
 FLAG_FILTER = False  # Mettre True si tu veux filtrer
 FILTER_KEYWORDS = ['Quantum Computing', 'Quantum Key Distribution']  # Keywords pour filtrage optionnel
-LIMITS = [10000]  # Nombre d'entrées à traiter
+LIMITS = [50000]  # Nombre d'entrées à traiter
 
 # ===================================================================
 # UTILS
@@ -259,8 +259,8 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
 
     # Sauvegarde des fichiers TGN
     Path("data").mkdir(exist_ok=True)
-    df.to_csv(f"data/{output_prefix}.csv", index=False)
-    np.save(f"data/{output_prefix}.npy", feats)
+    df.to_csv(f"data/data_split/{output_prefix}.csv", index=False)
+    np.save(f"data/data_split/{output_prefix}.npy", feats)
     
     # Création du fichier de features de nœuds (nécessaire par TGN, même vide)
     if not df.empty:
@@ -269,10 +269,10 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
         max_node_id = -1
         
     node_feats = np.zeros((max_node_id + 1, 200)) # 172 est la dimension par défaut/conventionnelle
-    np.save(f"data/{output_prefix}_node.npy", node_feats)
+    np.save(f"data/data_split/{output_prefix}_node.npy", node_feats)
 
     # Sauvegarde mappings (PICKLE - format nécessaire pour TGN)
-    mapping_dir = Path("data/mappings")
+    mapping_dir = Path("data/data_split")
     mapping_dir.mkdir(exist_ok=True)
     with open(mapping_dir / f"{output_prefix}_company_id_map.pickle", "wb") as f:
         pickle.dump(item_map, f)
@@ -310,6 +310,215 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
     # =================================================================
 
     return df, item_map, user_map #, item_inverse, user_inverse
+
+
+# ===================================================================
+# TEMPORAL SPLITTING FUNCTIONS
+# ===================================================================
+
+def temporal_split_graph(B, train_ratio=0.85, val_ratio=0.0):
+    """
+    Split temporel du graphe bipartite basé sur les timestamps des funding_rounds
+    
+    Returns:
+        B_train, B_val, B_test: Graphes splittés
+        max_train_time, max_val_time: Timestamps limites
+    """
+    print("\n" + "="*70)
+    print("TEMPORAL SPLIT DU GRAPHE BIPARTITE")
+    print("="*70)
+    
+    # Collecter tous les timestamps
+    all_timestamps = []
+    edge_timestamps = {}  # (u, v) -> min_timestamp
+    
+    for u, v, data in B.edges(data=True):
+        ts_list = []
+        for fr in data.get('funding_rounds', []):
+            announced_on = fr.get("announced_on")
+            if announced_on is None or announced_on == "" or pd.isna(announced_on):
+                continue
+                
+            if hasattr(announced_on, "timestamp"):
+                ts_list.append(announced_on.timestamp())
+            else:
+                possible_formats = ["%Y-%m-%d", "%d.%m.%Y", "%m/%d/%Y"]
+                for fmt in possible_formats:
+                    try:
+                        dt = datetime.strptime(str(announced_on), fmt)
+                        ts_list.append(dt.timestamp())
+                        break
+                    except:
+                        pass
+        
+        if ts_list:
+            min_ts = min(ts_list)
+            edge_timestamps[(u, v)] = min_ts
+            all_timestamps.append(min_ts)
+    
+    if not all_timestamps:
+        print("❌ Aucun timestamp trouvé dans le graphe!")
+        return B, B, B, None, None
+    
+    # Trier et calculer les seuils
+    all_timestamps = sorted(all_timestamps)
+    total_edges = len(all_timestamps)
+    
+    train_idx = int(total_edges * train_ratio)
+    val_idx = int(total_edges * (train_ratio + val_ratio))
+    
+    max_train_time = all_timestamps[train_idx - 1] if train_idx > 0 else all_timestamps[0]
+    max_val_time = all_timestamps[val_idx - 1] if val_idx < total_edges else all_timestamps[-1]
+    
+    print(f"\nStatistiques temporelles:")
+    print(f"  Total edges: {total_edges:,}")
+    print(f"  Train edges: {train_idx:,} ({train_ratio*100:.1f}%)")
+    print(f"  Val edges: {val_idx - train_idx:,} ({val_ratio*100:.1f}%)")
+    print(f"  Test edges: {total_edges - val_idx:,} ({(1-train_ratio-val_ratio)*100:.1f}%)")
+    print(f"  Max train timestamp: {datetime.fromtimestamp(max_train_time).strftime('%Y-%m-%d')}")
+    print(f"  Max val timestamp: {datetime.fromtimestamp(max_val_time).strftime('%Y-%m-%d')}")
+    
+    # Créer les sous-graphes
+    B_train = nx.Graph()
+    B_val = nx.Graph()
+    B_test = nx.Graph()
+    
+    # Ajouter tous les nœuds avec leurs attributs
+    for node, data in B.nodes(data=True):
+        B_train.add_node(node, **data)
+        B_val.add_node(node, **data)
+        B_test.add_node(node, **data)
+    
+    # Distribuer les arêtes selon leur timestamp
+    for (u, v), ts in edge_timestamps.items():
+        edge_data = B[u][v].copy()
+        
+        if ts <= max_train_time:
+            B_train.add_edge(u, v, **edge_data)
+        elif ts <= max_val_time:
+            B_val.add_edge(u, v, **edge_data)
+        else:
+            B_test.add_edge(u, v, **edge_data)
+    
+    print(f"\nGraphes créés:")
+    print(f"  Train: {B_train.number_of_nodes()} nœuds, {B_train.number_of_edges()} arêtes")
+    print(f"  Val:   {B_val.number_of_nodes()} nœuds, {B_val.number_of_edges()} arêtes")
+    print(f"  Test:  {B_test.number_of_nodes()} nœuds, {B_test.number_of_edges()} arêtes")
+    
+    return B_train, B_val, B_test, max_train_time, max_val_time
+
+
+def split_dictionaries_by_graph(B_train, B_val, B_test, dict_companies, dict_investors):
+    """
+    Split les dictionnaires selon les nœuds présents dans chaque graphe
+    """
+    print("\n" + "="*70)
+    print("SPLIT DES DICTIONNAIRES")
+    print("="*70)
+    
+    # Extraire les nœuds de chaque type pour chaque split
+    companies_train = {n for n, d in B_train.nodes(data=True) if d.get('bipartite') == 0}
+    companies_val = {n for n, d in B_val.nodes(data=True) if d.get('bipartite') == 0}
+    companies_test = {n for n, d in B_test.nodes(data=True) if d.get('bipartite') == 0}
+    
+    investors_train = {n for n, d in B_train.nodes(data=True) if d.get('bipartite') == 1}
+    investors_val = {n for n, d in B_val.nodes(data=True) if d.get('bipartite') == 1}
+    investors_test = {n for n, d in B_test.nodes(data=True) if d.get('bipartite') == 1}
+    
+    # Split dictionnaires companies
+    dict_comp_train = {name: data for name, data in dict_companies.items() if name in companies_train}
+    dict_comp_val = {name: data for name, data in dict_companies.items() if name in companies_val}
+    dict_comp_test = {name: data for name, data in dict_companies.items() if name in companies_test}
+    
+    # Split dictionnaires investors
+    dict_inv_train = {name: data for name, data in dict_investors.items() if name in investors_train}
+    dict_inv_val = {name: data for name, data in dict_investors.items() if name in investors_val}
+    dict_inv_test = {name: data for name, data in dict_investors.items() if name in investors_test}
+    
+    print(f"\nCompanies:")
+    print(f"  Train: {len(dict_comp_train):,}")
+    print(f"  Val:   {len(dict_comp_val):,}")
+    print(f"  Test:  {len(dict_comp_test):,}")
+    
+    print(f"\nInvestors:")
+    print(f"  Train: {len(dict_inv_train):,}")
+    print(f"  Val:   {len(dict_inv_val):,}")
+    print(f"  Test:  {len(dict_inv_test):,}")
+    
+    return {
+        'companies': {
+            'train': dict_comp_train,
+            'val': dict_comp_val,
+            'test': dict_comp_test
+        },
+        'investors': {
+            'train': dict_inv_train,
+            'val': dict_inv_val,
+            'test': dict_inv_test
+        }
+    }
+
+
+def save_split_data(B_train, B_val, B_test, dict_split, limit, output_dir=None):
+    """
+    Sauvegarde tous les splits (graphes + dictionnaires)
+    """
+    if output_dir is None:
+        output_dir = SAVE_DIR_NETWORKS
+    
+    split_dir = Path(output_dir) / f"split_{limit}"
+    split_dir.mkdir(parents=True, exist_ok=True)
+    
+    print("\n" + "="*70)
+    print(f"SAUVEGARDE DES SPLITS DANS {split_dir}")
+    print("="*70)
+    
+    # Sauvegarder les graphes
+    for split_name, graph in [('train', B_train), ('val', B_val), ('test', B_test)]:
+        graph_path = split_dir / f"bipartite_graph_{split_name}.gpickle"
+        with open(graph_path, 'wb') as f:
+            pickle.dump(graph, f)
+        print(f"✓ Graphe {split_name} sauvegardé: {graph_path}")
+    
+    # Sauvegarder les dictionnaires
+    dict_dir = split_dir / "dictionaries"
+    dict_dir.mkdir(exist_ok=True)
+    
+    for split_name in ['train', 'val', 'test']:
+        comp_path = dict_dir / f"dict_companies_{split_name}.pickle"
+        inv_path = dict_dir / f"dict_investors_{split_name}.pickle"
+        
+        with open(comp_path, 'wb') as f:
+            pickle.dump(dict_split['companies'][split_name], f)
+        with open(inv_path, 'wb') as f:
+            pickle.dump(dict_split['investors'][split_name], f)
+        
+        print(f"✓ Dictionnaires {split_name} sauvegardés")
+    
+    # Sauvegarder les métadonnées
+    metadata = {
+        'limit': limit,
+        'train_nodes': B_train.number_of_nodes(),
+        'train_edges': B_train.number_of_edges(),
+        'val_nodes': B_val.number_of_nodes(),
+        'val_edges': B_val.number_of_edges(),
+        'test_nodes': B_test.number_of_nodes(),
+        'test_edges': B_test.number_of_edges(),
+        'companies_train': len(dict_split['companies']['train']),
+        'companies_val': len(dict_split['companies']['val']),
+        'companies_test': len(dict_split['companies']['test']),
+        'investors_train': len(dict_split['investors']['train']),
+        'investors_val': len(dict_split['investors']['val']),
+        'investors_test': len(dict_split['investors']['test'])
+    }
+    
+    with open(split_dir / 'split_metadata.pickle', 'wb') as f:
+        pickle.dump(metadata, f)
+    
+    pd.DataFrame([metadata]).to_csv(split_dir / 'split_metadata.csv', index=False)
+    print(f"✓ Métadonnées sauvegardées")
+    
+    print(f"\n✓ Tous les splits sauvegardés dans {split_dir}")
 
 
 # ===================================================================
@@ -988,7 +1197,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
         df_graph = df_graph_full.head(limit).copy()
 
         # Sauvegarde temporaire pour inspection
-        df_graph.to_csv("debug_df_graphcaca21.csv", index=False)
+        # df_graph.to_csv("debug_df_graphcaca21.csv", index=False)
         print("✓ Fichier debug_df_graph.csv sauvegardé, tu peux l'ouvrir dans Excel ou VSCode pour vérifier.")
         print("Colonnes :", df_graph.columns.tolist())
         print("nobres de lignes dans df_graph :", len(df_graph))
@@ -1004,9 +1213,17 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
         B_full, dict_companies_full, dict_investors_full = nx_dip_graph_from_pandas(df_graph)
         print(f"nombre de noeuds", B_full.number_of_nodes())
 
+        B_train, B_val, B_test, max_train_time, max_val_time = temporal_split_graph(B_full)
+        dict_split = split_dictionaries_by_graph(B_train, B_val, B_test, dict_companies_full, dict_investors_full)
+        save_split_data(B_train, B_val, B_test, dict_split, limit, output_dir=None)
+
         # Préparer les fichiers TGN limités au temps maximal du train
         # Préparer les données TGN
-        df, item_map, user_map = prepare_tgn_input(B_full, output_prefix="crunchbase_filtered")
+        # df, item_map, user_map = prepare_tgn_input(B_full, output_prefix="crunchbase_filtered")
+        df, item_map, user_map = prepare_tgn_input(B_train, output_prefix="crunchbase_filtered_train")
+        df, item_map, user_map = prepare_tgn_input(B_val, output_prefix="crunchbase_filtered_val")
+        df, item_map, user_map = prepare_tgn_input(B_test, output_prefix="crunchbase_filtered_test")
+
 
         # # NOUVEAU: Sauvegarder les degrés pour la weighted loss
         # from data.custom_loss import prepare_degree_weights

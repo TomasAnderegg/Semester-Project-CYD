@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-TGN evaluation + prediction - VERSION CORRIGÉE FINALE
-Compatible avec le pipeline prepare_tgn_input où:
-  - u (sources) = companies (bipartite=0)
-  - i (destinations) = investors (bipartite=1)
+TGN Evaluation Script - Version Corrigée pour Reproduire les Métriques du Training
 """
 
 import argparse
@@ -16,20 +13,15 @@ import csv
 
 import torch
 import numpy as np
-import networkx as nx
 import pandas as pd
 
 from evaluation.evaluation import eval_edge_prediction
 from model.tgn import TGN
-
 from utils.utils import RandEdgeSampler, get_neighbor_finder
 from utils.data_processing import get_data, compute_time_statistics
 
-# ----------------------------
-# Setup / Defaults
-# ----------------------------
 def parse_args():
-    parser = argparse.ArgumentParser('TGN Evaluation and Prediction (modular single-file)')
+    parser = argparse.ArgumentParser('TGN Evaluation - Reproduction exacte du training')
     parser.add_argument('-d', '--data', type=str, default='crunchbase', help='Dataset name')
     parser.add_argument('--bs', type=int, default=200, help='Batch_size')
     parser.add_argument('--n_degree', type=int, default=10, help='Number of neighbors to sample')
@@ -45,8 +37,8 @@ def parse_args():
     parser.add_argument('--memory_updater', type=str, default="gru")
     parser.add_argument('--aggregator', type=str, default="last")
     parser.add_argument('--memory_update_at_end', action='store_true')
-    parser.add_argument('--message_dim', type=int, default=100)
-    parser.add_argument('--memory_dim', type=int, default=172)
+    parser.add_argument('--message_dim', type=int, default=200)
+    parser.add_argument('--memory_dim', type=int, default=None, help='Memory dimensions (auto-detect from model if not specified)')
     parser.add_argument('--different_new_nodes', action='store_true')
     parser.add_argument('--uniform', action='store_true')
     parser.add_argument('--randomize_features', action='store_true')
@@ -54,45 +46,95 @@ def parse_args():
     parser.add_argument('--use_source_embedding_in_message', action='store_true')
     parser.add_argument('--dyrep', action='store_true')
     parser.add_argument('--model_path', type=str, required=True, help='Path to trained model')
-    parser.add_argument('--circular', action='store_true', help='Use circular layout')
     parser.add_argument('--mapping_dir', type=str, default='data/mappings')
     parser.add_argument('--top_k_export', type=int, default=100)
     parser.add_argument('--run_techrank', action='store_true', help='Run TechRank after evaluation')
+    parser.add_argument('--auto_detect_params', action='store_true', 
+                        help='Auto-detect model parameters from checkpoint')
     return parser.parse_args()
+
+def detect_model_params_from_checkpoint(checkpoint_path, logger):
+    """
+    Détecte automatiquement les hyperparamètres du modèle depuis le checkpoint
+    """
+    logger.info("🔍 Auto-detecting model parameters from checkpoint...")
+    
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    
+    params = {}
+    
+    # Détecter memory_dim depuis la shape de memory.memory
+    if 'memory.memory' in checkpoint:
+        memory_shape = checkpoint['memory.memory'].shape
+        params['memory_dim'] = memory_shape[1]
+        logger.info(f"   ✓ Detected memory_dim: {params['memory_dim']}")
+    
+    # Détecter message_dim depuis message_function si disponible
+    if 'message_function.message_linear_1.weight' in checkpoint:
+        msg_shape = checkpoint['message_function.message_linear_1.weight'].shape
+        params['message_dim'] = msg_shape[0]
+        logger.info(f"   ✓ Detected message_dim: {params['message_dim']}")
+    
+    # Détecter node_dim depuis embedding_module
+    if 'embedding_module.linear.weight' in checkpoint:
+        node_shape = checkpoint['embedding_module.linear.weight'].shape
+        params['node_dim'] = node_shape[1]
+        logger.info(f"   ✓ Detected node_dim: {params['node_dim']}")
+    
+    # Détecter n_heads depuis attention layers
+    if 'embedding_module.attention_models.0.attention.out_proj.weight' in checkpoint:
+        out_proj_shape = checkpoint['embedding_module.attention_models.0.attention.out_proj.weight'].shape
+        # Le nombre de têtes peut être déduit de la structure
+        logger.info(f"   ⚠️  n_heads detection: check manually (typically 2)")
+    
+    return params
 
 def setup_logger():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
     return logging.getLogger()
 
-# ----------------------------
-# Utilities
-# ----------------------------
-def initialize_model(args, device, node_features, edge_features, mean_time_shift_src, std_time_shift_src, mean_time_shift_dst, std_time_shift_dst):
-    tgn = TGN(neighbor_finder=None, node_features=node_features,
-              edge_features=edge_features, device=device,
-              n_layers=args.n_layer, n_heads=args.n_head, dropout=args.drop_out,
-              use_memory=args.use_memory, message_dimension=args.message_dim,
-              memory_dimension=args.memory_dim,
-              memory_update_at_start=not args.memory_update_at_end,
-              embedding_module_type=args.embedding_module,
-              message_function=args.message_function,
-              aggregator_type=args.aggregator,
-              memory_updater_type=args.memory_updater,
-              n_neighbors=args.n_degree,
-              mean_time_shift_src=mean_time_shift_src, std_time_shift_src=std_time_shift_src,
-              mean_time_shift_dst=mean_time_shift_dst, std_time_shift_dst=std_time_shift_dst,
-              use_destination_embedding_in_message=args.use_destination_embedding_in_message,
-              use_source_embedding_in_message=args.use_source_embedding_in_message,
-              dyrep=args.dyrep)
-    return tgn
+def process_data_chronologically(data, tgn_model, ngh_finder, batch_size, n_neighbors, logger):
+    """
+    ⚠️ CRITIQUE: Parcours chronologique pour construire la mémoire
+    Cette fonction doit être appelée dans le même ordre qu'au training
+    """
+    tgn_model.set_neighbor_finder(ngh_finder)
+
+    sources = np.asarray(data.sources)
+    destinations = np.asarray(data.destinations)
+    timestamps = np.asarray(data.timestamps)
+    edge_idxs = np.asarray(data.edge_idxs)
+
+    if len(timestamps) == 0:
+        logger.debug("No interactions to process")
+        return
+
+    # ⚠️ IMPORTANT: Trier chronologiquement (comme au training)
+    sorted_idx = np.argsort(timestamps)
+    sources = sources[sorted_idx]
+    destinations = destinations[sorted_idx]
+    timestamps = timestamps[sorted_idx]
+    edge_idxs = edge_idxs[sorted_idx]
+
+    logger.info(f"Processing {len(sources)} interactions chronologically...")
+    for i in range(0, len(sources), batch_size):
+        s = sources[i:i+batch_size]
+        d = destinations[i:i+batch_size]
+        ts = timestamps[i:i+batch_size]
+        e = edge_idxs[i:i+batch_size]
+        
+        with torch.no_grad():
+            try:
+                _ = tgn_model.compute_temporal_embeddings(s, d, d, ts, e, n_neighbors)
+            except AssertionError as ex:
+                logger.error(f"AssertionError during memory update: {ex}")
+                raise
+        
+        if (i // batch_size) % 50 == 0:
+            logger.info(f"  Processed {i}/{len(sources)} interactions...")
 
 def load_mappings(mapping_dir, logger):
-    """
-    Charge les mappings depuis les CSV de vérification.
-    IMPORTANT: Dans prepare_tgn_input, la convention est:
-      - item_map = companies (colonnes 'u' dans TGN)
-      - user_map = investors (colonnes 'i' dans TGN)
-    """
+    """Charge les mappings pour les prédictions"""
     mapping_dir = Path(mapping_dir)
     
     id_to_company = {}
@@ -107,114 +149,388 @@ def load_mappings(mapping_dir, logger):
             df_comp = pd.read_csv(csv_company)
             df_inv = pd.read_csv(csv_investor)
             
-            # Construire les mappings avec conversion en int
             id_to_company = {int(row['Company_ID_TGN']): str(row['Company_Name']) 
                             for _, row in df_comp.iterrows()}
             id_to_investor = {int(row['Investor_ID_TGN']): str(row['Investor_Name']) 
                              for _, row in df_inv.iterrows()}
             
-            logger.info(f"✅ Mappings chargés depuis CSV:")
-            logger.info(f"   {len(id_to_company):,} companies")
-            logger.info(f"   {len(id_to_investor):,} investors")
-            logger.info(f"   Company IDs: [{min(id_to_company.keys())} - {max(id_to_company.keys())}]")
-            logger.info(f"   Investor IDs: [{min(id_to_investor.keys())} - {max(id_to_investor.keys())}]")
-            
+            logger.info(f"✅ Mappings loaded: {len(id_to_company)} companies, {len(id_to_investor)} investors")
             return id_to_company, id_to_investor
             
         except Exception as e:
-            logger.warning(f"⚠️  Erreur lors du chargement des CSV: {e}")
-            logger.info("Basculement sur les fichiers pickle...")
-    else:
-        logger.warning(f"⚠️  Fichiers CSV introuvables:")
-        logger.warning(f"   - {csv_company}")
-        logger.warning(f"   - {csv_investor}")
+            logger.warning(f"⚠️  Error loading CSV mappings: {e}")
     
     # Fallback sur pickle
-    candidate_company = ["crunchbase_filtered_company_id_map.pickle", "forecast_company_id_map.pickle"]
-    candidate_investor = ["crunchbase_filtered_investor_id_map.pickle", "forecast_investor_id_map.pickle"]
+    logger.info("Trying pickle fallback...")
+    company_pickle = mapping_dir / "crunchbase_filtered_company_id_map.pickle"
+    investor_pickle = mapping_dir / "crunchbase_filtered_investor_id_map.pickle"
     
-    company_map_path = None
-    investor_map_path = None
-    
-    for cand in candidate_company:
-        p = mapping_dir / cand
-        if p.exists():
-            company_map_path = p
-            break
-    
-    for cand in candidate_investor:
-        p = mapping_dir / cand
-        if p.exists():
-            investor_map_path = p
-            break
-    
-    if company_map_path and investor_map_path:
-        try:
-            with open(company_map_path, "rb") as f:
-                company_map = pickle.load(f)
-            with open(investor_map_path, "rb") as f:
-                investor_map = pickle.load(f)
+    if company_pickle.exists() and investor_pickle.exists():
+        with open(company_pickle, "rb") as f:
+            company_map = pickle.load(f)
+        with open(investor_pickle, "rb") as f:
+            investor_map = pickle.load(f)
+        
+        # Inversion si nécessaire
+        if company_map and isinstance(list(company_map.keys())[0], str):
+            id_to_company = {int(v): str(k) for k, v in company_map.items()}
+        else:
+            id_to_company = {int(k): str(v) for k, v in company_map.items()}
             
-            # Dans prepare_tgn_input: item_map = {company_name: id}, donc on inverse
-            # Si le pickle est {name: id}, on l'inverse en {id: name}
-            if company_map and isinstance(list(company_map.keys())[0], str):
-                id_to_company = {int(v): str(k) for k, v in company_map.items()}
-            else:
-                id_to_company = {int(k): str(v) for k, v in company_map.items()}
-                
-            if investor_map and isinstance(list(investor_map.keys())[0], str):
-                id_to_investor = {int(v): str(k) for k, v in investor_map.items()}
-            else:
-                id_to_investor = {int(k): str(v) for k, v in investor_map.items()}
-            
-            logger.info(f"✅ Mappings chargés depuis pickle:")
-            logger.info(f"   {len(id_to_company):,} companies")
-            logger.info(f"   {len(id_to_investor):,} investors")
-            
-            return id_to_company, id_to_investor
-            
-        except Exception as e:
-            logger.warning(f"⚠️  Erreur lors du chargement des pickle: {e}")
+        if investor_map and isinstance(list(investor_map.keys())[0], str):
+            id_to_investor = {int(v): str(k) for k, v in investor_map.items()}
+        else:
+            id_to_investor = {int(k): str(v) for k, v in investor_map.items()}
+        
+        logger.info(f"✅ Mappings loaded from pickle: {len(id_to_company)} companies, {len(id_to_investor)} investors")
+        return id_to_company, id_to_investor
     
-    logger.error("❌ Impossible de charger les mappings!")
+    logger.error("❌ No mapping files found!")
     return id_to_company, id_to_investor
 
-def process_data_chronologically(data, tgn_model, ngh_finder, batch_size, n_neighbors, logger):
-    """Parcours chronologique pour mise à jour mémoire"""
-    tgn_model.set_neighbor_finder(ngh_finder)
+def main():
+    args = parse_args()
+    logger = setup_logger()
 
-    sources = np.asarray(data.sources)
-    destinations = np.asarray(data.destinations)
-    timestamps = np.asarray(data.timestamps)
-    edge_idxs = np.asarray(data.edge_idxs)
+    logger.info("="*70)
+    logger.info("TGN EVALUATION - Reproduction exacte du training")
+    logger.info("="*70)
+    logger.info(f"Dataset: {args.data}")
+    logger.info(f"Model: {args.model_path}")
+    
+    logger.info("\n" + "="*70)
+    logger.info("HYPERPARAMETERS")
+    logger.info("="*70)
+    logger.info(f"⚠️  IMPORTANT: Use the SAME hyperparameters as training!")
+    logger.info(f"   batch_size: {args.bs}")
+    logger.info(f"   n_degree: {args.n_degree}")
+    logger.info(f"   n_head: {args.n_head}")
+    logger.info(f"   n_layer: {args.n_layer}")
+    logger.info(f"   node_dim: {args.node_dim}")
+    logger.info(f"   time_dim: {args.time_dim}")
+    logger.info(f"   message_dim: {args.message_dim}")
+    logger.info(f"   memory_dim: {args.memory_dim if args.memory_dim else 'auto-detect'}")
+    logger.info(f"   embedding_module: {args.embedding_module}")
+    logger.info(f"   use_memory: {args.use_memory}")
 
-    if len(timestamps) == 0:
-        logger.debug("process_data_chronologically: no interactions to process")
-        return
+    # ================================================================
+    # Auto-detect parameters from checkpoint if requested
+    # ================================================================
+    if args.auto_detect_params or args.memory_dim is None:
+        if not Path(args.model_path).exists():
+            logger.error(f"❌ Model file not found: {args.model_path}")
+            sys.exit(1)
+        
+        logger.info("\n" + "="*70)
+        logger.info("AUTO-DETECTING PARAMETERS FROM CHECKPOINT")
+        logger.info("="*70)
+        
+        detected_params = detect_model_params_from_checkpoint(args.model_path, logger)
+        
+        # Override args with detected parameters
+        if args.memory_dim is None and 'memory_dim' in detected_params:
+            args.memory_dim = detected_params['memory_dim']
+            logger.info(f"✅ Using detected memory_dim: {args.memory_dim}")
+        
+        if args.auto_detect_params:
+            if 'message_dim' in detected_params:
+                args.message_dim = detected_params['message_dim']
+                logger.info(f"✅ Using detected message_dim: {args.message_dim}")
+            if 'node_dim' in detected_params:
+                args.node_dim = detected_params['node_dim']
+                logger.info(f"✅ Using detected node_dim: {args.node_dim}")
+    
+    # Fallback si toujours None
+    if args.memory_dim is None:
+        logger.error("❌ Could not detect memory_dim from checkpoint!")
+        logger.error("   Please specify --memory_dim manually")
+        logger.error("   Check your training logs or pickle file for the correct value")
+        sys.exit(1)
 
-    sorted_idx = np.argsort(timestamps)
-    sources = sources[sorted_idx]
-    destinations = destinations[sorted_idx]
-    timestamps = timestamps[sorted_idx]
-    edge_idxs = edge_idxs[sorted_idx]
+    device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
+    logger.info(f"\nDevice: {device}")
 
-    for i in range(0, len(sources), batch_size):
-        s = sources[i:i+batch_size]
-        d = destinations[i:i+batch_size]
-        ts = timestamps[i:i+batch_size]
-        e = edge_idxs[i:i+batch_size]
-        with torch.no_grad():
-            try:
-                _ = tgn_model.compute_temporal_embeddings(s, d, d, ts, e, n_neighbors)
-            except AssertionError as ex:
-                logger.error("AssertionError during compute_temporal_embeddings: %s", ex)
-                raise
+    # ================================================================
+    # ✅ ÉTAPE 1: Charger LES MÊMES DONNÉES qu'au training
+    # ================================================================
+    logger.info("\n" + "="*70)
+    logger.info("STEP 1: Loading FULL dataset (train+val+test)")
+    logger.info("="*70)
+    
+    node_features, edge_features, full_data, train_data, val_data, test_data, \
+    new_node_val_data, new_node_test_data = get_data(
+        args.data,
+        different_new_nodes_between_val_and_test=args.different_new_nodes,
+        randomize_features=args.randomize_features
+    )
+    
+    logger.info(f"✅ Dataset loaded:")
+    logger.info(f"   Full data: {len(full_data.sources)} interactions")
+    logger.info(f"   Train: {len(train_data.sources)} interactions")
+    logger.info(f"   Val: {len(val_data.sources)} interactions")
+    logger.info(f"   Test: {len(test_data.sources)} interactions")
+    logger.info(f"   New nodes test: {len(new_node_test_data.sources)} interactions")
 
-def build_memory_from_train(args, tgn, train_data, train_ngh_finder, logger):
-    """Reset memory and build from train_data"""
+    # ================================================================
+    # ✅ ÉTAPE 2: Créer LES MÊMES neighbor finders qu'au training
+    # ================================================================
+    logger.info("\n" + "="*70)
+    logger.info("STEP 2: Creating neighbor finders")
+    logger.info("="*70)
+    
+    train_ngh_finder = get_neighbor_finder(train_data, args.uniform)
+    full_ngh_finder = get_neighbor_finder(full_data, args.uniform)
+    
+    logger.info("✅ Neighbor finders created (train + full)")
+
+    # ================================================================
+    # ✅ ÉTAPE 3: Créer LES MÊMES samplers qu'au training
+    # ================================================================
+    logger.info("\n" + "="*70)
+    logger.info("STEP 3: Creating random samplers")
+    logger.info("="*70)
+    
+    test_rand_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=2)
+    nn_test_rand_sampler = RandEdgeSampler(new_node_test_data.sources, new_node_test_data.destinations, seed=3)
+    
+    logger.info("✅ Random samplers created")
+
+    # ================================================================
+    # ✅ ÉTAPE 4: Calculer LES MÊMES time statistics qu'au training
+    # ================================================================
+    logger.info("\n" + "="*70)
+    logger.info("STEP 4: Computing time statistics")
+    logger.info("="*70)
+    
+    mean_time_shift_src, std_time_shift_src, mean_time_shift_dst, std_time_shift_dst = \
+        compute_time_statistics(full_data.sources, full_data.destinations, full_data.timestamps)
+    
+    logger.info(f"✅ Time statistics computed:")
+    logger.info(f"   Source: mean={mean_time_shift_src:.2f}, std={std_time_shift_src:.2f}")
+    logger.info(f"   Dest: mean={mean_time_shift_dst:.2f}, std={std_time_shift_dst:.2f}")
+
+    # ================================================================
+    # ✅ ÉTAPE 5: Initialiser le modèle EXACTEMENT comme au training
+    # ================================================================
+    logger.info("\n" + "="*70)
+    logger.info("STEP 5: Initializing model")
+    logger.info("="*70)
+    
+    tgn = TGN(
+        neighbor_finder=train_ngh_finder,  # ⚠️ IMPORTANT: Commencer avec train_ngh_finder
+        node_features=node_features,
+        edge_features=edge_features,
+        device=device,
+        n_layers=args.n_layer,
+        n_heads=args.n_head,
+        dropout=args.drop_out,
+        use_memory=args.use_memory,
+        message_dimension=args.message_dim,
+        memory_dimension=args.memory_dim,
+        memory_update_at_start=not args.memory_update_at_end,
+        embedding_module_type=args.embedding_module,
+        message_function=args.message_function,
+        aggregator_type=args.aggregator,
+        memory_updater_type=args.memory_updater,
+        n_neighbors=args.n_degree,
+        mean_time_shift_src=mean_time_shift_src,
+        std_time_shift_src=std_time_shift_src,
+        mean_time_shift_dst=mean_time_shift_dst,
+        std_time_shift_dst=std_time_shift_dst,
+        use_destination_embedding_in_message=args.use_destination_embedding_in_message,
+        use_source_embedding_in_message=args.use_source_embedding_in_message,
+        dyrep=args.dyrep
+    )
+    
+    tgn = tgn.to(device)
+    logger.info("✅ Model initialized")
+
+    # ================================================================
+    # ✅ ÉTAPE 6: Charger les poids du modèle
+    # ================================================================
+    logger.info("\n" + "="*70)
+    logger.info("STEP 6: Loading model weights")
+    logger.info("="*70)
+    
+    if not Path(args.model_path).exists():
+        logger.error(f"❌ Model file not found: {args.model_path}")
+        sys.exit(1)
+    
+    checkpoint = torch.load(args.model_path, map_location=device)
+    
+    # ⚠️ IMPORTANT: Ne PAS supprimer les memory states si use_memory=True
+    # Car on veut reconstruire l'état exact du training
+    if not args.use_memory:
+        for key in list(checkpoint.keys()):
+            if "memory" in key:
+                checkpoint.pop(key)
+    
+    tgn.load_state_dict(checkpoint, strict=False)
+    tgn.eval()
+    logger.info("✅ Model weights loaded")
+
+    # ================================================================
+    # ✅ ÉTAPE 7: Reconstruire la mémoire EXACTEMENT comme au training
+    # ================================================================
+    logger.info("\n" + "="*70)
+    logger.info("STEP 7: Rebuilding memory from training data")
+    logger.info("="*70)
+    
     if args.use_memory:
+        logger.info("Resetting memory...")
         tgn.memory.__init_memory__()
-    process_data_chronologically(train_data, tgn, train_ngh_finder, args.bs, args.n_degree, logger)
+        
+        logger.info("Processing training data chronologically...")
+        process_data_chronologically(train_data, tgn, train_ngh_finder, args.bs, args.n_degree, logger)
+        
+        logger.info("✅ Memory rebuilt from training data")
+        train_memory_backup = tgn.memory.backup_memory()
+    else:
+        logger.info("⚠️  No memory module used")
+        train_memory_backup = None
+
+    # ================================================================
+    # ✅ ÉTAPE 8: Validation (pour comparaison)
+    # ================================================================
+    logger.info("\n" + "="*70)
+    logger.info("STEP 8: Validation evaluation")
+    logger.info("="*70)
+    
+    tgn.set_neighbor_finder(full_ngh_finder)  # ⚠️ IMPORTANT: Utiliser full_ngh_finder pour val/test
+    
+    val_rand_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=0)
+    nn_val_rand_sampler = RandEdgeSampler(new_node_val_data.sources, new_node_val_data.destinations, seed=1)
+    
+    if args.use_memory:
+        # Sauvegarder l'état après train
+        train_memory_state = tgn.memory.backup_memory()
+    
+    val_ap, val_auc, val_mrr, val_recall_10, val_recall_50 = eval_edge_prediction(
+        model=tgn,
+        negative_edge_sampler=val_rand_sampler,
+        data=val_data,
+        n_neighbors=args.n_degree
+    )
+    
+    logger.info("📊 Validation Results (old nodes):")
+    logger.info(f"   AUROC: {val_auc:.4f}")
+    logger.info(f"   AP: {val_ap:.4f}")
+    logger.info(f"   MRR: {val_mrr:.4f}")
+    logger.info(f"   Recall@10: {val_recall_10:.4f}")
+    logger.info(f"   Recall@50: {val_recall_50:.4f}")
+    
+    if args.use_memory:
+        val_memory_backup = tgn.memory.backup_memory()
+        tgn.memory.restore_memory(train_memory_state)
+    
+    nn_val_ap, nn_val_auc, nn_val_mrr, nn_val_recall_10, nn_val_recall_50 = eval_edge_prediction(
+        model=tgn,
+        negative_edge_sampler=nn_val_rand_sampler,
+        data=new_node_val_data,
+        n_neighbors=args.n_degree
+    )
+    
+    logger.info("📊 Validation Results (new nodes):")
+    logger.info(f"   AUROC: {nn_val_auc:.4f}")
+    logger.info(f"   AP: {nn_val_ap:.4f}")
+    logger.info(f"   MRR: {nn_val_mrr:.4f}")
+    logger.info(f"   Recall@10: {nn_val_recall_10:.4f}")
+    logger.info(f"   Recall@50: {nn_val_recall_50:.4f}")
+    
+    if args.use_memory:
+        tgn.memory.restore_memory(val_memory_backup)
+
+    # ================================================================
+    # ✅ ÉTAPE 9: Test (metrics principales)
+    # ================================================================
+    logger.info("\n" + "="*70)
+    logger.info("STEP 9: Test evaluation")
+    logger.info("="*70)
+    
+    test_ap, test_auc, test_mrr, test_recall_10, test_recall_50 = eval_edge_prediction(
+        model=tgn,
+        negative_edge_sampler=test_rand_sampler,
+        data=test_data,
+        n_neighbors=args.n_degree
+    )
+    
+    logger.info("📊 Test Results (old nodes):")
+    logger.info(f"   AUROC: {test_auc:.4f}")
+    logger.info(f"   AP: {test_ap:.4f}")
+    logger.info(f"   MRR: {test_mrr:.4f}")
+    logger.info(f"   Recall@10: {test_recall_10:.4f}")
+    logger.info(f"   Recall@50: {test_recall_50:.4f}")
+    
+    if args.use_memory:
+        tgn.memory.restore_memory(val_memory_backup)
+    
+    nn_test_ap, nn_test_auc, nn_test_mrr, nn_test_recall_10, nn_test_recall_50 = eval_edge_prediction(
+        model=tgn,
+        negative_edge_sampler=nn_test_rand_sampler,
+        data=new_node_test_data,
+        n_neighbors=args.n_degree
+    )
+    
+    logger.info("📊 Test Results (new nodes):")
+    logger.info(f"   AUROC: {nn_test_auc:.4f}")
+    logger.info(f"   AP: {nn_test_ap:.4f}")
+    logger.info(f"   MRR: {nn_test_mrr:.4f}")
+    logger.info(f"   Recall@10: {nn_test_recall_10:.4f}")
+    logger.info(f"   Recall@50: {nn_test_recall_50:.4f}")
+
+    # ================================================================
+    # SUMMARY
+    # ================================================================
+    logger.info("\n" + "="*70)
+    logger.info("EVALUATION SUMMARY")
+    logger.info("="*70)
+    logger.info("\n📊 Test Results (Old Nodes):")
+    logger.info(f"   AUROC: {test_auc:.4f}")
+    logger.info(f"   AP: {test_ap:.4f}")
+    logger.info(f"   MRR: {test_mrr:.4f}")
+    logger.info(f"   Recall@10: {test_recall_10:.4f}")
+    logger.info(f"   Recall@50: {test_recall_50:.4f}")
+    
+    logger.info("\n📊 Test Results (New Nodes):")
+    logger.info(f"   AUROC: {nn_test_auc:.4f}")
+    logger.info(f"   AP: {nn_test_ap:.4f}")
+    logger.info(f"   MRR: {nn_test_mrr:.4f}")
+    logger.info(f"   Recall@10: {nn_test_recall_10:.4f}")
+    logger.info(f"   Recall@50: {nn_test_recall_50:.4f}")
+
+    # ================================================================
+    # ✅ ÉTAPE 10: Predictions & TechRank
+    # ================================================================
+    if args.run_techrank:
+        logger.info("\n" + "="*70)
+        logger.info("STEP 10: GENERATING PREDICTIONS FOR TECHRANK")
+        logger.info("="*70)
+        
+        id_to_company, id_to_investor = load_mappings(args.mapping_dir, logger)
+        
+        # ⚠️ IMPORTANT: Restaurer la mémoire à l'état après validation
+        # pour éviter les erreurs de timestamps
+        if args.use_memory and val_memory_backup is not None:
+            logger.info("Restoring memory to post-validation state for predictions...")
+            tgn.memory.restore_memory(val_memory_backup)
+        
+        # Générer le graphe de prédictions
+        logger.info("Generating prediction graph...")
+        pred_graph, predictions, dict_companies, dict_investors = generate_predictions_and_graph(
+            tgn, id_to_company, id_to_investor, full_data, train_data, args, logger, full_ngh_finder
+        )
+        
+        # Sauvegarder le graphe et les top prédictions
+        save_graph_and_top(pred_graph, predictions, dict_companies, dict_investors, 
+                          args, logger, id_to_company, id_to_investor)
+        
+        # Diagnostic avant TechRank
+        diagnostic_graph_before_techrank(pred_graph, dict_companies, dict_investors, logger)
+        
+        # Lancer TechRank
+        run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger)
+
+    logger.info("\n✅ Evaluation complete!")
 
 def filter_edges_after_training(full_data, train_data, logger):
     """Filtre les arêtes après le timestamp max du train"""
@@ -238,15 +554,18 @@ def filter_edges_after_training(full_data, train_data, logger):
 
     count_total = len(edge_times)
     count_after = mask_after_train.sum()
-    logger.info("Edges total in full_data: %d, edges at/after train max timestamp: %d", count_total, int(count_after))
+    logger.info("Edges total in full_data: %d, edges after train max timestamp: %d", count_total, int(count_after))
 
     return sources[mask_after_train], destinations[mask_after_train], edge_times[mask_after_train], edge_idxs[mask_after_train]
 
-def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data, train_data, args, logger):
+def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data, train_data, args, logger, full_ngh_finder):
     """
-    CORRECTION FINALE BASÉE SUR prepare_tgn_input():
+    Génère le graphe de prédictions avec la convention TGN:
     - sources (u) = companies → bipartite=0
     - destinations (i) = investors → bipartite=1
+    
+    ⚠️ IMPORTANT: Cette fonction ne doit PAS mettre à jour la mémoire
+    Elle doit juste calculer les probabilités en mode évaluation
     """
     
     logger.info(f"\n{'='*70}")
@@ -256,8 +575,16 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     logger.info(f"  - sources (u/item_map) = COMPANIES → bipartite=0")
     logger.info(f"  - destinations (i/user_map) = INVESTORS → bipartite=1")
     
+    # Mettre le modèle en mode évaluation
+    tgn.eval()
+    tgn.set_neighbor_finder(full_ngh_finder)
+    
+    # Convention TechRank: companies=0, investors=1
+    COMPANY_BIPARTITE = 0
+    INVESTOR_BIPARTITE = 1
+    
     # ================================================================
-    # ÉTAPE 1: Construire node_type/node_name SELON LA CONVENTION TGN
+    # ÉTAPE 1: Construire node_type/node_name
     # ================================================================
     node_type = {}
     node_name = {}
@@ -268,10 +595,8 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     logger.info(f"\nPlages d'IDs dans les données TGN:")
     logger.info(f"  Sources (companies): [{min(all_sources)}, {max(all_sources)}] ({len(all_sources)} uniques)")
     logger.info(f"  Destinations (investors): [{min(all_destinations)}, {max(all_destinations)}] ({len(all_destinations)} uniques)")
-    logger.info(f"  id_to_company: [{min(id_to_company.keys()) if id_to_company else 'N/A'}, {max(id_to_company.keys()) if id_to_company else 'N/A'}]")
-    logger.info(f"  id_to_investor: [{min(id_to_investor.keys()) if id_to_investor else 'N/A'}, {max(id_to_investor.keys()) if id_to_investor else 'N/A'}]")
     
-    # Sources = COMPANIES (selon prepare_tgn_input)
+    # Sources = COMPANIES
     companies_mapped = 0
     for src_id in all_sources:
         src_id = int(src_id)
@@ -280,7 +605,7 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
             node_name[src_id] = id_to_company[src_id]
             companies_mapped += 1
     
-    # Destinations = INVESTORS (selon prepare_tgn_input)
+    # Destinations = INVESTORS
     investors_mapped = 0
     for dst_id in all_destinations:
         dst_id = int(dst_id)
@@ -292,27 +617,30 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     logger.info(f"\nNode mappings construits:")
     logger.info(f"  Companies (sources, bipartite=0): {companies_mapped}")
     logger.info(f"  Investors (destinations, bipartite=1): {investors_mapped}")
-    logger.info(f"  Total nodes mappés: {len(node_type)}")
-    
-    if companies_mapped == 0:
-        logger.error("❌ ERREUR CRITIQUE: Aucune company mappée!")
-        logger.error("   Vérifiez que id_to_company contient les bons IDs")
-    
-    if investors_mapped == 0:
-        logger.error("❌ ERREUR CRITIQUE: Aucun investor mappé!")
-        logger.error("   Vérifiez que id_to_investor contient les bons IDs")
-    
-    logger.info(f"{'='*70}\n")
-    
-    # Convention TechRank: companies=0, investors=1
-    COMPANY_BIPARTITE = 0
-    INVESTOR_BIPARTITE = 1
     
     # ================================================================
-    # ÉTAPE 2: Filtrer et générer les prédictions
+    # ÉTAPE 2: Générer les prédictions sur l'ensemble de test
     # ================================================================
-    sources, destinations, edge_times, edge_idxs = filter_edges_after_training(full_data, train_data, logger)
+    # Au lieu de filtrer après train, on utilise directement test_data
+    # pour éviter les problèmes de timestamps
     
+    # On va utiliser toutes les données de full_data pour les prédictions
+    # mais en mode inference (sans mise à jour de mémoire)
+    sources = np.array(full_data.sources)
+    destinations = np.array(full_data.destinations)
+    edge_times = np.array(full_data.timestamps)
+    edge_idxs = np.array(full_data.edge_idxs)
+    
+    # Trier par timestamp pour assurer l'ordre chronologique
+    sorted_idx = np.argsort(edge_times)
+    sources = sources[sorted_idx]
+    destinations = destinations[sorted_idx]
+    edge_times = edge_times[sorted_idx]
+    edge_idxs = edge_idxs[sorted_idx]
+    
+    logger.info(f"Generating predictions on {len(sources)} edges...")
+    
+    import networkx as nx
     neg_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=42)
     pred_graph = nx.Graph()
     predictions = []
@@ -321,7 +649,7 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     dict_investors = {}
     edge_funding_info = {}
     
-    logger.info("Computing edge probabilities for filtered dataset...")
+    logger.info("Computing edge probabilities...")
     for start in range(0, len(sources), args.bs):
         end = min(start + args.bs, len(sources))
         src_batch = sources[start:end]
@@ -334,22 +662,31 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
         if len(neg_batch.shape) > 1:
             neg_batch = neg_batch[:, 0]
         
+        # ⚠️ IMPORTANT: torch.no_grad() pour ne pas mettre à jour la mémoire
         with torch.no_grad():
-            pos_prob, _ = tgn.compute_edge_probabilities(src_batch, dst_batch, neg_batch, times_batch, idx_batch)
+            try:
+                pos_prob, _ = tgn.compute_edge_probabilities(
+                    src_batch, dst_batch, neg_batch, 
+                    times_batch, idx_batch, args.n_degree
+                )
+            except AssertionError as e:
+                logger.error(f"❌ AssertionError at batch {start}-{end}: {e}")
+                logger.error(f"   Timestamps range: [{times_batch.min():.2f}, {times_batch.max():.2f}]")
+                logger.error("   This might indicate memory state inconsistency")
+                logger.error("   Skipping this batch...")
+                continue
         
         for s, d, p, t in zip(src_batch, dst_batch, pos_prob.cpu().numpy(), times_batch):
-            s = int(s)  # Company ID (source)
-            d = int(d)  # Investor ID (destination)
+            s = int(s)
+            d = int(d)
             prob_score = float(p)
             timestamp = float(t)
             
-            # Selon notre convention: s=company, d=investor
             company_id = s
             investor_id = d
             company_name = node_name.get(s, f"company_{s}")
             investor_name = node_name.get(d, f"investor_{d}")
             
-            # Créer/mettre à jour les dictionnaires
             if company_name not in dict_companies:
                 dict_companies[company_name] = {
                     'id': company_id,
@@ -367,7 +704,6 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
                     'total_invested': 0.0
                 }
             
-            # Tracking funding rounds
             edge_key = (company_name, investor_name)
             if edge_key not in edge_funding_info:
                 edge_funding_info[edge_key] = {
@@ -383,13 +719,11 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
             edge_funding_info[edge_key]['total_raised_amount_usd'] += prob_score
             edge_funding_info[edge_key]['num_funding_rounds'] += 1
             
-            # Update stats
             dict_companies[company_name]['total_funding'] += prob_score
             dict_companies[company_name]['num_funding_rounds'] += 1
             dict_investors[investor_name]['num_investments'] += 1
             dict_investors[investor_name]['total_invested'] += prob_score
             
-            # Add nodes avec bipartite correct
             pred_graph.add_node(company_name, bipartite=COMPANY_BIPARTITE)
             pred_graph.add_node(investor_name, bipartite=INVESTOR_BIPARTITE)
             
@@ -410,7 +744,7 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
         )
     
     # Ensure all mapped nodes are in graph
-    for nid, name in (id_to_company or {}).items():
+    for nid, name in id_to_company.items():
         if name not in pred_graph:
             pred_graph.add_node(name, bipartite=COMPANY_BIPARTITE)
             if name not in dict_companies:
@@ -422,7 +756,7 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
                     'num_funding_rounds': 0
                 }
     
-    for nid, name in (id_to_investor or {}).items():
+    for nid, name in id_to_investor.items():
         if name not in pred_graph:
             pred_graph.add_node(name, bipartite=INVESTOR_BIPARTITE)
             if name not in dict_investors:
@@ -435,19 +769,6 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     
     logger.info("Graph created: %d nodes, %d edges", pred_graph.number_of_nodes(), pred_graph.number_of_edges())
     logger.info("Dictionaries created: %d companies, %d investors", len(dict_companies), len(dict_investors))
-    
-    # Stats
-    total_funding_rounds = sum([data.get('num_funding_rounds', 0) for u, v, data in pred_graph.edges(data=True)])
-    logger.info(f"Total funding rounds: {total_funding_rounds}")
-    
-    # Vérifier les poids des arêtes
-    if pred_graph.number_of_edges() > 0:
-        edge_weights = [data.get('weight', 0) for u, v, data in pred_graph.edges(data=True)]
-        logger.info(f"\n📊 Statistiques des poids d'arêtes:")
-        logger.info(f"   Min: {min(edge_weights):.6f}")
-        logger.info(f"   Max: {max(edge_weights):.6f}")
-        logger.info(f"   Moyenne: {np.mean(edge_weights):.6f}")
-        logger.info(f"   Arêtes avec poids > 0: {sum(1 for w in edge_weights if w > 0)}")
     
     return pred_graph, predictions, dict_companies, dict_investors
 
@@ -480,274 +801,157 @@ def save_graph_and_top(pred_graph, predictions, dict_companies, dict_investors, 
                 writer.writerow([src_id, dst_id, comp_name, inv_name, prob])
         logger.info("Top %d predictions saved to %s", args.top_k_export, csv_path)
 
-# ----------------------------
-# main()
-# ----------------------------
-def main():
-    args = parse_args()
-    logger = setup_logger()
-
-    logger.info("Evaluating TGN model on dataset: %s", args.data)
-
-    device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
-
-    node_features, edge_features, full_data, train_data, val_data, test_data, new_node_val_data, new_node_test_data = get_data(
-        args.data,
-        different_new_nodes_between_val_and_test=args.different_new_nodes,
-        randomize_features=args.randomize_features
-    )
-
-    logger.info("Dataset loaded: %d interactions (full)", len(full_data.sources))
-
-    train_ngh_finder = get_neighbor_finder(train_data, args.uniform)
-    # test_ngh_finder = get_neighbor_finder(test_data, args.uniform)
-    full_ngh_finder = get_neighbor_finder(full_data, args.uniform)
-
-    val_rand_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=0)
-    nn_val_rand_sampler = RandEdgeSampler(new_node_val_data.sources, new_node_val_data.destinations, seed=1)
-    test_rand_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=2)
-    nn_test_rand_sampler = RandEdgeSampler(new_node_test_data.sources, new_node_test_data.destinations, seed=3)
-
-    mean_time_shift_src, std_time_shift_src, mean_time_shift_dst, std_time_shift_dst = compute_time_statistics(
-        full_data.sources, full_data.destinations, full_data.timestamps
-    )
-
-    tgn = initialize_model(args, device, node_features, edge_features,
-                           mean_time_shift_src, std_time_shift_src, mean_time_shift_dst, std_time_shift_dst)
-
-    if Path(args.model_path).exists():
-        logger.info("Loading model from %s", args.model_path)
-        checkpoint = torch.load(args.model_path, map_location=device)
-        for key in list(checkpoint.keys()):
-            if "memory" in key:
-                checkpoint.pop(key)
-        tgn.load_state_dict(checkpoint, strict=False)
-    else:
-        logger.error("Model file not found: %s", args.model_path)
-        sys.exit(1)
-
-    tgn.to(device)
-    tgn.eval()
+def diagnostic_graph_before_techrank(pred_graph, dict_companies, dict_investors, logger):
+    """Diagnostic du graphe avant TechRank"""
+    import networkx as nx
     
-    logger.info("Starting evaluation pipeline")
-
-    # Phase 1: Validation (seen nodes)
-    logger.info("Phase 1: Validation (seen nodes)")
-    if args.use_memory:
-        build_memory_from_train(args, tgn, train_data, train_ngh_finder, logger)
-    tgn.set_neighbor_finder(full_ngh_finder)
-    val_ap, val_auc,_,_,_ = eval_edge_prediction(tgn, val_rand_sampler, val_data, args.n_degree)
-    logger.info("Validation (seen nodes) - AUC: %.4f, AP: %.4f", val_auc, val_ap)
-
-    # Phase 2: Validation (new nodes)
-    logger.info("Phase 2: Validation (new nodes)")
-    build_memory_from_train(args, tgn, train_data, train_ngh_finder, logger)
-    tgn.set_neighbor_finder(full_ngh_finder)
-    nn_val_ap, nn_val_auc,_,_,_ = eval_edge_prediction(tgn, nn_val_rand_sampler, new_node_val_data, args.n_degree)
-    logger.info("Validation (new nodes) - AUC: %.4f, AP: %.4f", nn_val_auc, nn_val_ap)
-
-    logger.info("Phase 3: Test (seen nodes)")
-    build_memory_from_train(args, tgn, train_data, train_ngh_finder, logger)
-    tgn.set_neighbor_finder(full_ngh_finder)
-    test_ap, test_auc,_,_,_ = eval_edge_prediction(tgn, test_rand_sampler, test_data, args.n_degree)
-    logger.info("Test (seen nodes) - AUC: %.4f, AP: %.4f", test_auc, test_ap)
-
-    # Phase 4: Test (new nodes)
-    logger.info("Phase 4: Test (new nodes)")
-    build_memory_from_train(args, tgn, train_data, train_ngh_finder, logger)
-    tgn.set_neighbor_finder(full_ngh_finder)
-    nn_test_ap, nn_test_auc,_,_,_ = eval_edge_prediction(tgn, nn_test_rand_sampler, new_node_test_data, args.n_degree)
-    logger.info("Test (new nodes) - AUC: %.4f, AP: %.4f", nn_test_auc, nn_test_ap)
-
-    # Load mappings
-    id_to_company, id_to_investor = load_mappings(args.mapping_dir, logger)
-
-    # Generate predictions
-    logger.info("Generating predicted graph (using memory built from train)")
-    build_memory_from_train(args, tgn, train_data, train_ngh_finder, logger)
-    tgn.set_neighbor_finder(full_ngh_finder)
-
-    pred_graph, predictions, dict_companies, dict_investors = generate_predictions_and_graph(
-        tgn, id_to_company, id_to_investor, full_data, train_data, args, logger
-    )
-
-    save_graph_and_top(pred_graph, predictions, dict_companies, dict_investors, 
-                       args, logger, id_to_company, id_to_investor)
-
-    logger.info("Evaluation complete!")
-
-    # DIAGNOSTIC AVANT TECHRANK
-    if args.run_techrank:
-        logger.info("\n" + "="*70)
-        logger.info("DIAGNOSTIC DU GRAPHE AVANT TECHRANK")
-        logger.info("="*70)
-        
-        # Vérifier la structure bipartite
-        nodes_0 = [n for n, d in pred_graph.nodes(data=True) if d.get('bipartite') == 0]
-        nodes_1 = [n for n, d in pred_graph.nodes(data=True) if d.get('bipartite') == 1]
-        
-        logger.info(f"📊 Structure du graphe:")
-        logger.info(f"   Total nodes: {pred_graph.number_of_nodes()}")
-        logger.info(f"   Total edges: {pred_graph.number_of_edges()}")
-        logger.info(f"   Companies (bipartite=0): {len(nodes_0)}")
-        logger.info(f"   Investors (bipartite=1): {len(nodes_1)}")
-        logger.info(f"   Dict companies: {len(dict_companies)}")
-        logger.info(f"   Dict investors: {len(dict_investors)}")
-        
-        # Exemples de noms
-        logger.info(f"\n📝 Exemples de noms:")
-        logger.info(f"   Companies (bipartite=0): {nodes_0[:3]}")
-        logger.info(f"   Investors (bipartite=1): {nodes_1[:3]}")
-        logger.info(f"   Dict companies keys: {list(dict_companies.keys())[:3]}")
-        logger.info(f"   Dict investors keys: {list(dict_investors.keys())[:3]}")
-        
-        # Vérifier les nœuds isolés
-        isolated = list(nx.isolates(pred_graph))
-        logger.info(f"\n🔍 Nœuds isolés: {len(isolated)}")
-        if isolated:
-            logger.info(f"   Exemples: {isolated[:5]}")
-        
-        # Vérifier la cohérence dict ↔ graphe
-        nodes_0_set = set(nodes_0)
-        nodes_1_set = set(nodes_1)
-        
-        companies_in_0 = len(set(dict_companies.keys()) & nodes_0_set)
-        companies_in_1 = len(set(dict_companies.keys()) & nodes_1_set)
-        investors_in_0 = len(set(dict_investors.keys()) & nodes_0_set)
-        investors_in_1 = len(set(dict_investors.keys()) & nodes_1_set)
-        
-        logger.info(f"\n🔍 Cohérence dict ↔ graphe:")
-        logger.info(f"   Companies dans bipartite=0: {companies_in_0}/{len(dict_companies)}")
-        logger.info(f"   Companies dans bipartite=1: {companies_in_1}/{len(dict_companies)} (devrait être 0)")
-        logger.info(f"   Investors dans bipartite=0: {investors_in_0}/{len(dict_investors)} (devrait être 0)")
-        logger.info(f"   Investors dans bipartite=1: {investors_in_1}/{len(dict_investors)}")
-        
-        # Vérifier des exemples d'arêtes
-        if pred_graph.number_of_edges() > 0:
-            sample_edges = list(pred_graph.edges(data=True))[:3]
-            logger.info(f"\n🔗 Exemples d'arêtes:")
-            for u, v, data in sample_edges:
-                u_bipartite = pred_graph.nodes[u].get('bipartite', 'MISSING')
-                v_bipartite = pred_graph.nodes[v].get('bipartite', 'MISSING')
-                weight = data.get('weight', 0)
-                logger.info(f"   {u} (bipartite={u_bipartite}) → {v} (bipartite={v_bipartite})")
-                logger.info(f"      Weight: {weight:.6f}, Rounds: {data.get('num_funding_rounds', 0)}")
-                
-                # Vérifier la cohérence
-                if u_bipartite == v_bipartite:
-                    logger.error(f"      ❌ ERREUR: Les deux nœuds ont le même bipartite={u_bipartite}!")
-                else:
-                    logger.info(f"      ✅ OK: Arête bipartite valide")
-        
-        # Vérifier les degrés
-        if pred_graph.number_of_edges() > 0:
-            degrees = dict(pred_graph.degree())
-            if nodes_0:
-                company_degrees = [degrees[c] for c in nodes_0[:10]]
-                logger.info(f"\n📊 Degrés des companies (10 premiers): {company_degrees}")
-            if nodes_1:
-                investor_degrees = [degrees[i] for i in nodes_1[:10]]
-                logger.info(f"📊 Degrés des investors (10 premiers): {investor_degrees}")
-
-    # LANCEMENT DE TECHRANK
-    if args.run_techrank:
-        logger.info("\n" + "="*70)
-        logger.info("LANCEMENT DE TECHRANK SUR LE GRAPHE PRÉDIT")
-        logger.info("="*70)
-        
-        # Vérification finale avant TechRank
-        companies_in_graph = set(n for n in pred_graph.nodes() if n in dict_companies)
-        investors_in_graph = set(n for n in pred_graph.nodes() if n in dict_investors)
-        
-        logger.info(f"\n📊 Données pour TechRank:")
-        logger.info(f"   Companies dans le graphe: {len(companies_in_graph)}")
-        logger.info(f"   Investors dans le graphe: {len(investors_in_graph)}")
-        logger.info(f"   Total edges: {pred_graph.number_of_edges()}")
-        
-        # Sauvegarder dans le format attendu
-        num_nodes = pred_graph.number_of_nodes()
-        save_dir_classes = Path("savings/bipartite_invest_comp/classes")
-        save_dir_networks = Path("savings/bipartite_invest_comp/networks")
-        save_dir_classes.mkdir(parents=True, exist_ok=True)
-        save_dir_networks.mkdir(parents=True, exist_ok=True)
-        
-        with open(save_dir_classes / f'dict_companies_{num_nodes}.pickle', 'wb') as f:
-            pickle.dump(dict_companies, f)
-        with open(save_dir_classes / f'dict_investors_{num_nodes}.pickle', 'wb') as f:
-            pickle.dump(dict_investors, f)
-        with open(save_dir_networks / f'bipartite_graph_{num_nodes}.gpickle', 'wb') as f:
-            pickle.dump(pred_graph, f)
-        
-        logger.info(f"\n✓ Données sauvegardées pour TechRank (limit={num_nodes})")
-        
-        # Importer et lancer TechRank
-        try:
-            from code.TechRank import run_techrank
+    logger.info("\n" + "="*70)
+    logger.info("DIAGNOSTIC DU GRAPHE AVANT TECHRANK")
+    logger.info("="*70)
+    
+    nodes_0 = [n for n, d in pred_graph.nodes(data=True) if d.get('bipartite') == 0]
+    nodes_1 = [n for n, d in pred_graph.nodes(data=True) if d.get('bipartite') == 1]
+    
+    logger.info(f"📊 Structure du graphe:")
+    logger.info(f"   Total nodes: {pred_graph.number_of_nodes()}")
+    logger.info(f"   Total edges: {pred_graph.number_of_edges()}")
+    logger.info(f"   Companies (bipartite=0): {len(nodes_0)}")
+    logger.info(f"   Investors (bipartite=1): {len(nodes_1)}")
+    logger.info(f"   Dict companies: {len(dict_companies)}")
+    logger.info(f"   Dict investors: {len(dict_investors)}")
+    
+    logger.info(f"\n📝 Exemples de noms:")
+    logger.info(f"   Companies (bipartite=0): {nodes_0[:3]}")
+    logger.info(f"   Investors (bipartite=1): {nodes_1[:3]}")
+    
+    isolated = list(nx.isolates(pred_graph))
+    logger.info(f"\n🔍 Nœuds isolés: {len(isolated)}")
+    if isolated:
+        logger.info(f"   Exemples: {isolated[:5]}")
+    
+    nodes_0_set = set(nodes_0)
+    nodes_1_set = set(nodes_1)
+    
+    companies_in_0 = len(set(dict_companies.keys()) & nodes_0_set)
+    companies_in_1 = len(set(dict_companies.keys()) & nodes_1_set)
+    investors_in_0 = len(set(dict_investors.keys()) & nodes_0_set)
+    investors_in_1 = len(set(dict_investors.keys()) & nodes_1_set)
+    
+    logger.info(f"\n🔍 Cohérence dict ↔ graphe:")
+    logger.info(f"   Companies dans bipartite=0: {companies_in_0}/{len(dict_companies)}")
+    logger.info(f"   Companies dans bipartite=1: {companies_in_1}/{len(dict_companies)} (devrait être 0)")
+    logger.info(f"   Investors dans bipartite=0: {investors_in_0}/{len(dict_investors)} (devrait être 0)")
+    logger.info(f"   Investors dans bipartite=1: {investors_in_1}/{len(dict_investors)}")
+    
+    if pred_graph.number_of_edges() > 0:
+        sample_edges = list(pred_graph.edges(data=True))[:3]
+        logger.info(f"\n🔗 Exemples d'arêtes:")
+        for u, v, data in sample_edges:
+            u_bipartite = pred_graph.nodes[u].get('bipartite', 'MISSING')
+            v_bipartite = pred_graph.nodes[v].get('bipartite', 'MISSING')
+            weight = data.get('weight', 0)
+            logger.info(f"   {u} (bipartite={u_bipartite}) → {v} (bipartite={v_bipartite})")
+            logger.info(f"      Weight: {weight:.6f}, Rounds: {data.get('num_funding_rounds', 0)}")
             
-            logger.info("\n🚀 Lancement de TechRank...")
-            logger.info(f"   Alpha: 0.8, Beta: -0.6")
-            logger.info(f"   Companies: {len(dict_companies)}")
-            logger.info(f"   Investors: {len(dict_investors)}")
+            if u_bipartite == v_bipartite:
+                logger.error(f"      ❌ ERREUR: Les deux nœuds ont le même bipartite={u_bipartite}!")
+            else:
+                logger.info(f"      ✅ OK: Arête bipartite valide")
+        
+        edge_weights = [data.get('weight', 0) for u, v, data in pred_graph.edges(data=True)]
+        logger.info(f"\n📊 Statistiques des poids d'arêtes:")
+        logger.info(f"   Min: {min(edge_weights):.6f}")
+        logger.info(f"   Max: {max(edge_weights):.6f}")
+        logger.info(f"   Moyenne: {np.mean(edge_weights):.6f}")
+        logger.info(f"   Arêtes avec poids > 0: {sum(1 for w in edge_weights if w > 0)}")
+
+def run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger):
+    """Lance TechRank sur le graphe prédit"""
+    logger.info("\n" + "="*70)
+    logger.info("LANCEMENT DE TECHRANK SUR LE GRAPHE PRÉDIT")
+    logger.info("="*70)
+    
+    companies_in_graph = set(n for n in pred_graph.nodes() if n in dict_companies)
+    investors_in_graph = set(n for n in pred_graph.nodes() if n in dict_investors)
+    
+    logger.info(f"\n📊 Données pour TechRank:")
+    logger.info(f"   Companies dans le graphe: {len(companies_in_graph)}")
+    logger.info(f"   Investors dans le graphe: {len(investors_in_graph)}")
+    logger.info(f"   Total edges: {pred_graph.number_of_edges()}")
+    
+    num_nodes = pred_graph.number_of_nodes()
+    save_dir_classes = Path("savings/bipartite_invest_comp/classes")
+    save_dir_networks = Path("savings/bipartite_invest_comp/networks")
+    save_dir_classes.mkdir(parents=True, exist_ok=True)
+    save_dir_networks.mkdir(parents=True, exist_ok=True)
+    
+    with open(save_dir_classes / f'dict_companies_{num_nodes}.pickle', 'wb') as f:
+        pickle.dump(dict_companies, f)
+    with open(save_dir_classes / f'dict_investors_{num_nodes}.pickle', 'wb') as f:
+        pickle.dump(dict_investors, f)
+    with open(save_dir_networks / f'bipartite_graph_{num_nodes}.gpickle', 'wb') as f:
+        pickle.dump(pred_graph, f)
+    
+    logger.info(f"\n✓ Données sauvegardées pour TechRank (limit={num_nodes})")
+    
+    try:
+        from code.TechRank import run_techrank
+        
+        logger.info("\n🚀 Lancement de TechRank...")
+        logger.info(f"   Alpha: 0.8, Beta: -0.6")
+        logger.info(f"   Companies: {len(dict_companies)}")
+        logger.info(f"   Investors: {len(dict_investors)}")
+        
+        df_investors_rank, df_companies_rank, _, _ = run_techrank(
+            num_comp=num_nodes,
+            num_tech=num_nodes,
+            flag_cybersecurity=False,
+            alpha=0.8,
+            beta=-0.6,
+            do_plot=False,
+            dict_investors=dict_investors,
+            dict_comp=dict_companies,
+            B=pred_graph
+        )
+        
+        logger.info("\n✓ TechRank terminé avec succès!")
+        
+        if df_investors_rank is not None and len(df_investors_rank) > 0:
+            non_zero_inv = (df_investors_rank['techrank'] > 0).sum()
+            max_score_inv = df_investors_rank['techrank'].max()
+            logger.info(f"\n📊 Résultats Investors:")
+            logger.info(f"   Total: {len(df_investors_rank)}")
+            logger.info(f"   Scores > 0: {non_zero_inv}")
+            logger.info(f"   Score max: {max_score_inv:.6f}")
             
-            df_investors_rank, df_companies_rank, _, _ = run_techrank(
-                num_comp=num_nodes,
-                num_tech=num_nodes,
-                flag_cybersecurity=False,
-                alpha=0.8,
-                beta=-0.6,
-                do_plot=False,
-                dict_investors=dict_investors,
-                dict_comp=dict_companies,
-                B=pred_graph
-            )
+            if non_zero_inv > 0:
+                logger.info("\n📊 Top 10 Investors (par TechRank):")
+                top_inv = df_investors_rank.nlargest(10, 'techrank')[['final_configuration', 'techrank']]
+                for idx, (_, row) in enumerate(top_inv.iterrows(), 1):
+                    logger.info(f"   #{idx:2d} {row['final_configuration']:40s} → Score: {row['techrank']:.6f}")
+            else:
+                logger.error("\n❌ TOUS les scores investors sont à zéro!")
+        
+        if df_companies_rank is not None and len(df_companies_rank) > 0:
+            non_zero_comp = (df_companies_rank['techrank'] > 0).sum()
+            max_score_comp = df_companies_rank['techrank'].max()
+            logger.info(f"\n📊 Résultats Companies:")
+            logger.info(f"   Total: {len(df_companies_rank)}")
+            logger.info(f"   Scores > 0: {non_zero_comp}")
+            logger.info(f"   Score max: {max_score_comp:.6f}")
             
-            logger.info("\n✓ TechRank terminé avec succès!")
-            
-            # Vérifier si les scores sont tous à zéro
-            if df_investors_rank is not None and len(df_investors_rank) > 0:
-                non_zero_inv = (df_investors_rank['techrank'] > 0).sum()
-                max_score_inv = df_investors_rank['techrank'].max()
-                logger.info(f"\n📊 Résultats Investors:")
-                logger.info(f"   Total: {len(df_investors_rank)}")
-                logger.info(f"   Scores > 0: {non_zero_inv}")
-                logger.info(f"   Score max: {max_score_inv:.6f}")
-                
-                if non_zero_inv > 0:
-                    logger.info("\n📊 Top 10 Investors (par TechRank):")
-                    top_inv = df_investors_rank.nlargest(10, 'techrank')[['final_configuration', 'techrank']]
-                    for idx, (_, row) in enumerate(top_inv.iterrows(), 1):
-                        logger.info(f"   #{idx:2d} {row['final_configuration']:40s} → Score: {row['techrank']:.6f}")
-                else:
-                    logger.error("\n❌ TOUS les scores investors sont à zéro!")
-                    logger.error("   Causes possibles:")
-                    logger.error("   1. Structure bipartite incorrecte (arêtes 0-0 ou 1-1)")
-                    logger.error("   2. Poids des arêtes tous nuls")
-                    logger.error("   3. Graphe déconnecté")
-            
-            if df_companies_rank is not None and len(df_companies_rank) > 0:
-                non_zero_comp = (df_companies_rank['techrank'] > 0).sum()
-                max_score_comp = df_companies_rank['techrank'].max()
-                logger.info(f"\n📊 Résultats Companies:")
-                logger.info(f"   Total: {len(df_companies_rank)}")
-                logger.info(f"   Scores > 0: {non_zero_comp}")
-                logger.info(f"   Score max: {max_score_comp:.6f}")
-                
-                if non_zero_comp > 0:
-                    logger.info("\n📊 Top 10 Companies (par TechRank):")
-                    top_comp = df_companies_rank.nlargest(10, 'techrank')[['final_configuration', 'techrank']]
-                    for idx, (_, row) in enumerate(top_comp.iterrows(), 1):
-                        logger.info(f"   #{idx:2d} {row['final_configuration']:40s} → Score: {row['techrank']:.6f}")
-                else:
-                    logger.error("\n❌ TOUS les scores companies sont à zéro!")
-                    logger.error("   Causes possibles:")
-                    logger.error("   1. Structure bipartite incorrecte (arêtes 0-0 ou 1-1)")
-                    logger.error("   2. Poids des arêtes tous nuls")
-                    logger.error("   3. Graphe déconnecté")
-            
-        except ImportError as e:
-            logger.error(f"❌ Impossible d'importer TechRank: {e}")
-        except Exception as e:
-            logger.error(f"❌ Erreur lors de l'exécution de TechRank: {e}", exc_info=True)
+            if non_zero_comp > 0:
+                logger.info("\n📊 Top 10 Companies (par TechRank):")
+                top_comp = df_companies_rank.nlargest(10, 'techrank')[['final_configuration', 'techrank']]
+                for idx, (_, row) in enumerate(top_comp.iterrows(), 1):
+                    logger.info(f"   #{idx:2d} {row['final_configuration']:40s} → Score: {row['techrank']:.6f}")
+            else:
+                logger.error("\n❌ TOUS les scores companies sont à zéro!")
+        
+    except ImportError as e:
+        logger.error(f"❌ Impossible d'importer TechRank: {e}")
+    except Exception as e:
+        logger.error(f"❌ Erreur lors de l'exécution de TechRank: {e}", exc_info=True)
 
 if __name__ == "__main__":
     main()
