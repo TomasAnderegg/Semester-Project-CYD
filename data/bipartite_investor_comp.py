@@ -243,6 +243,13 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
         label = 1.0 # La transaction a eu lieu
         # Features de l'arête: Total levé, Nombre de rounds
         feat = np.array([np.log1p(data.get('total_raised_amount_usd', 0)), data.get('num_funding_rounds', 1)]) # l'argument de la fonctin get veut dire "Donne moi la valeur demandé ou si elle n'existe pas, donne moi 0 (ou 1 pour num_funding_rounds)"
+        
+        # PRINT EDGE FEATURES (une seule fois)
+        if len(feats) == 0:
+            print("\nEDGE FEATURES INFORMATION")
+            print(f"  - Number of edge features: {len(feat)}")
+            print(f"  - Edge feature names: ['log_total_raised_amount_usd', 'num_funding_rounds']")
+
         rows.append((u_id, v_id, ts, label)) # u → company, v → investor
         feats.append(feat)
     
@@ -1183,7 +1190,16 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
 
     df_graph_full['announced_on'] = pd.to_datetime(df_graph_full['announced_on'], errors='coerce')
     df_graph_full = df_graph_full.dropna(subset=['announced_on'])
+    
+    # TIMESPAN print 
+    min_date = df_graph_full['announced_on'].min()
+    max_date = df_graph_full['announced_on'].max()
+    time_span_days = (max_date - min_date).days
 
+    print("\nTEMPORAL INFORMATION (announced_on)")
+    print(f"  - First investment date: {min_date.date()}")
+    print(f"  - Last investment date:  {max_date.date()}")
+    print(f"  - Time span:             {time_span_days} days")
 
     df_graph_full = filter_merged_by_organizations(df_graph_full, df_organizations, keywords = FILTER_KEYWORDS)
     # df_graph_full.to_csv("debug_filtered_graph_full.csv", index=False)

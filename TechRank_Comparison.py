@@ -383,6 +383,18 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
     
     # Style
     sns.set_style("whitegrid")
+    # ============================
+    # GLOBAL FONT CONFIGURATION
+    # ============================
+    plt.rcParams.update({
+        'font.size': 18,          # taille par défaut
+        'axes.titlesize': 20,     # titres des plots
+        'axes.labelsize': 18,     # labels des axes
+        'xtick.labelsize': 16,    # ticks axe X
+        'ytick.labelsize': 16,    # ticks axe Y
+        'legend.fontsize': 16,    # légende
+        'figure.titlesize': 22    # titre figure
+    })
     
     # 1. NOUVEAU: Graphique Before/After pour top K entreprises
     if len(df_promising) > 0:
@@ -400,24 +412,30 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
         # Barres AVANT TGN (en bleu)
         bars_before = ax.barh(y_pos - bar_height/2, topK['techrank_before'], 
                               bar_height, label='Before TGN', 
-                              color='#3498db', alpha=0.8, edgecolor='black', linewidth=0.5)
+                              color='#3498db', alpha=0.8, edgecolor='black', linewidth=0.2)
         
         # Barres APRÈS TGN (en vert)
         bars_after = ax.barh(y_pos + bar_height/2, topK['techrank_after'], 
                             bar_height, label='After TGN', 
-                            color='#2ecc71', alpha=0.8, edgecolor='black', linewidth=0.5)
+                            color='#2ecc71', alpha=0.8, edgecolor='black', linewidth=0.2)
         
         # Ajouter les valeurs sur les barres
         for i, (before, after) in enumerate(zip(topK['techrank_before'], topK['techrank_after'])):
             # Valeur before
             ax.text(before, i - bar_height/2, f'{before:.4f}', 
-                   va='center', ha='left', fontsize=7, fontweight='bold')
+                   va='center', ha='left', fontsize=10, fontweight='bold')
             # Valeur after
             ax.text(after, i + bar_height/2, f'{after:.4f}', 
-                   va='center', ha='left', fontsize=7, fontweight='bold')
+                   va='center', ha='left', fontsize=10, fontweight='bold')
         
+        # ax.set_yticks(y_pos)
+        # ax.set_yticklabels(companies, fontsize=9)
         ax.set_yticks(y_pos)
-        ax.set_yticklabels(companies, fontsize=9)
+        ax.set_yticklabels(
+            companies,
+            fontsize=16,
+            fontweight='bold'
+        )
         ax.set_xlabel('TechRank Score', fontsize=12, fontweight='bold')
         ax.set_title(f'Top {top_k_viz} Most Promising Companies: TechRank Before vs After TGN', 
                     fontsize=14, fontweight='bold', pad=20)
@@ -476,7 +494,7 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
         y_pos = np.arange(len(top20))
         bars = ax3.barh(y_pos, top20['techrank_delta'], color='#2ecc71', alpha=0.8, edgecolor='black')
         ax3.set_yticks(y_pos)
-        ax3.set_yticklabels([name[:35] for name in top20['final_configuration']], fontsize=8)
+        ax3.set_yticklabels([name[:35] for name in top20['final_configuration']], fontsize=12)
         ax3.set_xlabel('TechRank Delta', fontsize=11, fontweight='bold')
         ax3.set_title('Top 20 Promising Companies (by Delta)', fontsize=12, fontweight='bold')
         ax3.grid(True, alpha=0.3, axis='x')
