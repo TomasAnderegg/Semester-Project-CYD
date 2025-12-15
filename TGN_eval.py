@@ -560,35 +560,65 @@ def filter_edges_after_training(full_data, train_data, logger):
 
 def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data, train_data, args, logger, full_ngh_finder):
     """
-    Génère le graphe de prédictions avec la convention TGN:
-    - sources (u) = companies → bipartite=0
-    - destinations (i) = investors → bipartite=1
-    
-    ⚠️ IMPORTANT: Cette fonction ne doit PAS mettre à jour la mémoire
-    Elle doit juste calculer les probabilités en mode évaluation
+    Génère le graphe de prédictions UNIQUEMENT pour les liens FUTURS (après train).
+
+    ✅ MÉTHODOLOGIE CORRECTE:
+    1. Prendre TOUTES les paires possibles (company, investor)
+    2. Calculer la probabilité pour chaque paire
+    3. Construire un graphe avec les paires ayant une probabilité > seuil
+
+    ⚠️ IMPORTANT: On ne doit PAS utiliser full_data car ça inclut les vrais liens!
+    On doit prédire sur TOUTES les paires possibles, y compris celles qui n'existent pas.
+
+    Args:
+        tgn: Modèle TGN chargé
+        id_to_company: Mapping ID -> nom de company
+        id_to_investor: Mapping ID -> nom d'investisseur
+        full_data: Données complètes (pour neighbor finder)
+        train_data: Données d'entraînement (pour timestamp de prédiction)
+        args: Arguments
+        logger: Logger
+        full_ngh_finder: Neighbor finder sur full data
     """
-    
+
     logger.info(f"\n{'='*70}")
     logger.info(f"CONSTRUCTION DU GRAPHE DE PRÉDICTION")
     logger.info(f"{'='*70}")
-    logger.info(f"Convention TGN (depuis prepare_tgn_input):")
-    logger.info(f"  - sources (u/item_map) = COMPANIES → bipartite=0")
-    logger.info(f"  - destinations (i/user_map) = INVESTORS → bipartite=1")
-    
+    logger.info(f"✅ MÉTHODOLOGIE CORRECTE:")
+    logger.info(f"   1. Prédire probabilités pour TOUTES les paires possibles")
+    logger.info(f"   2. Construire graphe avec paires prob > seuil")
+    logger.info(f"   3. Comparer avec graphe TEST réel pour validation")
+    logger.info(f"\nConvention TGN:")
+    logger.info(f"  - sources (u) = COMPANIES → bipartite=0")
+    logger.info(f"  - destinations (i) = INVESTORS → bipartite=1")
+
     # Mettre le modèle en mode évaluation
     tgn.eval()
     tgn.set_neighbor_finder(full_ngh_finder)
-    
+
     # Convention TechRank: companies=0, investors=1
     COMPANY_BIPARTITE = 0
     INVESTOR_BIPARTITE = 1
-    
+
     # ================================================================
-    # ÉTAPE 1: Construire node_type/node_name
+    # ÉTAPE 1: Identifier TOUTES les paires possibles
+    # ================================================================
+    logger.info(f"\n🔍 Étape 1: Identifier toutes les paires possibles")
+
+    # Extraire les IDs de companies et investors
+    company_ids = sorted(id_to_company.keys())
+    investor_ids = sorted(id_to_investor.keys())
+
+    logger.info(f"   Companies: {len(company_ids)}")
+    logger.info(f"   Investors: {len(investor_ids)}")
+    logger.info(f"   Total paires possibles: {len(company_ids) * len(investor_ids):,}")
+
+    # ================================================================
+    # ÉTAPE 2: Préparer les structures de données
     # ================================================================
     node_type = {}
     node_name = {}
-    
+
     all_sources = set(full_data.sources)
     all_destinations = set(full_data.destinations)
     
@@ -619,119 +649,154 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     logger.info(f"  Investors (destinations, bipartite=1): {investors_mapped}")
     
     # ================================================================
-    # ÉTAPE 2: Générer les prédictions sur l'ensemble de test
+    # ÉTAPE 3: Générer TOUTES les paires possibles et prédire
     # ================================================================
-    # Au lieu de filtrer après train, on utilise directement test_data
-    # pour éviter les problèmes de timestamps
-    
-    # On va utiliser toutes les données de full_data pour les prédictions
-    # mais en mode inference (sans mise à jour de mémoire)
-    sources = np.array(full_data.sources)
-    destinations = np.array(full_data.destinations)
-    edge_times = np.array(full_data.timestamps)
-    edge_idxs = np.array(full_data.edge_idxs)
-    
-    # Trier par timestamp pour assurer l'ordre chronologique
-    sorted_idx = np.argsort(edge_times)
-    sources = sources[sorted_idx]
-    destinations = destinations[sorted_idx]
-    edge_times = edge_times[sorted_idx]
-    edge_idxs = edge_idxs[sorted_idx]
-    
-    logger.info(f"Generating predictions on {len(sources)} edges...")
-    
+    logger.info(f"\n🚀 Étape 3: Génération des prédictions pour TOUTES les paires")
+
     import networkx as nx
-    neg_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=42)
+
+    # Timestamp de prédiction = fin du train set
+    if len(train_data.timestamps) > 0:
+        prediction_timestamp = float(np.max(train_data.timestamps))
+    else:
+        prediction_timestamp = float(np.max(full_data.timestamps))
+
+    logger.info(f"   Timestamp de prédiction: {prediction_timestamp:.2f}")
+
+    # Créer toutes les paires possibles
+    all_pairs = []
+    for company_id in company_ids:
+        for investor_id in investor_ids:
+            all_pairs.append((company_id, investor_id))
+
+    logger.info(f"   Total paires à prédire: {len(all_pairs):,}")
+
+    # Prédire par batches
     pred_graph = nx.Graph()
     predictions = []
-    
     dict_companies = {}
     dict_investors = {}
     edge_funding_info = {}
-    
-    logger.info("Computing edge probabilities...")
-    for start in range(0, len(sources), args.bs):
-        end = min(start + args.bs, len(sources))
-        src_batch = sources[start:end]
-        dst_batch = destinations[start:end]
-        times_batch = edge_times[start:end]
-        idx_batch = edge_idxs[start:end]
-        
+
+    # Seuil de probabilité pour créer une arête
+    PROBABILITY_THRESHOLD = 0.5  # Ajustable
+
+    logger.info(f"   Probability threshold: {PROBABILITY_THRESHOLD}")
+    logger.info(f"   Batch size: {args.bs}")
+    logger.info(f"\n   Computing edge probabilities...")
+
+    num_batches = (len(all_pairs) + args.bs - 1) // args.bs
+
+    # Negative sampler (dummy, pas vraiment utilisé)
+    neg_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=42)
+
+    for batch_idx in range(num_batches):
+        start_idx = batch_idx * args.bs
+        end_idx = min(len(all_pairs), start_idx + args.bs)
+
+        batch_pairs = all_pairs[start_idx:end_idx]
+        src_batch = np.array([p[0] for p in batch_pairs], dtype=np.int32)
+        dst_batch = np.array([p[1] for p in batch_pairs], dtype=np.int32)
+
+        # Timestamps (tous identiques pour la prédiction)
+        times_batch = np.full(len(src_batch), prediction_timestamp, dtype=np.float32)
+
+        # Edge indices (dummy, pas utilisés pour l'inférence)
+        idx_batch = np.zeros(len(src_batch), dtype=np.int32)
+
+        # Negative samples (dummy)
         neg_tuple = neg_sampler.sample(len(src_batch))
         neg_batch = np.array(neg_tuple[1])
         if len(neg_batch.shape) > 1:
             neg_batch = neg_batch[:, 0]
-        
+
         # ⚠️ IMPORTANT: torch.no_grad() pour ne pas mettre à jour la mémoire
         with torch.no_grad():
             try:
                 pos_prob, _ = tgn.compute_edge_probabilities(
-                    src_batch, dst_batch, neg_batch, 
+                    src_batch, dst_batch, neg_batch,
                     times_batch, idx_batch, args.n_degree
                 )
+
+                prob_scores = pos_prob.cpu().numpy()
+
+                # Stocker les prédictions et construire le graphe
+                for s, d, prob in zip(src_batch, dst_batch, prob_scores):
+                    s = int(s)
+                    d = int(d)
+                    prob_score = float(prob)
+                    timestamp = prediction_timestamp
+
+                    # Ne garder que les arêtes avec probabilité > seuil
+                    if prob_score < PROBABILITY_THRESHOLD:
+                        continue
+
+                    company_id = s
+                    investor_id = d
+                    company_name = node_name.get(s, f"company_{s}")
+                    investor_name = node_name.get(d, f"investor_{d}")
+
+                    if company_name not in dict_companies:
+                        dict_companies[company_name] = {
+                            'id': company_id,
+                            'name': company_name,
+                            'technologies': [],
+                            'total_funding': 0.0,
+                            'num_funding_rounds': 0
+                        }
+
+                    if investor_name not in dict_investors:
+                        dict_investors[investor_name] = {
+                            'investor_id': investor_id,
+                            'name': investor_name,
+                            'num_investments': 0,
+                            'total_invested': 0.0
+                        }
+
+                    edge_key = (company_name, investor_name)
+                    if edge_key not in edge_funding_info:
+                        edge_funding_info[edge_key] = {
+                            'funding_rounds': [],
+                            'total_raised_amount_usd': 0.0,
+                            'num_funding_rounds': 0
+                        }
+
+                    edge_funding_info[edge_key]['funding_rounds'].append({
+                        'timestamp': timestamp,
+                        'probability': prob_score
+                    })
+                    edge_funding_info[edge_key]['total_raised_amount_usd'] += prob_score
+                    edge_funding_info[edge_key]['num_funding_rounds'] += 1
+
+                    dict_companies[company_name]['total_funding'] += prob_score
+                    dict_companies[company_name]['num_funding_rounds'] += 1
+                    dict_investors[investor_name]['num_investments'] += 1
+                    dict_investors[investor_name]['total_invested'] += prob_score
+
+                    pred_graph.add_node(company_name, bipartite=COMPANY_BIPARTITE)
+                    pred_graph.add_node(investor_name, bipartite=INVESTOR_BIPARTITE)
+
+                    predictions.append((s, d, prob_score))
+
             except AssertionError as e:
-                logger.error(f"❌ AssertionError at batch {start}-{end}: {e}")
+                logger.error(f"❌ AssertionError at batch {batch_idx}: {e}")
                 logger.error(f"   Timestamps range: [{times_batch.min():.2f}, {times_batch.max():.2f}]")
-                logger.error("   This might indicate memory state inconsistency")
                 logger.error("   Skipping this batch...")
                 continue
-        
-        for s, d, p, t in zip(src_batch, dst_batch, pos_prob.cpu().numpy(), times_batch):
-            s = int(s)
-            d = int(d)
-            prob_score = float(p)
-            timestamp = float(t)
-            
-            company_id = s
-            investor_id = d
-            company_name = node_name.get(s, f"company_{s}")
-            investor_name = node_name.get(d, f"investor_{d}")
-            
-            if company_name not in dict_companies:
-                dict_companies[company_name] = {
-                    'id': company_id,
-                    'name': company_name,
-                    'technologies': [],
-                    'total_funding': 0.0,
-                    'num_funding_rounds': 0
-                }
-            
-            if investor_name not in dict_investors:
-                dict_investors[investor_name] = {
-                    'investor_id': investor_id,
-                    'name': investor_name,
-                    'num_investments': 0,
-                    'total_invested': 0.0
-                }
-            
-            edge_key = (company_name, investor_name)
-            if edge_key not in edge_funding_info:
-                edge_funding_info[edge_key] = {
-                    'funding_rounds': [],
-                    'total_raised_amount_usd': 0.0,
-                    'num_funding_rounds': 0
-                }
-            
-            edge_funding_info[edge_key]['funding_rounds'].append({
-                'timestamp': timestamp,
-                'probability': prob_score
-            })
-            edge_funding_info[edge_key]['total_raised_amount_usd'] += prob_score
-            edge_funding_info[edge_key]['num_funding_rounds'] += 1
-            
-            dict_companies[company_name]['total_funding'] += prob_score
-            dict_companies[company_name]['num_funding_rounds'] += 1
-            dict_investors[investor_name]['num_investments'] += 1
-            dict_investors[investor_name]['total_invested'] += prob_score
-            
-            pred_graph.add_node(company_name, bipartite=COMPANY_BIPARTITE)
-            pred_graph.add_node(investor_name, bipartite=INVESTOR_BIPARTITE)
-            
-            predictions.append((s, d, prob_score))
-        
-        if (start // args.bs) % 10 == 0:
-            logger.info("Processed %d/%d edges...", end, len(sources))
-    
+
+        if (batch_idx % 100) == 0:
+            logger.info(f"      Processed {end_idx}/{len(all_pairs):,} pairs...")
+
+    logger.info(f"\n✅ Prédictions terminées:")
+    logger.info(f"   Total paires prédites: {len(all_pairs):,}")
+    logger.info(f"   Arêtes retenues (prob > {PROBABILITY_THRESHOLD}): {len(edge_funding_info)}")
+    logger.info(f"   Taux de rétention: {len(edge_funding_info)/len(all_pairs)*100:.2f}%")
+
+    # ================================================================
+    # ÉTAPE 4: Construire le graphe final
+    # ================================================================
+    logger.info(f"\n🔨 Étape 4: Construction du graphe final")
+
     # Add edges
     for (comp_name, inv_name), funding_info in edge_funding_info.items():
         pred_graph.add_edge(
