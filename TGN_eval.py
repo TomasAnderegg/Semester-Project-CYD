@@ -49,8 +49,14 @@ def parse_args():
     parser.add_argument('--mapping_dir', type=str, default='data/mappings')
     parser.add_argument('--top_k_export', type=int, default=100)
     parser.add_argument('--run_techrank', action='store_true', help='Run TechRank after evaluation')
-    parser.add_argument('--auto_detect_params', action='store_true', 
+    parser.add_argument('--auto_detect_params', action='store_true',
                         help='Auto-detect model parameters from checkpoint')
+    parser.add_argument('--temporal_validation', action='store_true',
+                        help='Run temporal validation on test set')
+    parser.add_argument('--temporal_split', type=float, default=0.5,
+                        help='Fraction of test set to use as history (default: 0.5)')
+    parser.add_argument('--prediction_threshold', type=float, default=0.0,
+                        help='Probability threshold for predictions (default: 0.0 = no threshold)')
     return parser.parse_args()
 
 def detect_model_params_from_checkpoint(checkpoint_path, logger):
@@ -499,11 +505,21 @@ def main():
     logger.info(f"   Recall@50: {nn_test_recall_50:.4f}")
 
     # ================================================================
-    # ✅ ÉTAPE 10: Predictions & TechRank
+    # ✅ ÉTAPE 10: Temporal Validation (optional)
+    # ================================================================
+    if args.temporal_validation:
+        # Restaurer la mémoire à l'état après validation avant de faire la validation temporelle
+        if args.use_memory and val_memory_backup is not None:
+            tgn.memory.restore_memory(val_memory_backup)
+
+        temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger)
+
+    # ================================================================
+    # ✅ ÉTAPE 11: Predictions & TechRank
     # ================================================================
     if args.run_techrank:
         logger.info("\n" + "="*70)
-        logger.info("STEP 10: GENERATING PREDICTIONS FOR TECHRANK")
+        logger.info("STEP 11: GENERATING PREDICTIONS FOR TECHRANK")
         logger.info("="*70)
         
         id_to_company, id_to_investor = load_mappings(args.mapping_dir, logger)
@@ -531,6 +547,175 @@ def main():
         run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger)
 
     logger.info("\n✅ Evaluation complete!")
+
+def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger):
+    """
+    Validation temporelle: divise le test set en deux parties et évalue les prédictions.
+
+    Args:
+        tgn: Modèle TGN
+        test_data: Données de test
+        full_data: Données complètes
+        full_ngh_finder: Neighbor finder
+        args: Arguments
+        logger: Logger
+    """
+    logger.info("\n" + "="*70)
+    logger.info("TEMPORAL VALIDATION")
+    logger.info("="*70)
+
+    # Récupérer les données du test set
+    test_sources = np.array(test_data.sources)
+    test_destinations = np.array(test_data.destinations)
+    test_timestamps = np.array(test_data.timestamps)
+    test_edge_idxs = np.array(test_data.edge_idxs)
+
+    # Trier par timestamp
+    sorted_idx = np.argsort(test_timestamps)
+    test_sources = test_sources[sorted_idx]
+    test_destinations = test_destinations[sorted_idx]
+    test_timestamps = test_timestamps[sorted_idx]
+    test_edge_idxs = test_edge_idxs[sorted_idx]
+
+    # Calculer le point de split temporel
+    split_idx = int(len(test_timestamps) * args.temporal_split)
+    split_timestamp = test_timestamps[split_idx]
+
+    logger.info(f"Test set: {len(test_timestamps)} interactions")
+    logger.info(f"Split ratio: {args.temporal_split:.1%}")
+    logger.info(f"Split timestamp: {split_timestamp:.2f}")
+    logger.info(f"History (before split): {split_idx} interactions")
+    logger.info(f"Ground truth (after split): {len(test_timestamps) - split_idx} interactions")
+
+    # Partie 1: Historique (pour construire la mémoire)
+    history_sources = test_sources[:split_idx]
+    history_destinations = test_destinations[:split_idx]
+    history_timestamps = test_timestamps[:split_idx]
+    history_edge_idxs = test_edge_idxs[:split_idx]
+
+    # Partie 2: Ground truth (vrais liens futurs)
+    future_sources = test_sources[split_idx:]
+    future_destinations = test_destinations[split_idx:]
+
+    # Créer un set des vrais liens futurs
+    true_future_links = set((int(s), int(d)) for s, d in zip(future_sources, future_destinations))
+    logger.info(f"Unique true future links: {len(true_future_links)}")
+
+    # Sauvegarder l'état de la mémoire actuel
+    if args.use_memory:
+        current_memory_backup = tgn.memory.backup_memory()
+
+    # Mettre à jour la mémoire avec l'historique
+    tgn.set_neighbor_finder(full_ngh_finder)
+    if args.use_memory and len(history_sources) > 0:
+        logger.info("Updating memory with history...")
+        for i in range(0, len(history_sources), args.bs):
+            s = history_sources[i:i+args.bs]
+            d = history_destinations[i:i+args.bs]
+            ts = history_timestamps[i:i+args.bs]
+            e = history_edge_idxs[i:i+args.bs]
+
+            with torch.no_grad():
+                _ = tgn.compute_temporal_embeddings(s, d, d, ts, e, args.n_degree)
+
+    # Générer les prédictions
+    logger.info("\nGenerating predictions...")
+
+    # Identifier tous les nodes disponibles
+    all_sources = set(full_data.sources)
+    all_destinations = set(full_data.destinations)
+
+    # Créer toutes les paires possibles
+    all_company_ids = sorted(all_sources)
+    all_investor_ids = sorted(all_destinations)
+
+    predictions_list = []
+
+    # Prédire par batches
+    neg_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=99)
+
+    logger.info(f"Predicting for {len(all_company_ids)} companies x {len(all_investor_ids)} investors...")
+
+    total_pairs = 0
+    for company_id in all_company_ids:
+        # Batch de prédictions pour cette company avec tous les investors
+        src_batch = np.full(len(all_investor_ids), company_id, dtype=np.int32)
+        dst_batch = np.array(all_investor_ids, dtype=np.int32)
+        times_batch = np.full(len(dst_batch), split_timestamp, dtype=np.float32)
+        idx_batch = np.zeros(len(dst_batch), dtype=np.int32)
+
+        # Negative samples (dummy)
+        neg_tuple = neg_sampler.sample(len(src_batch))
+        neg_batch = np.array(neg_tuple[1])
+        if len(neg_batch.shape) > 1:
+            neg_batch = neg_batch[:, 0]
+
+        with torch.no_grad():
+            try:
+                pos_prob, _ = tgn.compute_edge_probabilities(
+                    src_batch, dst_batch, neg_batch,
+                    times_batch, idx_batch, args.n_degree
+                )
+
+                prob_scores = pos_prob.cpu().numpy()
+
+                for d, prob in zip(dst_batch, prob_scores):
+                    predictions_list.append((company_id, int(d), float(prob)))
+                    total_pairs += 1
+
+            except Exception as e:
+                logger.warning(f"Error predicting for company {company_id}: {e}")
+                continue
+
+        if (total_pairs // len(all_investor_ids)) % 50 == 0:
+            logger.info(f"  Predicted {total_pairs:,} pairs...")
+
+    logger.info(f"Total predictions generated: {len(predictions_list):,}")
+
+    # Trier les prédictions par probabilité décroissante
+    predictions_list.sort(key=lambda x: x[2], reverse=True)
+
+    # Calculer Precision@K pour différentes valeurs de K
+    k_values = [10, 20, 50, 100, 200, 500, 1000]
+
+    logger.info("\n" + "="*70)
+    logger.info("PRECISION@K RESULTS")
+    logger.info("="*70)
+    logger.info(f"Prediction threshold: {args.prediction_threshold}")
+    logger.info(f"Total true future links: {len(true_future_links)}")
+
+    for k in k_values:
+        if k > len(predictions_list):
+            continue
+
+        # Prendre les top K prédictions
+        top_k_predictions = predictions_list[:k]
+
+        # Filtrer par seuil de probabilité
+        top_k_above_threshold = [(s, d, p) for s, d, p in top_k_predictions if p >= args.prediction_threshold]
+
+        # Compter combien sont vrais
+        true_positives = sum(1 for s, d, _ in top_k_above_threshold if (s, d) in true_future_links)
+
+        # Calculer precision
+        if len(top_k_above_threshold) > 0:
+            precision = true_positives / len(top_k_above_threshold)
+        else:
+            precision = 0.0
+
+        # Calculer aussi sans seuil pour comparaison
+        true_positives_no_threshold = sum(1 for s, d, _ in top_k_predictions if (s, d) in true_future_links)
+        precision_no_threshold = true_positives_no_threshold / k
+
+        logger.info(f"\nPrecision@{k:4d}:")
+        logger.info(f"  With threshold {args.prediction_threshold}: {precision:.4f} ({true_positives}/{len(top_k_above_threshold)} predictions)")
+        logger.info(f"  Without threshold:  {precision_no_threshold:.4f} ({true_positives_no_threshold}/{k} predictions)")
+
+    # Restaurer la mémoire
+    if args.use_memory:
+        tgn.memory.restore_memory(current_memory_backup)
+
+    logger.info("\n✅ Temporal validation complete!")
 
 def filter_edges_after_training(full_data, train_data, logger):
     """Filtre les arêtes après le timestamp max du train"""
@@ -605,12 +790,24 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     # ================================================================
     logger.info(f"\n🔍 Étape 1: Identifier toutes les paires possibles")
 
-    # Extraire les IDs de companies et investors
-    company_ids = sorted(id_to_company.keys())
-    investor_ids = sorted(id_to_investor.keys())
+    # ⚠️ IMPORTANT: Récupérer d'abord les IDs qui existent dans les données TGN
+    all_sources = set(full_data.sources)
+    all_destinations = set(full_data.destinations)
 
-    logger.info(f"   Companies: {len(company_ids)}")
-    logger.info(f"   Investors: {len(investor_ids)}")
+    logger.info(f"\nPlages d'IDs dans les données TGN:")
+    logger.info(f"  Sources (companies): [{min(all_sources)}, {max(all_sources)}] ({len(all_sources)} uniques)")
+    logger.info(f"  Destinations (investors): [{min(all_destinations)}, {max(all_destinations)}] ({len(all_destinations)} uniques)")
+
+    # ⚠️ CRITIQUE: Ne garder que les IDs qui existent DANS LES DONNÉES TGN
+    # Sinon on aura des IndexError quand le modèle essaiera d'accéder aux node_features
+    company_ids = sorted([cid for cid in id_to_company.keys() if cid in all_sources])
+    investor_ids = sorted([iid for iid in id_to_investor.keys() if iid in all_destinations])
+
+    logger.info(f"\nIDs disponibles après filtrage TGN:")
+    logger.info(f"   Companies (dans mappings): {len(id_to_company)}")
+    logger.info(f"   Companies (dans TGN data): {len(company_ids)}")
+    logger.info(f"   Investors (dans mappings): {len(id_to_investor)}")
+    logger.info(f"   Investors (dans TGN data): {len(investor_ids)}")
     logger.info(f"   Total paires possibles: {len(company_ids) * len(investor_ids):,}")
 
     # ================================================================
@@ -618,13 +815,6 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     # ================================================================
     node_type = {}
     node_name = {}
-
-    all_sources = set(full_data.sources)
-    all_destinations = set(full_data.destinations)
-    
-    logger.info(f"\nPlages d'IDs dans les données TGN:")
-    logger.info(f"  Sources (companies): [{min(all_sources)}, {max(all_sources)}] ({len(all_sources)} uniques)")
-    logger.info(f"  Destinations (investors): [{min(all_destinations)}, {max(all_destinations)}] ({len(all_destinations)} uniques)")
     
     # Sources = COMPANIES
     companies_mapped = 0

@@ -17,6 +17,8 @@ from utils.utils import EarlyStopMonitor, RandEdgeSampler, get_neighbor_finder
 from utils.data_processing import get_data, compute_time_statistics
 from tqdm import tqdm
 # from data.custom_loss import create_business_aware_loss  # AJOUT: Nouvelle loss
+from focal_loss import FocalLoss  # AJOUT: Import Focal Loss
+from hard_negative_mining import HardNegativeSampler, build_adjacency_dict  # AJOUT: Import Hard Negative Mining
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -79,6 +81,20 @@ parser.add_argument('--use_weighted_loss', action='store_true',
                     help='Use inverse-degree weighted loss')
 parser.add_argument('--weight_alpha', type=float, default=1.0,
                     help='Exponent for inverse degree weighting (1.0=linear, 2.0=quadratic)')
+# AJOUT: Arguments pour Focal Loss
+parser.add_argument('--use_focal_loss', action='store_true',
+                    help='Use Focal Loss instead of BCE')
+parser.add_argument('--focal_alpha', type=float, default=0.25,
+                    help='Alpha parameter for Focal Loss (default: 0.25)')
+parser.add_argument('--focal_gamma', type=float, default=2.0,
+                    help='Gamma parameter for Focal Loss (default: 2.0)')
+# AJOUT: Arguments pour Hard Negative Mining
+parser.add_argument('--use_hard_negatives', action='store_true',
+                    help='Use hard negative mining instead of random sampling')
+parser.add_argument('--hard_neg_ratio', type=float, default=0.5,
+                    help='Ratio of hard negatives (0.0=all random, 1.0=all hard, default: 0.5)')
+parser.add_argument('--hard_neg_temperature', type=float, default=0.1,
+                    help='Temperature for hard negative sampling (lower=more aggressive, default: 0.1)')
 
 try:
   args = parser.parse_args()
@@ -140,6 +156,16 @@ nn_val_rand_sampler = RandEdgeSampler(new_node_val_data.sources, new_node_val_da
 test_rand_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=2)
 nn_test_rand_sampler = RandEdgeSampler(new_node_test_data.sources, new_node_test_data.destinations, seed=3)
 
+# Initialize hard negative sampler if needed
+if args.use_hard_negatives:
+  logger.info(f"Using Hard Negative Mining with ratio={args.hard_neg_ratio}, temperature={args.hard_neg_temperature}")
+  hard_neg_sampler = HardNegativeSampler(ratio=args.hard_neg_ratio, temperature=args.hard_neg_temperature)
+  # Build adjacency dict for training data
+  train_adjacency_dict = build_adjacency_dict(train_data.sources, train_data.destinations)
+else:
+  hard_neg_sampler = None
+  train_adjacency_dict = None
+
 # Set device
 device_string = 'cuda:{}'.format(GPU) if torch.cuda.is_available() else 'cpu'
 device = torch.device(device_string)
@@ -174,6 +200,12 @@ for i in range(args.n_runs):
         "message_function": args.message_function,
         "memory_updater": args.memory_updater,
         "aggregator": args.aggregator,
+        "use_focal_loss": args.use_focal_loss,
+        "focal_alpha": args.focal_alpha if args.use_focal_loss else None,
+        "focal_gamma": args.focal_gamma if args.use_focal_loss else None,
+        "use_hard_negatives": args.use_hard_negatives,
+        "hard_neg_ratio": args.hard_neg_ratio if args.use_hard_negatives else None,
+        "hard_neg_temperature": args.hard_neg_temperature if args.use_hard_negatives else None,
         "run": i
       },
       reinit=True
@@ -200,20 +232,33 @@ for i in range(args.n_runs):
             use_source_embedding_in_message=args.use_source_embedding_in_message,
             dyrep=args.dyrep)
   
-  criterion = torch.nn.BCELoss()
-  # from data.custom_loss import load_weighted_loss
+  # ================================================================
+  # CONFIGURATION DE LA LOSS FUNCTION
+  # ================================================================
 
-  # # Charger les mappings
+  # ⚠️ IMPORTANT: Choisir la loss function à utiliser
+
+  if args.use_focal_loss:
+    # ✅ NOUVELLE APPROCHE: Focal Loss pour gérer le déséquilibre de classes
+    logger.info(f"Using Focal Loss with alpha={args.focal_alpha}, gamma={args.focal_gamma}")
+    criterion = FocalLoss(alpha=args.focal_alpha, gamma=args.focal_gamma, reduction='mean')
+  else:
+    # 📌 APPROCHE ORIGINALE: Binary Cross-Entropy (BCE)
+    # Décommenter cette ligne pour revenir à la BCE classique
+    logger.info("Using standard Binary Cross-Entropy Loss")
+    criterion = torch.nn.BCELoss()
+
+  # Alternative: Weighted Loss (commentée pour l'instant)
+  # from data.custom_loss import load_weighted_loss
   # with open(f"data/mappings/{DATA}_filtered_company_id_map.pickle", "rb") as f:
   #     item_map = pickle.load(f)
-
-  # # Créer la weighted loss avec alpha=1.0 (linéaire)
   # criterion = load_weighted_loss(
   #     data_name=DATA,
   #     item_map=item_map,
   #     alpha=1.0,      # 1.0 = linéaire, 2.0 = quadratique (plus agressif)
   #     normalize=False
   # )
+
   criterion = criterion.to(device)  # Déplacer sur GPU si nécessaire
   optimizer = torch.optim.Adam(tgn.parameters(), lr=LEARNING_RATE)
   scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -284,7 +329,21 @@ for i in range(args.n_runs):
         timestamps_batch = train_data.timestamps[start_idx:end_idx]
 
         size = len(sources_batch)
-        _, negatives_batch = train_rand_sampler.sample(size)
+
+        # Sample negatives: hard or random
+        if args.use_hard_negatives:
+          # Use hard negative mining
+          node_features_np = node_features  # Already numpy array
+          negatives_batch = hard_neg_sampler.sample(
+            sources=sources_batch,
+            destinations=destinations_batch,
+            embeddings=node_features_np,
+            adjacency_dict=train_adjacency_dict,
+            n_negatives=1
+          ).flatten()
+        else:
+          # Use random sampling
+          _, negatives_batch = train_rand_sampler.sample(size)
 
         with torch.no_grad():
           pos_label = torch.ones(size, dtype=torch.float, device=device)

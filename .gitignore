@@ -26,6 +26,8 @@ data/*.txt
 *.npy
 *.yaml
 *.wandb
+*.ipynb
+*.ipynb_checkpoints 
 .DS_Store
 
 ### PyCharm ###
