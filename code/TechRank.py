@@ -30,8 +30,8 @@ SAVE_DIR_M = "savings/bipartite_invest_comp/M"
 SAVE_DIR_RESULTS = "savings/csv_results"
 SAVE_DIR_PLOTS = "plots/rank_evolution"
 
-OPTIMAL_ALPHA_COMP = 0.8
-OPTIMAL_BETA_COMP = -0.6
+OPTIMAL_ALPHA_COMP = 0.3
+OPTIMAL_BETA_COMP = -5
 
 # ===================================================================
 # UTILS
@@ -207,10 +207,12 @@ def generator_order_w(M, alpha, beta, normalize=True):
         yield {'iteration': i, 'fitness': fitness_next, 'ubiquity': ubiquity_next}
 
 def find_convergence_debug(M, alpha, beta, fit_or_ubiq, do_plot=False, flag_cybersecurity=False, preferences=''):
+    # ⚠️ CORRECTION: fitness rank les LIGNES (Companies), ubiquity rank les COLONNES (Investors)
+    # Avec convention: bipartite=0=Companies (lignes), bipartite=1=Investors (colonnes)
     if fit_or_ubiq=='fitness':
-        name='Investors'; M_shape=M.shape[0]
+        name='Companies'; M_shape=M.shape[0]  # Lignes = Companies
     else:
-        name='Companies'; M_shape=M.shape[1]
+        name='Investors'; M_shape=M.shape[1]  # Colonnes = Investors
     
     rankings=[]; scores=[]
     prev_rankdata = np.zeros(M_shape)
@@ -268,11 +270,23 @@ def find_convergence_debug(M, alpha, beta, fit_or_ubiq, do_plot=False, flag_cybe
     return {fit_or_ubiq: final_data, 'iteration': convergence_iteration, 
             'initial_conf': initial_conf, 'final_conf': rankdata}
 
-def rank_df_class_corrected(convergence, dict_class):
-    
-    """Version CORRIGÉE de rank_df_class avec ground truth"""
+def rank_df_class_corrected(convergence, dict_class, node_order=None):
+
+    """Version CORRIGÉE de rank_df_class avec ground truth
+
+    Args:
+        convergence: Dict avec 'fitness' ou 'ubiquity' et scores
+        dict_class: Dictionnaire des classes (companies ou investors)
+        node_order: Liste des noms dans l'ordre de la matrice (set0 ou set1)
+    """
     fit_or_ubiq = 'fitness' if 'fitness' in convergence else 'ubiquity'
-    list_names = list(dict_class.keys())
+
+    # ⚠️ IMPORTANT: Utiliser node_order si fourni, sinon dict_class.keys()
+    if node_order is not None:
+        list_names = node_order
+    else:
+        list_names = list(dict_class.keys())
+
     n = len(list_names)
     
     print(f"Debug rank_df_class: {n} éléments, scores range: [{np.min(convergence[fit_or_ubiq]):.6f}, {np.max(convergence[fit_or_ubiq]):.6f}]")
@@ -405,37 +419,43 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_C
     if B is None:
         raise ValueError("Le graphe B est None! Vérifiez que les données sont correctement chargées.")
     # Création de la matrice
-    set0 = extract_nodes(B, 0)
-    set1 = extract_nodes(B, 1)
+    set0 = extract_nodes(B, 0)  # bipartite=0 = Companies
+    set1 = extract_nodes(B, 1)  # bipartite=1 = Investors
     adj_matrix = bipartite.biadjacency_matrix(B, set0, set1)
-    # adj_matrix_dense = adj_matrix.todense()
-    # M = np.squeeze(np.asarray(adj_matrix_dense))
+    # M[i,j] = 1 si company i est connecté à investor j
+    # Lignes = Companies (set0), Colonnes = Investors (set1)
     if not isinstance(adj_matrix, csr_matrix):
         M = csr_matrix(adj_matrix)
     else:
         M = adj_matrix
-    
+
     print(f" Matrice M créée: {M.shape}")
-    
-    # Ranking Companies
+    print(f"   Lignes (set0, bipartite=0): Companies = {len(set0)}")
+    print(f"   Colonnes (set1, bipartite=1): Investors = {len(set1)}")
+
+    # Ranking Companies (fitness = scores des LIGNES = Companies)
     print("\n" + "="*60)
-    print("CLASSEMENT DES ENTREPRISES")
+    print("CLASSEMENT DES ENTREPRISES (Companies)")
     print("="*60)
     start_time = time.time()
     convergence_comp = find_convergence_debug(M, alpha, beta, 'fitness', do_plot=do_plot)
     time_conv_comp = time.time() - start_time
-    
-    df_final_companies, dict_investors = rank_df_class_corrected(convergence_comp, dict_investors)
-    
-    # Ranking Technologies  
+
+    # ⚠️ CORRECTION: fitness rank les LIGNES (Companies), donc utiliser dict_comp!
+    # Passer set0 pour avoir les noms dans le bon ordre
+    df_final_companies, dict_comp = rank_df_class_corrected(convergence_comp, dict_comp, node_order=set0)
+
+    # Ranking Investors (ubiquity = scores des COLONNES = Investors)
     print("\n" + "="*60)
-    print("CLASSEMENT DES TECHNOLOGIES")
+    print("CLASSEMENT DES INVESTISSEURS (Investors)")
     print("="*60)
     start_time = time.time()
     convergence_tech = find_convergence_debug(M, alpha, beta, 'ubiquity', do_plot=do_plot)
     time_conv_tech = time.time() - start_time
-    
-    df_final_tech, dict_comp = rank_df_class_corrected(convergence_tech, dict_comp)
+
+    # ⚠️ CORRECTION: ubiquity rank les COLONNES (Investors), donc utiliser dict_investors!
+    # Passer set1 pour avoir les noms dans le bon ordre
+    df_final_tech, dict_investors = rank_df_class_corrected(convergence_tech, dict_investors, node_order=set1)
     
     # Sauvegarde des résultats
     save_corrected_results(df_final_companies, df_final_tech, num_comp, num_tech, flag_cybersecurity, preferences_comp, preferences_tech)

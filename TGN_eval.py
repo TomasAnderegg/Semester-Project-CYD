@@ -774,16 +774,19 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     logger.info(f"   2. Construire graphe avec paires prob > seuil")
     logger.info(f"   3. Comparer avec graphe TEST réel pour validation")
     logger.info(f"\nConvention TGN:")
-    logger.info(f"  - sources (u) = COMPANIES → bipartite=0")
-    logger.info(f"  - destinations (i) = INVESTORS → bipartite=1")
+    logger.info(f"  - sources (u) = COMPANIES")
+    logger.info(f"  - destinations (i) = INVESTORS")
 
     # Mettre le modèle en mode évaluation
     tgn.eval()
     tgn.set_neighbor_finder(full_ngh_finder)
 
-    # Convention TechRank: companies=0, investors=1
-    COMPANY_BIPARTITE = 0
-    INVESTOR_BIPARTITE = 1
+    # Convention bipartite (doit être cohérente avec bipartite_investor_comp.py):
+    # bipartite=0 => Companies (sources dans TGN)
+    # bipartite=1 => Investors (destinations dans TGN)
+    # Edges: Company → Investor (comme dans le graphe original)
+    COMPANY_BIPARTITE = 0   # Companies ont bipartite=0
+    INVESTOR_BIPARTITE = 1  # Investors ont bipartite=1
 
     # ================================================================
     # ÉTAPE 1: Identifier TOUTES les paires possibles
@@ -869,7 +872,8 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     edge_funding_info = {}
 
     # Seuil de probabilité pour créer une arête
-    PROBABILITY_THRESHOLD = 0.5  # Ajustable
+    # Utiliser args.prediction_threshold pour la cohérence
+    PROBABILITY_THRESHOLD = args.prediction_threshold
 
     logger.info(f"   Probability threshold: {PROBABILITY_THRESHOLD}")
     logger.info(f"   Batch size: {args.bs}")
@@ -880,7 +884,16 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     # Negative sampler (dummy, pas vraiment utilisé)
     neg_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=42)
 
+    # Sauvegarder l'état de la mémoire pour éviter les erreurs de timestamp
+    # Chaque batch va restaurer cette sauvegarde pour repartir du même état
+    if args.use_memory:
+        logger.info("   Backing up memory state before predictions...")
+        memory_backup = tgn.memory.backup_memory()
+
     for batch_idx in range(num_batches):
+        # Restaurer la mémoire pour ce batch (évite "time in the past" errors)
+        if args.use_memory:
+            tgn.memory.restore_memory(memory_backup)
         start_idx = batch_idx * args.bs
         end_idx = min(len(all_pairs), start_idx + args.bs)
 
@@ -988,10 +1001,12 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     logger.info(f"\n🔨 Étape 4: Construction du graphe final")
 
     # Add edges
+    # ⚠️ IMPORTANT: Convention du graphe original (bipartite_investor_comp.py:934-935):
+    # Edges vont de Company (bipartite=0) → Investor (bipartite=1)
     for (comp_name, inv_name), funding_info in edge_funding_info.items():
         pred_graph.add_edge(
-            comp_name,
-            inv_name,
+            comp_name,     # Company (source, bipartite=0)
+            inv_name,      # Investor (destination, bipartite=1)
             weight=funding_info['total_raised_amount_usd'],
             funding_rounds=funding_info['funding_rounds'],
             total_raised_amount_usd=funding_info['total_raised_amount_usd'],
@@ -1024,7 +1039,12 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     
     logger.info("Graph created: %d nodes, %d edges", pred_graph.number_of_nodes(), pred_graph.number_of_edges())
     logger.info("Dictionaries created: %d companies, %d investors", len(dict_companies), len(dict_investors))
-    
+
+    # Restaurer l'état de la mémoire original
+    if args.use_memory:
+        logger.info("   Restoring original memory state...")
+        tgn.memory.restore_memory(memory_backup)
+
     return pred_graph, predictions, dict_companies, dict_investors
 
 def save_graph_and_top(pred_graph, predictions, dict_companies, dict_investors, args, logger, id_to_company, id_to_investor):
@@ -1157,7 +1177,9 @@ def run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger):
         logger.info(f"   Companies: {len(dict_companies)}")
         logger.info(f"   Investors: {len(dict_investors)}")
         
-        df_investors_rank, df_companies_rank, _, _ = run_techrank(
+        # ⚠️ IMPORTANT: run_techrank retourne (df_companies, df_investors, dict_comp, dict_investors)
+        # Ordre corrigé pour correspondre à la convention: bipartite=0=Companies, bipartite=1=Investors
+        df_companies_rank, df_investors_rank, _, _ = run_techrank(
             num_comp=num_nodes,
             num_tech=num_nodes,
             flag_cybersecurity=False,
