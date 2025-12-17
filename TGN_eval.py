@@ -936,13 +936,21 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
 
                     company_id = s
                     investor_id = d
-                    company_name = node_name.get(s, f"company_{s}")
-                    investor_name = node_name.get(d, f"investor_{d}")
+
+                    # Récupérer les noms de base
+                    company_base_name = node_name.get(s, f"company_{s}")
+                    investor_base_name = node_name.get(d, f"investor_{d}")
+
+                    # ⚠️ CRITIQUE: Préfixer les noms avec leur rôle pour éviter les collisions
+                    # Car une même entité (ex: "Legend Capital") peut être à la fois company et investor
+                    company_name = f"COMPANY_{company_base_name}"
+                    investor_name = f"INVESTOR_{investor_base_name}"
 
                     if company_name not in dict_companies:
                         dict_companies[company_name] = {
                             'id': company_id,
-                            'name': company_name,
+                            'name': company_name,  # Nom avec préfixe (pour graphe)
+                            'base_name': company_base_name,  # Nom sans préfixe (pour affichage)
                             'technologies': [],
                             'total_funding': 0.0,
                             'num_funding_rounds': 0
@@ -951,7 +959,8 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
                     if investor_name not in dict_investors:
                         dict_investors[investor_name] = {
                             'investor_id': investor_id,
-                            'name': investor_name,
+                            'name': investor_name,  # Nom avec préfixe (pour graphe)
+                            'base_name': investor_base_name,  # Nom sans préfixe (pour affichage)
                             'num_investments': 0,
                             'total_invested': 0.0
                         }
@@ -1148,22 +1157,32 @@ def run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger):
     
     companies_in_graph = set(n for n in pred_graph.nodes() if n in dict_companies)
     investors_in_graph = set(n for n in pred_graph.nodes() if n in dict_investors)
-    
+
     logger.info(f"\n📊 Données pour TechRank:")
     logger.info(f"   Companies dans le graphe: {len(companies_in_graph)}")
     logger.info(f"   Investors dans le graphe: {len(investors_in_graph)}")
     logger.info(f"   Total edges: {pred_graph.number_of_edges()}")
-    
+
+    # ⚠️ CRITIQUE: Filtrer les dictionnaires pour ne garder QUE les nodes dans le graphe!
+    # Sinon le mapping scores<->noms sera incorrect
+    dict_companies_filtered = {name: dict_companies[name] for name in companies_in_graph}
+    dict_investors_filtered = {name: dict_investors[name] for name in investors_in_graph}
+
+    logger.info(f"\n🔧 Dictionnaires filtrés:")
+    logger.info(f"   dict_companies: {len(dict_companies)} -> {len(dict_companies_filtered)}")
+    logger.info(f"   dict_investors: {len(dict_investors)} -> {len(dict_investors_filtered)}")
+
     num_nodes = pred_graph.number_of_nodes()
     save_dir_classes = Path("savings/bipartite_invest_comp/classes")
     save_dir_networks = Path("savings/bipartite_invest_comp/networks")
     save_dir_classes.mkdir(parents=True, exist_ok=True)
     save_dir_networks.mkdir(parents=True, exist_ok=True)
-    
+
+    # Sauvegarder les dictionnaires FILTRÉS
     with open(save_dir_classes / f'dict_companies_{num_nodes}.pickle', 'wb') as f:
-        pickle.dump(dict_companies, f)
+        pickle.dump(dict_companies_filtered, f)
     with open(save_dir_classes / f'dict_investors_{num_nodes}.pickle', 'wb') as f:
-        pickle.dump(dict_investors, f)
+        pickle.dump(dict_investors_filtered, f)
     with open(save_dir_networks / f'bipartite_graph_{num_nodes}.gpickle', 'wb') as f:
         pickle.dump(pred_graph, f)
     
@@ -1174,11 +1193,12 @@ def run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger):
         
         logger.info("\n🚀 Lancement de TechRank...")
         logger.info(f"   Alpha: 0.8, Beta: -0.6")
-        logger.info(f"   Companies: {len(dict_companies)}")
-        logger.info(f"   Investors: {len(dict_investors)}")
-        
+        logger.info(f"   Companies: {len(dict_companies_filtered)}")
+        logger.info(f"   Investors: {len(dict_investors_filtered)}")
+
         # ⚠️ IMPORTANT: run_techrank retourne (df_companies, df_investors, dict_comp, dict_investors)
         # Ordre corrigé pour correspondre à la convention: bipartite=0=Companies, bipartite=1=Investors
+        # Passer les dictionnaires FILTRÉS pour avoir le bon mapping
         df_companies_rank, df_investors_rank, _, _ = run_techrank(
             num_comp=num_nodes,
             num_tech=num_nodes,
@@ -1186,8 +1206,8 @@ def run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger):
             alpha=0.8,
             beta=-0.6,
             do_plot=False,
-            dict_investors=dict_investors,
-            dict_comp=dict_companies,
+            dict_investors=dict_investors_filtered,
+            dict_comp=dict_companies_filtered,
             B=pred_graph
         )
         
@@ -1205,7 +1225,9 @@ def run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger):
                 logger.info("\n📊 Top 10 Investors (par TechRank):")
                 top_inv = df_investors_rank.nlargest(10, 'techrank')[['final_configuration', 'techrank']]
                 for idx, (_, row) in enumerate(top_inv.iterrows(), 1):
-                    logger.info(f"   #{idx:2d} {row['final_configuration']:40s} → Score: {row['techrank']:.6f}")
+                    # Enlever le préfixe "INVESTOR_" pour l'affichage
+                    display_name = row['final_configuration'].replace("INVESTOR_", "")
+                    logger.info(f"   #{idx:2d} {display_name:40s} → Score: {row['techrank']:.6f}")
             else:
                 logger.error("\n❌ TOUS les scores investors sont à zéro!")
         
@@ -1221,7 +1243,9 @@ def run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger):
                 logger.info("\n📊 Top 10 Companies (par TechRank):")
                 top_comp = df_companies_rank.nlargest(10, 'techrank')[['final_configuration', 'techrank']]
                 for idx, (_, row) in enumerate(top_comp.iterrows(), 1):
-                    logger.info(f"   #{idx:2d} {row['final_configuration']:40s} → Score: {row['techrank']:.6f}")
+                    # Enlever le préfixe "COMPANY_" pour l'affichage
+                    display_name = row['final_configuration'].replace("COMPANY_", "")
+                    logger.info(f"   #{idx:2d} {display_name:40s} → Score: {row['techrank']:.6f}")
             else:
                 logger.error("\n❌ TOUS les scores companies sont à zéro!")
         
