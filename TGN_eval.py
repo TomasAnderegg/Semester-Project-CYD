@@ -816,27 +816,27 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     # ================================================================
     # ÉTAPE 2: Préparer les structures de données
     # ================================================================
-    node_type = {}
-    node_name = {}
-    
+    # ⚠️ CRITIQUE: Utiliser des dictionnaires SÉPARÉS car les IDs se chevauchent!
+    # Les IDs des companies et des investors commencent tous deux à 0
+    company_id_to_name = {}
+    investor_id_to_name = {}
+
     # Sources = COMPANIES
     companies_mapped = 0
     for src_id in all_sources:
         src_id = int(src_id)
         if src_id in id_to_company:
-            node_type[src_id] = "company"
-            node_name[src_id] = id_to_company[src_id]
+            company_id_to_name[src_id] = id_to_company[src_id]
             companies_mapped += 1
-    
+
     # Destinations = INVESTORS
     investors_mapped = 0
     for dst_id in all_destinations:
         dst_id = int(dst_id)
         if dst_id in id_to_investor:
-            node_type[dst_id] = "investor"
-            node_name[dst_id] = id_to_investor[dst_id]
+            investor_id_to_name[dst_id] = id_to_investor[dst_id]
             investors_mapped += 1
-    
+
     logger.info(f"\nNode mappings construits:")
     logger.info(f"  Companies (sources, bipartite=0): {companies_mapped}")
     logger.info(f"  Investors (destinations, bipartite=1): {investors_mapped}")
@@ -937,9 +937,10 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
                     company_id = s
                     investor_id = d
 
-                    # Récupérer les noms de base
-                    company_base_name = node_name.get(s, f"company_{s}")
-                    investor_base_name = node_name.get(d, f"investor_{d}")
+                    # Récupérer les noms de base depuis les dictionnaires SÉPARÉS
+                    # ⚠️ CRITIQUE: Ne PAS utiliser un seul dictionnaire car les IDs se chevauchent!
+                    company_base_name = company_id_to_name.get(s, f"company_{s}")
+                    investor_base_name = investor_id_to_name.get(d, f"investor_{d}")
 
                     # ⚠️ CRITIQUE: Préfixer les noms avec leur rôle pour éviter les collisions
                     # Car une même entité (ex: "Legend Capital") peut être à la fois company et investor

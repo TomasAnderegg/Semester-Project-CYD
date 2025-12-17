@@ -97,9 +97,15 @@ def build_ground_truth_graph(dataset_name, id_to_company, id_to_investor, logger
         company_id = int(row['u'])
         investor_id = int(row['i'])
         timestamp = float(row['ts'])
-        
-        company_name = id_to_company.get(company_id, f"company_{company_id}")
-        investor_name = id_to_investor.get(investor_id, f"investor_{investor_id}")
+
+        # Récupérer les noms de base
+        company_base_name = id_to_company.get(company_id, f"company_{company_id}")
+        investor_base_name = id_to_investor.get(investor_id, f"investor_{investor_id}")
+
+        # ⚠️ IMPORTANT: Utiliser les mêmes préfixes que dans TGN_eval.py
+        # pour que les noms correspondent lors du merge des dataframes!
+        company_name = f"COMPANY_{company_base_name}"
+        investor_name = f"INVESTOR_{investor_base_name}"
         
         if company_name not in B:
             B.add_node(company_name, bipartite=COMPANY_BIPARTITE)
@@ -111,15 +117,17 @@ def build_ground_truth_graph(dataset_name, id_to_company, id_to_investor, logger
             dict_companies[company_name] = {
                 'id': company_id,
                 'name': company_name,
+                'base_name': company_base_name,  # Pour affichage
                 'technologies': [],
                 'total_funding': 0.0,
                 'num_funding_rounds': 0
             }
-        
+
         if investor_name not in dict_investors:
             dict_investors[investor_name] = {
                 'investor_id': investor_id,
                 'name': investor_name,
+                'base_name': investor_base_name,  # Pour affichage
                 'num_investments': 0,
                 'total_invested': 0.0
             }
@@ -158,26 +166,30 @@ def build_ground_truth_graph(dataset_name, id_to_company, id_to_investor, logger
             num_funding_rounds=funding_info['num_funding_rounds']
         )
     
-    # Ajouter tous les nœuds mappés
-    for nid, name in id_to_company.items():
-        if name not in B:
-            B.add_node(name, bipartite=COMPANY_BIPARTITE)
-            if name not in dict_companies:
-                dict_companies[name] = {
+    # Ajouter tous les nœuds mappés avec préfixes
+    for nid, base_name in id_to_company.items():
+        company_name = f"COMPANY_{base_name}"
+        if company_name not in B:
+            B.add_node(company_name, bipartite=COMPANY_BIPARTITE)
+            if company_name not in dict_companies:
+                dict_companies[company_name] = {
                     'id': int(nid),
-                    'name': name,
+                    'name': company_name,
+                    'base_name': base_name,  # Pour affichage
                     'technologies': [],
                     'total_funding': 0.0,
                     'num_funding_rounds': 0
                 }
-    
-    for nid, name in id_to_investor.items():
-        if name not in B:
-            B.add_node(name, bipartite=INVESTOR_BIPARTITE)
-            if name not in dict_investors:
-                dict_investors[name] = {
+
+    for nid, base_name in id_to_investor.items():
+        investor_name = f"INVESTOR_{base_name}"
+        if investor_name not in B:
+            B.add_node(investor_name, bipartite=INVESTOR_BIPARTITE)
+            if investor_name not in dict_investors:
+                dict_investors[investor_name] = {
                     'investor_id': int(nid),
-                    'name': name,
+                    'name': investor_name,
+                    'base_name': base_name,  # Pour affichage
                     'num_investments': 0,
                     'total_invested': 0.0
                 }
@@ -187,6 +199,15 @@ def build_ground_truth_graph(dataset_name, id_to_company, id_to_investor, logger
     logger.info(f"   Edges: {B.number_of_edges()}")
     logger.info(f"   Companies: {len(dict_companies)}")
     logger.info(f"   Investors: {len(dict_investors)}")
+
+    # Debug: vérifier les premiers noms
+    logger.info(f"\n🔍 DEBUG - Premiers noms de companies dans dict_companies:")
+    for i, name in enumerate(list(dict_companies.keys())[:5]):
+        logger.info(f"   {i+1}. {name}")
+
+    logger.info(f"\n🔍 DEBUG - Premiers noms d'investors dans dict_investors:")
+    for i, name in enumerate(list(dict_investors.keys())[:5]):
+        logger.info(f"   {i+1}. {name}")
     
     return B, dict_companies, dict_investors
 
@@ -219,7 +240,16 @@ def load_predicted_graph(dataset_name, logger):
     logger.info(f"   Edges: {B_pred.number_of_edges()}")
     logger.info(f"   Companies: {len(dict_companies_pred)}")
     logger.info(f"   Investors: {len(dict_investors_pred)}")
-    
+
+    # Debug: vérifier les premiers noms
+    logger.info(f"\n🔍 DEBUG - Premiers noms dans dict_companies_pred:")
+    for i, name in enumerate(list(dict_companies_pred.keys())[:5]):
+        logger.info(f"   {i+1}. {name}")
+
+    logger.info(f"\n🔍 DEBUG - Premiers noms dans dict_investors_pred:")
+    for i, name in enumerate(list(dict_investors_pred.keys())[:5]):
+        logger.info(f"   {i+1}. {name}")
+
     return B_pred, dict_companies_pred, dict_investors_pred
 
 def run_techrank_on_graph(B, dict_companies, dict_investors, alpha, beta, label, logger):
@@ -235,7 +265,9 @@ def run_techrank_on_graph(B, dict_companies, dict_investors, alpha, beta, label,
         num_nodes = B.number_of_nodes()
         
         logger.info(f"Running TechRank...")
-        df_investors_rank, df_companies_rank, _, _ = run_techrank(
+        # ⚠️ IMPORTANT: Ordre corrigé pour correspondre à TGN_eval.py
+        # run_techrank retourne (df_companies, df_investors) dans cet ordre
+        df_companies_rank, df_investors_rank, _, _ = run_techrank(
             num_comp=num_nodes,
             num_tech=num_nodes,
             flag_cybersecurity=False,
@@ -248,14 +280,15 @@ def run_techrank_on_graph(B, dict_companies, dict_investors, alpha, beta, label,
         )
         
         logger.info(f"✅ TechRank completed for {label}")
-        
+
         if df_companies_rank is not None:
             non_zero = (df_companies_rank['techrank'] > 0).sum()
             max_score = df_companies_rank['techrank'].max()
             logger.info(f"   Companies with score > 0: {non_zero}/{len(df_companies_rank)}")
             logger.info(f"   Max TechRank score: {max_score:.6f}")
-        
-        return df_investors_rank, df_companies_rank
+
+        # ⚠️ IMPORTANT: Retourner dans l'ordre (companies, investors) pour cohérence
+        return df_companies_rank, df_investors_rank
         
     except Exception as e:
         logger.error(f"❌ Error running TechRank: {e}", exc_info=True)
@@ -289,6 +322,10 @@ def analyze_company_deltas(df_before, df_after, threshold, top_k, save_dir, logg
     df_delta['techrank_before'] = df_delta['techrank_before'].fillna(0)
     df_delta['techrank_after'] = df_delta['techrank_after'].fillna(0)
 
+    # Créer une colonne d'affichage sans préfixe COMPANY_ ou INVESTOR_
+    df_delta['display_name'] = df_delta['final_configuration'].str.replace('COMPANY_', '', regex=False)
+    df_delta['display_name'] = df_delta['display_name'].str.replace('INVESTOR_', '', regex=False)
+
     # 🔒 Filtrer : on garde uniquement les entreprises existantes AVANT
     df_delta = df_delta[df_delta['techrank_before'] != 0].copy()
 
@@ -298,7 +335,7 @@ def analyze_company_deltas(df_before, df_after, threshold, top_k, save_dir, logg
     # ============================
     # Calcul des deltas
     # ============================
-    df_delta['techrank_delta'] = df_delta['techrank_after'] - df_delta['techrank_before']
+    df_delta['techrank_delta'] = (df_delta['techrank_after'] - df_delta['techrank_before'])
 
     df_delta['techrank_delta_pct'] = (
         df_delta['techrank_delta'] / (df_delta['techrank_before'] + 1e-10) * 100
@@ -342,9 +379,11 @@ def analyze_company_deltas(df_before, df_after, threshold, top_k, save_dir, logg
         logger.info("-"*120)
 
         for _, row in df_promising.head(top_k).iterrows():
+            # Utiliser display_name au lieu de final_configuration
+            display = row['display_name'][:48] if 'display_name' in row else row['final_configuration'][:48]
             logger.info(
                 f"{int(row['rank_after']):<6} "
-                f"{row['final_configuration'][:48]:<50} "
+                f"{display:<50} "
                 f"{row['techrank_before']:<12.6f} "
                 f"{row['techrank_after']:<12.6f} "
                 f"{row['techrank_delta']:<12.6f} "
@@ -402,9 +441,11 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
         
         topK = df_promising.head(top_k_viz).copy()
         topK = topK.sort_values('techrank_delta', ascending=True)  # Pour avoir le plus grand en haut
-        
-        companies = [name[:45] + '...' if len(name) > 45 else name 
-                    for name in topK['final_configuration']]
+
+        # Utiliser display_name (sans préfixe COMPANY_)
+        name_col = 'display_name' if 'display_name' in topK.columns else 'final_configuration'
+        companies = [name[:45] + '...' if len(name) > 45 else name
+                    for name in topK[name_col]]
         y_pos = np.arange(len(companies))
         
         bar_height = 0.35
@@ -494,7 +535,9 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
         y_pos = np.arange(len(top20))
         bars = ax3.barh(y_pos, top20['techrank_delta'], color='#2ecc71', alpha=0.8, edgecolor='black')
         ax3.set_yticks(y_pos)
-        ax3.set_yticklabels([name[:35] for name in top20['final_configuration']], fontsize=12)
+        # Utiliser display_name (sans préfixe COMPANY_)
+        name_col = 'display_name' if 'display_name' in top20.columns else 'final_configuration'
+        ax3.set_yticklabels([name[:35] for name in top20[name_col]], fontsize=12)
         ax3.set_xlabel('TechRank Delta', fontsize=11, fontweight='bold')
         ax3.set_title('Top 20 Promising Companies (by Delta)', fontsize=12, fontweight='bold')
         ax3.grid(True, alpha=0.3, axis='x')
@@ -532,7 +575,9 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
         y_pos = np.arange(len(df_top_movers))
         bars = ax.barh(y_pos, df_top_movers['rank_change'], color='#9b59b6', alpha=0.8, edgecolor='black')
         ax.set_yticks(y_pos)
-        ax.set_yticklabels([name[:40] for name in df_top_movers['final_configuration']], fontsize=9)
+        # Utiliser display_name (sans préfixe COMPANY_)
+        name_col = 'display_name' if 'display_name' in df_top_movers.columns else 'final_configuration'
+        ax.set_yticklabels([name[:40] for name in df_top_movers[name_col]], fontsize=9)
         ax.set_xlabel('Rank Improvement (positive = moved up)', fontsize=11, fontweight='bold')
         ax.set_title('Top 30 Companies by Rank Change', fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3, axis='x')
@@ -585,16 +630,25 @@ def main():
         return
     
     # 3. Calculer TechRank AVANT TGN
-    _, df_comp_before = run_techrank_on_graph(
-        B_before, dict_comp_before, dict_inv_before, 
+    # ⚠️ Maintenant run_techrank_on_graph retourne (companies, investors)
+    df_comp_before, _ = run_techrank_on_graph(
+        B_before, dict_comp_before, dict_inv_before,
         args.alpha, args.beta, "AVANT TGN (Ground Truth)", logger
     )
+
+    # Debug: vérifier les premiers noms
+    if df_comp_before is not None and len(df_comp_before) > 0:
+        logger.info(f"\n🔍 DEBUG - Premiers noms dans df_comp_before:")
+        for name in df_comp_before['final_configuration'].head(5):
+            logger.info(f"   {name}")
+
     df_comp_before = df_comp_before[df_comp_before['techrank'] != 0.0]
     df_comp_before.to_csv("techrank_comparison/before_tgn.csv", index=False)
 
-    
+
     # 4. Calculer TechRank APRÈS TGN
-    _, df_comp_after = run_techrank_on_graph(
+    # ⚠️ Maintenant run_techrank_on_graph retourne (companies, investors)
+    df_comp_after, _ = run_techrank_on_graph(
         B_after, dict_comp_after, dict_inv_after,
         args.alpha, args.beta, "APRÈS TGN (Predictions)", logger
     )
