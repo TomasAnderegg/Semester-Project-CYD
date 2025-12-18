@@ -419,22 +419,34 @@ def main():
     print("\n" + "="*80)
     print("CRÉATION DES DATASETS - CLASSIFICATION")
     print("="*80)
-    
+
+    # TRAIN
     train_positives = create_positive_samples(tgn_edges, raw_data, id_to_company, id_to_investor, 'train')
     train_negatives = create_negative_samples(train_positives, raw_data, num_negatives_per_positive=1)
     X_train, y_train = prepare_dataset(train_positives, train_negatives)
-    
+
+    # VALIDATION
+    val_positives = create_positive_samples(tgn_edges, raw_data, id_to_company, id_to_investor, 'val')
+    val_negatives = create_negative_samples(val_positives, raw_data, num_negatives_per_positive=1)
+    X_val, y_val = prepare_dataset(val_positives, val_negatives)
+
+    # TEST
     test_positives = create_positive_samples(tgn_edges, raw_data, id_to_company, id_to_investor, 'test')
     test_negatives = create_negative_samples(test_positives, raw_data, num_negatives_per_positive=1)
     X_test, y_test = prepare_dataset(test_positives, test_negatives)
-    
+
     # 5. Créer les datasets pour RANKING (MRR, Recall@K)
     print("\n" + "="*80)
     print("CRÉATION DES DATASETS - RANKING")
     print("="*80)
-    
+
+    val_ranking_samples = create_ranking_samples(
+        tgn_edges, raw_data, id_to_company, id_to_investor,
+        split_type='val', num_negatives=100
+    )
+
     test_ranking_samples = create_ranking_samples(
-        tgn_edges, raw_data, id_to_company, id_to_investor, 
+        tgn_edges, raw_data, id_to_company, id_to_investor,
         split_type='test', num_negatives=100
     )
     
@@ -457,31 +469,50 @@ def main():
     
     print("\n🔧 Entraînement en cours...")
     rf.fit(X_train, y_train)
-    
-    # 7. Évaluation - CLASSIFICATION METRICS
+
+    # 7. Évaluation - VALIDATION SET
     print("\n" + "="*80)
-    print("ÉVALUATION - CLASSIFICATION METRICS")
+    print("ÉVALUATION - VALIDATION SET")
     print("="*80)
-    
-    y_pred_proba = rf.predict_proba(X_test)[:, 1]
-    auc = roc_auc_score(y_test, y_pred_proba)
-    ap = average_precision_score(y_test, y_pred_proba)
-    
-    print(f"\n📊 Métriques de Classification:")
-    print(f"  AUROC:               {auc:.4f}")
-    print(f"  Average Precision:   {ap:.4f}")
-    
-    # 8. Évaluation - RANKING METRICS
+
+    # Classification metrics sur validation
+    y_val_pred_proba = rf.predict_proba(X_val)[:, 1]
+    val_auc = roc_auc_score(y_val, y_val_pred_proba)
+    val_ap = average_precision_score(y_val, y_val_pred_proba)
+
+    print(f"\n📊 Métriques de Classification (Validation):")
+    print(f"  AUROC:               {val_auc:.4f}")
+    print(f"  Average Precision:   {val_ap:.4f}")
+
+    # Ranking metrics sur validation
+    val_mrr, val_recall_k = compute_ranking_metrics(rf, val_ranking_samples, k_values=[10, 50])
+
+    print(f"\n📊 Métriques de Ranking (Validation):")
+    print(f"  MRR:                 {val_mrr:.4f}")
+    print(f"  Recall@10:           {val_recall_k[10]:.4f}")
+    print(f"  Recall@50:           {val_recall_k[50]:.4f}")
+
+    # 8. Évaluation - TEST SET
     print("\n" + "="*80)
-    print("ÉVALUATION - RANKING METRICS")
+    print("ÉVALUATION - TEST SET")
     print("="*80)
-    
-    mrr, recall_k = compute_ranking_metrics(rf, test_ranking_samples, k_values=[10, 50])
-    
-    print(f"\n📊 Métriques de Ranking:")
-    print(f"  MRR:                 {mrr:.4f}")
-    print(f"  Recall@10:           {recall_k[10]:.4f}")
-    print(f"  Recall@50:           {recall_k[50]:.4f}")
+
+    # Classification metrics sur test
+    y_test_pred_proba = rf.predict_proba(X_test)[:, 1]
+    test_auc = roc_auc_score(y_test, y_test_pred_proba)
+    test_ap = average_precision_score(y_test, y_test_pred_proba)
+
+    print(f"\n📊 Métriques de Classification (Test):")
+    print(f"  AUROC:               {test_auc:.4f}")
+    print(f"  Average Precision:   {test_ap:.4f}")
+
+    # Ranking metrics sur test
+    test_mrr, test_recall_k = compute_ranking_metrics(rf, test_ranking_samples, k_values=[10, 50])
+
+    print(f"\n📊 Métriques de Ranking (Test):")
+    print(f"  MRR:                 {test_mrr:.4f}")
+    print(f"  Recall@10:           {test_recall_k[10]:.4f}")
+    print(f"  Recall@50:           {test_recall_k[50]:.4f}")
     
     # 9. Analyse des features
     print("\n" + "="*80)
@@ -517,34 +548,46 @@ def main():
     print("\n" + "="*80)
     print("RÉSUMÉ FINAL - COMPARAISON AVEC TGN")
     print("="*80)
-    
+
     print(f"""
     🎯 RANDOM FOREST BASELINE (toutes métriques):
-    
-    Classification Metrics:
-       - AUROC:             {auc:.4f}
-       - Average Precision: {ap:.4f}
-    
-    Ranking Metrics:
-       - MRR:               {mrr:.4f}
-       - Recall@10:         {recall_k[10]:.4f}
-       - Recall@50:         {recall_k[50]:.4f}
-    
+
+    VALIDATION SET:
+      Classification Metrics:
+         - AUROC:             {val_auc:.4f}
+         - Average Precision: {val_ap:.4f}
+
+      Ranking Metrics:
+         - MRR:               {val_mrr:.4f}
+         - Recall@10:         {val_recall_k[10]:.4f}
+         - Recall@50:         {val_recall_k[50]:.4f}
+
+    TEST SET:
+      Classification Metrics:
+         - AUROC:             {test_auc:.4f}
+         - Average Precision: {test_ap:.4f}
+
+      Ranking Metrics:
+         - MRR:               {test_mrr:.4f}
+         - Recall@10:         {test_recall_k[10]:.4f}
+         - Recall@50:         {test_recall_k[50]:.4f}
+
     📋 INTERPRÉTATION:
        - Ces scores représentent la baseline pour votre TGN
        - TGN devrait améliorer ces scores grâce à la capture de la dynamique temporelle
        - Si TGN < RF: problème dans l'implémentation TGN
        - Si TGN ≈ RF: TGN ne capture pas mieux la temporalité
        - Si TGN > RF (+5-15%): TGN fonctionne bien!
-    
-    🎯 OBJECTIFS POUR TGN:
-       - AUROC:     > {auc + 0.05:.4f} (+5%)
-       - AP:        > {ap + 0.05:.4f} (+5%)
-       - MRR:       > {mrr + 0.05:.4f} (+5%)
-       - Recall@10: > {recall_k[10] + 0.05:.4f} (+5%)
-       - Recall@50: > {recall_k[50] + 0.05:.4f} (+5%)
-    
+
+    🎯 OBJECTIFS POUR TGN (TEST SET):
+       - AUROC:     > {test_auc + 0.05:.4f} (+5%)
+       - AP:        > {test_ap + 0.05:.4f} (+5%)
+       - MRR:       > {test_mrr + 0.05:.4f} (+5%)
+       - Recall@10: > {test_recall_k[10] + 0.05:.4f} (+5%)
+       - Recall@50: > {test_recall_k[50] + 0.05:.4f} (+5%)
+
     ✅ IMPORTANT:
+       - Split temporel 70/15/15 (train/val/test) comme TGN
        - Même évaluation temporelle que TGN (prédiction FUTURE uniquement)
        - Pas de data leakage (features calculées sur historique uniquement)
        - 5 métriques identiques pour comparaison directe
@@ -552,18 +595,27 @@ def main():
     
     # 11. Sauvegarde des résultats
     results = {
-        'auroc': auc,
-        'ap': ap,
-        'mrr': mrr,
-        'recall@10': recall_k[10],
-        'recall@50': recall_k[50],
+        'validation': {
+            'auroc': val_auc,
+            'ap': val_ap,
+            'mrr': val_mrr,
+            'recall@10': val_recall_k[10],
+            'recall@50': val_recall_k[50]
+        },
+        'test': {
+            'auroc': test_auc,
+            'ap': test_ap,
+            'mrr': test_mrr,
+            'recall@10': test_recall_k[10],
+            'recall@50': test_recall_k[50]
+        },
         'feature_importances': dict(zip(feature_names, importances))
     }
-    
+
     import json
     with open('rf_baseline_results.json', 'w') as f:
         json.dump(results, f, indent=2)
-    
+
     print("\n✅ Résultats sauvegardés dans: rf_baseline_results.json")
 
 if __name__ == "__main__":
