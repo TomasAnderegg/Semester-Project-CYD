@@ -10,6 +10,7 @@ from pathlib import Path
 import wandb  # AJOUT: Import wandb
 import shutil
 import pandas as pd
+import json  # AJOUT: Pour sauvegarder les résultats en JSON
 
 from evaluation.evaluation import eval_edge_prediction
 from model.tgn import TGN
@@ -236,7 +237,20 @@ for i in range(args.n_runs):
       reinit=True
     )
   
-  results_path = "results/{}_{}.pkl".format(args.prefix, i) if i > 0 else "results/{}.pkl".format(args.prefix)
+  # Déterminer le nom de la loss function pour nommer les fichiers
+  loss_name = "bce"  # Default
+  if args.use_focal_loss and args.use_har_loss:
+    loss_name = "hybrid"
+  elif args.use_har_loss:
+    loss_name = "har"
+  elif args.use_focal_loss:
+    loss_name = "focal"
+
+  # Créer des noms de fichiers identifiants la loss
+  prefix_with_loss = f"{args.prefix}_{loss_name}" if args.prefix else loss_name
+  results_path = "results/{}_{}.pkl".format(prefix_with_loss, i) if i > 0 else "results/{}.pkl".format(prefix_with_loss)
+  results_json_path = "results/{}_{}.json".format(prefix_with_loss, i) if i > 0 else "results/{}.json".format(prefix_with_loss)
+
   Path("results/").mkdir(parents=True, exist_ok=True)
 
   # Initialize Model
@@ -590,8 +604,8 @@ for i in range(args.n_runs):
     # wandb.save("saved_models/tgn-attn-crunchbase.pth")
 
   
-  # Save results
-  pickle.dump({
+  # Save results (pickle format)
+  results_dict = {
     "val_aps": val_aps,
     "val_mrrs": val_mrrs,
     "val_recall_10s": val_recall_10s,
@@ -611,7 +625,49 @@ for i in range(args.n_runs):
     "epoch_times": epoch_times,
     "train_losses": train_losses,
     "total_epoch_times": total_epoch_times
-  }, open(results_path, "wb"))
+  }
+
+  pickle.dump(results_dict, open(results_path, "wb"))
+
+  # AJOUT: Sauvegarder aussi en JSON pour faciliter la lecture et la comparaison
+  results_json = {
+    "loss_function": loss_name,
+    "config": {
+      "focal_alpha": args.focal_alpha if args.use_focal_loss else None,
+      "focal_gamma": args.focal_gamma if args.use_focal_loss else None,
+      "har_alpha": args.har_alpha if args.use_har_loss else None,
+      "har_temperature": args.har_temperature if args.use_har_loss else None,
+    },
+    "validation": {
+      "ap": val_aps,
+      "mrr": val_mrrs,
+      "recall_10": val_recall_10s,
+      "recall_50": val_recall_50s,
+    },
+    "test": {
+      "ap": float(test_ap),
+      "auc": float(test_auc),
+      "mrr": float(test_mrr),
+      "recall_10": float(test_recall_10),
+      "recall_50": float(test_recall_50),
+    },
+    "new_nodes_test": {
+      "ap": float(nn_test_ap),
+      "auc": float(nn_test_auc),
+      "mrr": float(nn_test_mrr),
+      "recall_10": float(nn_test_recall_10),
+      "recall_50": float(nn_test_recall_50),
+    },
+    "training": {
+      "losses": train_losses,
+      "epoch_times": epoch_times,
+    }
+  }
+
+  with open(results_json_path, 'w') as f:
+    json.dump(results_json, f, indent=2)
+
+  logger.info(f'Results saved to {results_path} and {results_json_path}')
 
   logger.info('Saving TGN model')
   if USE_MEMORY:

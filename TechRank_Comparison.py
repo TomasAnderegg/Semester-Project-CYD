@@ -22,8 +22,8 @@ def parse_args():
     parser.add_argument('--mapping_dir', type=str, default='data/mappings')
     parser.add_argument('--alpha', type=float, default=0.8, help='TechRank alpha parameter')
     parser.add_argument('--beta', type=float, default=-0.6, help='TechRank beta parameter')
-    parser.add_argument('--threshold', type=float, default=0.01, 
-                        help='Minimum delta TechRank to consider (positive = improvement)')
+    parser.add_argument('--threshold', type=float, default=0.01,
+                        help='Minimum relative delta to consider (e.g., 0.01 = 1%% improvement, 0.5 = 50%% improvement)')
     parser.add_argument('--top_k', type=int, default=50, 
                         help='Number of top promising companies to export')
     parser.add_argument('--top_k_viz', type=int, default=20, 
@@ -296,11 +296,12 @@ def run_techrank_on_graph(B, dict_companies, dict_investors, alpha, beta, label,
 
 def analyze_company_deltas(df_before, df_after, threshold, top_k, save_dir, logger, plot=False, top_k_viz=20):
     """
-    Analyse des deltas TechRank par entreprise.
+    Analyse des deltas TechRank RELATIFS par entreprise.
+    Delta relatif = (after - before) / (before + epsilon)
     Le delta n'est calculé QUE si techrank_before != 0
     """
     logger.info("\n" + "="*70)
-    logger.info("ANALYSE DES DELTAS TECHRANK PAR ENTREPRISE")
+    logger.info("ANALYSE DES DELTAS TECHRANK RELATIFS PAR ENTREPRISE")
     logger.info("="*70)
 
     save_dir = Path(save_dir)
@@ -326,20 +327,38 @@ def analyze_company_deltas(df_before, df_after, threshold, top_k, save_dir, logg
     df_delta['display_name'] = df_delta['final_configuration'].str.replace('COMPANY_', '', regex=False)
     df_delta['display_name'] = df_delta['display_name'].str.replace('INVESTOR_', '', regex=False)
 
-    # 🔒 Filtrer : on garde uniquement les entreprises existantes AVANT
-    df_delta = df_delta[df_delta['techrank_before'] != 0].copy()
+    # 🔒 Filtrer : on garde uniquement les entreprises avec un TechRank initial significatif
+    # Threshold minimum pour éviter les deltas relatifs artificiellement élevés
+    min_techrank_threshold = 1e-6
+
+    logger.info(f"\n🔍 Filtrage des entreprises:")
+    logger.info(f"   Avant filtrage: {len(df_delta)} entreprises")
+    logger.info(f"   Threshold minimum: techrank_before > {min_techrank_threshold}")
+
+    # Compter combien seront filtrées AVANT de filtrer
+    num_filtered = (df_delta['techrank_before'] <= min_techrank_threshold).sum()
+
+    df_delta = df_delta[df_delta['techrank_before'] > min_techrank_threshold].copy()
+
+    logger.info(f"   Après filtrage: {len(df_delta)} entreprises")
+    logger.info(f"   Entreprises filtrées (techrank_before ≤ {min_techrank_threshold}): {num_filtered}")
 
     # Sauvegarde intermédiaire
     df_delta.to_csv('techrank_comparison/company_techrank_merged_filtered.csv', index=False)
 
     # ============================
-    # Calcul des deltas
+    # Calcul des deltas RELATIFS
     # ============================
-    df_delta['techrank_delta'] = (df_delta['techrank_after'] - df_delta['techrank_before'])
-
-    df_delta['techrank_delta_pct'] = (
-        df_delta['techrank_delta'] / (df_delta['techrank_before'] + 1e-10) * 100
+    # Delta relatif: (after - before) / (before + epsilon)
+    # Normalise par la valeur initiale pour comparer les améliorations relatives
+    epsilon = 1e-8
+    df_delta['techrank_delta'] = (
+        (df_delta['techrank_after'] - df_delta['techrank_before']) /
+        (df_delta['techrank_before'] + epsilon)
     )
+
+    # Delta en pourcentage (×100 du delta relatif)
+    df_delta['techrank_delta_pct'] = df_delta['techrank_delta'] * 100
 
     df_delta.to_csv('techrank_comparison/company_techrank_deltas.csv', index=False)
 
@@ -374,7 +393,7 @@ def analyze_company_deltas(df_before, df_after, threshold, top_k, save_dir, logg
     if not df_promising.empty:
         logger.info(
             f"\n{'Rank':<6} {'Company':<50} {'Before':<12} {'After':<12} "
-            f"{'Delta':<12} {'Delta %':<10} {'Rank Δ':<8}"
+            f"{'Δ Relative':<12} {'Δ %':<10} {'Rank Δ':<8}"
         )
         logger.info("-"*120)
 
@@ -495,14 +514,14 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
     # 2. Distribution des deltas
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     
-    # Histogram des deltas
+    # Histogram des deltas relatifs
     ax1 = axes[0, 0]
     ax1.hist(df_delta['techrank_delta'], bins=50, edgecolor='black', alpha=0.7, color='#3498db')
     ax1.axvline(threshold, color='red', linestyle='--', linewidth=2, label=f'Threshold: {threshold}')
     ax1.axvline(0, color='black', linestyle='-', linewidth=0.8)
-    ax1.set_xlabel('TechRank Delta (After - Before)', fontsize=11, fontweight='bold')
+    ax1.set_xlabel('TechRank Relative Delta: (After - Before) / Before', fontsize=11, fontweight='bold')
     ax1.set_ylabel('Number of Companies', fontsize=11, fontweight='bold')
-    ax1.set_title('Distribution of TechRank Delta', fontsize=12, fontweight='bold')
+    ax1.set_title('Distribution of TechRank Relative Delta', fontsize=12, fontweight='bold')
     ax1.legend(fontsize=10)
     ax1.grid(True, alpha=0.3)
     
@@ -526,9 +545,9 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
     ax2.set_title('TechRank: Before vs After', fontsize=12, fontweight='bold')
     ax2.legend(fontsize=10)
     ax2.grid(True, alpha=0.3)
-    plt.colorbar(scatter, ax=ax2, label='Delta')
+    plt.colorbar(scatter, ax=ax2, label='Relative Delta')
     
-    # Top 20 promising companies - Delta only
+    # Top 20 promising companies - Relative Delta only
     ax3 = axes[1, 0]
     if len(df_promising) > 0:
         top20 = df_promising.head(20).copy()
@@ -538,14 +557,14 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
         # Utiliser display_name (sans préfixe COMPANY_)
         name_col = 'display_name' if 'display_name' in top20.columns else 'final_configuration'
         ax3.set_yticklabels([name[:35] for name in top20[name_col]], fontsize=12)
-        ax3.set_xlabel('TechRank Delta', fontsize=11, fontweight='bold')
-        ax3.set_title('Top 20 Promising Companies (by Delta)', fontsize=12, fontweight='bold')
+        ax3.set_xlabel('TechRank Relative Delta', fontsize=11, fontweight='bold')
+        ax3.set_title('Top 20 Promising Companies (by Relative Delta)', fontsize=12, fontweight='bold')
         ax3.grid(True, alpha=0.3, axis='x')
         ax3.invert_yaxis()
-        
-        # Ajouter les valeurs sur les barres
+
+        # Ajouter les valeurs sur les barres (format avec % pour clarté)
         for i, (idx, row) in enumerate(top20.iterrows()):
-            ax3.text(row['techrank_delta'], i, f" +{row['techrank_delta']:.4f}", 
+            ax3.text(row['techrank_delta'], i, f" +{row['techrank_delta']:.3f} ({row['techrank_delta_pct']:.1f}%)",
                     va='center', fontsize=7, fontweight='bold')
     
     # Cumulative distribution
@@ -555,9 +574,9 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
     ax4.plot(sorted_deltas, cumsum, linewidth=2, color='#3498db')
     ax4.axvline(threshold, color='red', linestyle='--', linewidth=2, label=f'Threshold: {threshold}')
     ax4.axvline(0, color='black', linestyle='-', linewidth=0.8)
-    ax4.set_xlabel('TechRank Delta', fontsize=11, fontweight='bold')
+    ax4.set_xlabel('TechRank Relative Delta', fontsize=11, fontweight='bold')
     ax4.set_ylabel('Cumulative % of Companies', fontsize=11, fontweight='bold')
-    ax4.set_title('Cumulative Distribution of TechRank Delta', fontsize=12, fontweight='bold')
+    ax4.set_title('Cumulative Distribution of TechRank Relative Delta', fontsize=12, fontweight='bold')
     ax4.legend(fontsize=10)
     ax4.grid(True, alpha=0.3)
     
@@ -585,7 +604,9 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
         
         # Ajouter les valeurs
         for i, (idx, row) in enumerate(df_top_movers.iterrows()):
-            ax.text(row['rank_change'], i, f" +{int(row['rank_change'])}", 
+            rank_val = int(row['rank_change'])
+            sign = "+" if rank_val >= 0 else ""
+            ax.text(row['rank_change'], i, f" {sign}{rank_val}",
                    va='center', fontsize=8, fontweight='bold')
         
         plt.tight_layout()

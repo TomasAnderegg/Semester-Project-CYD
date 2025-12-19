@@ -1233,6 +1233,10 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
         dict_split = split_dictionaries_by_graph(B_train, B_val, B_test, dict_companies_full, dict_investors_full)
         save_split_data(B_train, B_val, B_test, dict_split, limit, output_dir=None)
 
+        # Plotting
+        print("=== Plot B_train ===")
+        plot_bipartite_graph(B_full)
+
         # Préparer les fichiers TGN limités au temps maximal du train
         # Préparer les données TGN
         # df, item_map, user_map = prepare_tgn_input(B_full, output_prefix="crunchbase_filtered")
