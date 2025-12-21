@@ -1239,10 +1239,10 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
 
         # Préparer les fichiers TGN limités au temps maximal du train
         # Préparer les données TGN
-        # df, item_map, user_map = prepare_tgn_input(B_full, output_prefix="crunchbase_filtered")
-        df, item_map, user_map = prepare_tgn_input(B_train, output_prefix="crunchbase_filtered_train")
-        df, item_map, user_map = prepare_tgn_input(B_val, output_prefix="crunchbase_filtered_val")
-        df, item_map, user_map = prepare_tgn_input(B_test, output_prefix="crunchbase_filtered_test")
+        df, item_map, user_map = prepare_tgn_input(B_full, output_prefix="crunchbase_filtered")
+        # df, item_map, user_map = prepare_tgn_input(B_train, output_prefix="crunchbase_filtered_train")
+        # df, item_map, user_map = prepare_tgn_input(B_val, output_prefix="crunchbase_filtered_val")
+        # df, item_map, user_map = prepare_tgn_input(B_test, output_prefix="crunchbase_filtered_test")
 
 
         # # NOUVEAU: Sauvegarder les degrés pour la weighted loss

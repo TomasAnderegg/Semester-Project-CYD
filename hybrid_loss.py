@@ -58,7 +58,7 @@ class HybridFocalHARLoss(nn.Module):
         weights = torch.pow(degrees_clamped, -self.har_alpha)
         return weights
 
-    def forward(self, pos_prob, neg_prob, src_degrees, dst_degrees,
+    def forward(self, pos_prob, neg_prob, src_degrees, dst_degrees_pos, dst_degrees_neg,
                 pos_label, neg_label):
         """
         Compute hybrid Focal-HAR loss.
@@ -67,7 +67,8 @@ class HybridFocalHARLoss(nn.Module):
             pos_prob (Tensor): Probabilities for positive pairs, shape (N,)
             neg_prob (Tensor): Probabilities for negative pairs, shape (N,)
             src_degrees (Tensor): Degrees of source nodes, shape (N,)
-            dst_degrees (Tensor): Degrees of destination nodes, shape (N,)
+            dst_degrees_pos (Tensor): Degrees of positive destination nodes, shape (N,)
+            dst_degrees_neg (Tensor): Degrees of negative destination nodes, shape (N,)
             pos_label (Tensor): Labels for positives (all 1.0), shape (N,)
             neg_label (Tensor): Labels for negatives (all 0.0), shape (N,)
 
@@ -82,9 +83,9 @@ class HybridFocalHARLoss(nn.Module):
         # POSITIVE PAIRS
         # ========================================
 
-        # 1. HAR component: degree-based weights
+        # 1. HAR component: degree-based weights for POSITIVE pairs
         w_src_pos = self.compute_degree_weights(src_degrees)
-        w_dst_pos = self.compute_degree_weights(dst_degrees)
+        w_dst_pos = self.compute_degree_weights(dst_degrees_pos)
         w_degree_pos = w_src_pos * w_dst_pos  # Combined degree weight
 
         # 2. Focal component: focus on hard examples
@@ -105,11 +106,11 @@ class HybridFocalHARLoss(nn.Module):
         # NEGATIVE PAIRS
         # ========================================
 
-        # 1. HAR component: degree-based weights
+        # 1. HAR component: degree-based weights for NEGATIVE pairs
         # Note: For negatives, we also want to reweight by degree
         # This ensures low-degree negatives aren't ignored either
         w_src_neg = self.compute_degree_weights(src_degrees)
-        w_dst_neg = self.compute_degree_weights(dst_degrees)
+        w_dst_neg = self.compute_degree_weights(dst_degrees_neg)
         w_degree_neg = w_src_neg * w_dst_neg
 
         # 2. Focal component
@@ -200,10 +201,10 @@ class AdaptiveHybridLoss(nn.Module):
 
         self.hybrid_loss.lambda_focal = lambda_focal
 
-    def forward(self, pos_prob, neg_prob, src_degrees, dst_degrees,
+    def forward(self, pos_prob, neg_prob, src_degrees, dst_degrees_pos, dst_degrees_neg,
                 pos_label, neg_label):
         """Forward pass (delegates to HybridFocalHARLoss)."""
-        return self.hybrid_loss(pos_prob, neg_prob, src_degrees, dst_degrees,
+        return self.hybrid_loss(pos_prob, neg_prob, src_degrees, dst_degrees_pos, dst_degrees_neg,
                                pos_label, neg_label)
 
 
@@ -247,13 +248,13 @@ def test_hybrid_loss():
     loss_focal = (criterion_focal(pos_prob, pos_label) +
                   criterion_focal(neg_prob, neg_label))
 
-    # HAR (needs scores, not probs)
+    # HAR (needs scores, not probs, and separate dst degrees)
     pos_scores = torch.log(pos_prob / (1 - pos_prob + 1e-7))
     neg_scores = torch.log(neg_prob / (1 - neg_prob + 1e-7))
-    loss_har = criterion_har(pos_scores, neg_scores, src_degrees, dst_degrees)
+    loss_har = criterion_har(pos_scores, neg_scores, src_degrees, dst_degrees, dst_degrees)
 
-    # Hybrid
-    loss_hybrid = criterion_hybrid(pos_prob, neg_prob, src_degrees, dst_degrees,
+    # Hybrid (using same dst_degrees for both pos and neg in test)
+    loss_hybrid = criterion_hybrid(pos_prob, neg_prob, src_degrees, dst_degrees, dst_degrees,
                                    pos_label, neg_label)
 
     print(f"\nComparison of losses:")
@@ -267,7 +268,7 @@ def test_hybrid_loss():
     for lambda_f in [0.0, 0.25, 0.5, 0.75, 1.0]:
         criterion = HybridFocalHARLoss(focal_gamma=2.0, focal_alpha=0.25,
                                       har_alpha=0.5, lambda_focal=lambda_f)
-        loss = criterion(pos_prob, neg_prob, src_degrees, dst_degrees,
+        loss = criterion(pos_prob, neg_prob, src_degrees, dst_degrees, dst_degrees,
                         pos_label, neg_label)
         print(f"  lambda={lambda_f:.2f} (Focal={lambda_f:.0%}, HAR={1-lambda_f:.0%}): loss={loss.item():.4f}")
 
@@ -290,9 +291,9 @@ def test_hybrid_loss():
 
     criterion = HybridFocalHARLoss(focal_gamma=2.0, har_alpha=0.5)
 
-    loss_high = criterion(pos_high, neg_high, high_degree, high_degree,
+    loss_high = criterion(pos_high, neg_high, high_degree, high_degree, high_degree,
                          label_high, label_neg_high)
-    loss_low = criterion(pos_low, neg_low, low_degree, low_degree,
+    loss_low = criterion(pos_low, neg_low, low_degree, low_degree, low_degree,
                         label_low, label_neg_low)
 
     print(f"  High-degree (degree=50, easy):  loss={loss_high.item():.4f}")

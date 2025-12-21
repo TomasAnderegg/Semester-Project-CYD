@@ -55,13 +55,13 @@ def get_data(dataset_name, different_new_nodes_between_val_and_test=False, rando
   # edge_features = np.load('./data/ml_{}.npy'.format(dataset_name))
   # node_features = np.load('./data/ml_{}_node.npy'.format(dataset_name))
 
-  # graph_df = pd.read_csv('./data/{}_filtered.csv'.format(dataset_name))
-  # edge_features = np.load('./data/{}_filtered.npy'.format(dataset_name))
-  # node_features = np.load('./data/{}_filtered_node.npy'.format(dataset_name)) 
+  graph_df = pd.read_csv('./data/{}_filtered.csv'.format(dataset_name))
+  edge_features = np.load('./data/{}_filtered.npy'.format(dataset_name))
+  node_features = np.load('./data/{}_filtered_node.npy'.format(dataset_name)) 
 
-  graph_df = pd.read_csv('./data/data_split/{}_filtered_train.csv'.format(dataset_name))
-  edge_features = np.load('./data/data_split/{}_filtered_train.npy'.format(dataset_name))
-  node_features = np.load('./data/data_split/{}_filtered_train_node.npy'.format(dataset_name))  
+  # graph_df = pd.read_csv('./data/data_split/{}_filtered_train.csv'.format(dataset_name))
+  # edge_features = np.load('./data/data_split/{}_filtered_train.npy'.format(dataset_name))
+  # node_features = np.load('./data/data_split/{}_filtered_train_node.npy'.format(dataset_name))  
   
     
   if randomize_features:

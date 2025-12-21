@@ -422,15 +422,14 @@ for i in range(args.n_runs):
           dst_degrees_neg = degree_tensor[negatives_batch]
 
           loss += criterion(pos_prob.squeeze(), neg_prob.squeeze(),
-                           src_degrees, dst_degrees_pos,
+                           src_degrees, dst_degrees_pos, dst_degrees_neg,
                            pos_label, neg_label)
         elif args.use_har_loss:
           # HAR Loss needs degrees of source and destination nodes
           # Get degrees for positive pairs
-          src_degrees_pos = degree_tensor[sources_batch]
+          src_degrees = degree_tensor[sources_batch]
           dst_degrees_pos = degree_tensor[destinations_batch]
           # Get degrees for negative pairs
-          src_degrees_neg = degree_tensor[sources_batch]
           dst_degrees_neg = degree_tensor[negatives_batch]
 
           # HAR Loss expects scores, so convert probs back to scores (logit)
@@ -438,7 +437,7 @@ for i in range(args.n_runs):
           pos_scores = torch.log(pos_prob.squeeze() / (1 - pos_prob.squeeze() + 1e-7))
           neg_scores = torch.log(neg_prob.squeeze() / (1 - neg_prob.squeeze() + 1e-7))
 
-          loss += criterion(pos_scores, neg_scores, src_degrees_pos, dst_degrees_pos)
+          loss += criterion(pos_scores, neg_scores, src_degrees, dst_degrees_pos, dst_degrees_neg)
         else:
           # Standard BCE or Focal Loss
           loss += criterion(pos_prob.squeeze(), pos_label) + criterion(neg_prob.squeeze(), neg_label)
