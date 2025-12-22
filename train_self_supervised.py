@@ -18,7 +18,7 @@ from utils.utils import EarlyStopMonitor, RandEdgeSampler, get_neighbor_finder
 from utils.data_processing import get_data, compute_time_statistics
 from tqdm import tqdm
 # from data.custom_loss import create_business_aware_loss  # AJOUT: Nouvelle loss
-from focal_loss import FocalLoss  # AJOUT: Import Focal Loss
+from focal_loss import FocalLoss, AdaptiveFocalLoss # AJOUT: Import Focal Loss
 from dcl_loss import DCLLoss, build_degree_dict  # AJOUT: Import DCL Loss
 from hybrid_loss import HybridFocalDCLLoss  # AJOUT: Import Hybrid Loss
 from hard_negative_mining import HardNegativeSampler, build_adjacency_dict  # AJOUT: Import Hard Negative Mining
@@ -293,7 +293,7 @@ for i in range(args.n_runs):
     if degree_tensor is not None:
       degree_tensor = degree_tensor.to(device)
   elif args.use_dcl_loss:
-    # ✅ DCL LOSS: Hardness Adaptive Reweighted Loss pour mitiger le degree bias
+    # ✅ DCL LOSS: Degree Constrastive Loss pour mitiger le degree bias
     logger.info(f"Using DCL Loss with temperature={args.dcl_temperature}, alpha={args.dcl_alpha}")
     criterion = DCLLoss(temperature=args.dcl_temperature, alpha=args.dcl_alpha, reduction='mean')
     # Move degree tensor to device
@@ -303,6 +303,7 @@ for i in range(args.n_runs):
     # ✅ FOCAL LOSS: Pour gérer le déséquilibre de classes
     logger.info(f"Using Focal Loss with alpha={args.focal_alpha}, gamma={args.focal_gamma}")
     criterion = FocalLoss(alpha=args.focal_alpha, gamma=args.focal_gamma, reduction='mean')
+    # criterion = AdaptiveFocalLoss(gamma=args.focal_gamma, reduction='mean')
   else:
     # 📌 BASELINE: Binary Cross-Entropy (BCE)
     logger.info("Using standard Binary Cross-Entropy Loss")
