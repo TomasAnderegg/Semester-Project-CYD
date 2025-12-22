@@ -1,9 +1,9 @@
 """
-Hybrid Focal-HAR Loss implementation
+Hybrid Focal-DCL Loss implementation
 
 Combines:
 1. Focal Loss: Focus on hard examples (class imbalance)
-2. HAR Loss: Mitigate degree bias (graph structure)
+2. DCL Loss: Mitigate degree bias (graph structure)
 
 Ideal for scenarios with BOTH:
 - Extreme class imbalance (e.g., 0.03% positives)
@@ -15,53 +15,53 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class HybridFocalHARLoss(nn.Module):
+class HybridFocalDCLLoss(nn.Module):
     """
-    Hybrid loss combining Focal Loss and HAR Loss.
+    Hybrid loss combining Focal Loss and DCL Loss.
 
     Formula:
         Hybrid = degree_weight * focal_weight * BCE_loss
 
     where:
-        - degree_weight = degree^(-har_alpha)     # HAR component
+        - degree_weight = degree^(-dcl_alpha)     # DCL component
         - focal_weight = (1 - p_t)^focal_gamma    # Focal component
         - BCE_loss = standard binary cross-entropy
 
     Args:
         focal_gamma (float): Focusing parameter for Focal Loss (default: 2.0)
         focal_alpha (float): Class balancing for Focal Loss (default: 0.25)
-        har_alpha (float): Degree reweighting exponent (default: 0.5)
-        lambda_focal (float): Weight for Focal vs HAR (default: 0.5)
-                             0.0 = pure HAR, 1.0 = pure Focal, 0.5 = balanced
+        dcl_alpha (float): Degree reweighting exponent (default: 0.5)
+        lambda_focal (float): Weight for Focal vs DCL (default: 0.5)
+                             0.0 = pure DCL, 1.0 = pure Focal, 0.5 = balanced
         reduction (str): 'none', 'mean', 'sum' (default: 'mean')
 
     Example:
-        >>> criterion = HybridFocalHARLoss(focal_gamma=2.0, har_alpha=0.5)
+        >>> criterion = HybridFocalDCLLoss(focal_gamma=2.0, dcl_alpha=0.5)
         >>> loss = criterion(pos_prob, neg_prob, src_degrees, dst_degrees,
         ...                  pos_label, neg_label)
     """
 
-    def __init__(self, focal_gamma=2.0, focal_alpha=0.25, har_alpha=0.5,
+    def __init__(self, focal_gamma=2.0, focal_alpha=0.25, dcl_alpha=0.5,
                  lambda_focal=0.5, reduction='mean'):
-        super(HybridFocalHARLoss, self).__init__()
+        super(HybridFocalDCLLoss, self).__init__()
         self.focal_gamma = focal_gamma
         self.focal_alpha = focal_alpha
-        self.har_alpha = har_alpha
+        self.dcl_alpha = dcl_alpha
         self.lambda_focal = lambda_focal
         self.reduction = reduction
 
     def compute_degree_weights(self, degrees):
         """
-        Compute HAR degree-based weights: w(i) = degree(i)^(-alpha)
+        Compute DCL degree-based weights: w(i) = degree(i)^(-alpha)
         """
         degrees_clamped = torch.clamp(degrees, min=1.0)
-        weights = torch.pow(degrees_clamped, -self.har_alpha)
+        weights = torch.pow(degrees_clamped, -self.dcl_alpha)
         return weights
 
     def forward(self, pos_prob, neg_prob, src_degrees, dst_degrees_pos, dst_degrees_neg,
                 pos_label, neg_label):
         """
-        Compute hybrid Focal-HAR loss.
+        Compute hybrid Focal-DCL loss.
 
         Args:
             pos_prob (Tensor): Probabilities for positive pairs, shape (N,)
@@ -83,7 +83,7 @@ class HybridFocalHARLoss(nn.Module):
         # POSITIVE PAIRS
         # ========================================
 
-        # 1. HAR component: degree-based weights for POSITIVE pairs
+        # 1. DCL component: degree-based weights for POSITIVE pairs
         w_src_pos = self.compute_degree_weights(src_degrees)
         w_dst_pos = self.compute_degree_weights(dst_degrees_pos)
         w_degree_pos = w_src_pos * w_dst_pos  # Combined degree weight
@@ -106,7 +106,7 @@ class HybridFocalHARLoss(nn.Module):
         # NEGATIVE PAIRS
         # ========================================
 
-        # 1. HAR component: degree-based weights for NEGATIVE pairs
+        # 1. DCL component: degree-based weights for NEGATIVE pairs
         # Note: For negatives, we also want to reweight by degree
         # This ensures low-degree negatives aren't ignored either
         w_src_neg = self.compute_degree_weights(src_degrees)
@@ -150,25 +150,25 @@ class AdaptiveHybridLoss(nn.Module):
 
     This is useful if you want to:
     - Start with pure Focal Loss (handle class imbalance first)
-    - Gradually transition to HAR (mitigate degree bias later)
+    - Gradually transition to DCL (mitigate degree bias later)
 
     Args:
         focal_gamma (float): Focal Loss gamma (default: 2.0)
         focal_alpha (float): Focal Loss alpha (default: 0.25)
-        har_alpha (float): HAR degree reweighting (default: 0.5)
+        dcl_alpha (float): DCL degree reweighting (default: 0.5)
         schedule (str): 'linear', 'cosine', 'step' (default: 'linear')
-        warmup_epochs (int): Number of epochs before HAR kicks in (default: 10)
+        warmup_epochs (int): Number of epochs before DCL kicks in (default: 10)
         total_epochs (int): Total epochs (default: 50)
     """
 
-    def __init__(self, focal_gamma=2.0, focal_alpha=0.25, har_alpha=0.5,
+    def __init__(self, focal_gamma=2.0, focal_alpha=0.25, dcl_alpha=0.5,
                  schedule='linear', warmup_epochs=10, total_epochs=50,
                  reduction='mean'):
         super(AdaptiveHybridLoss, self).__init__()
-        self.hybrid_loss = HybridFocalHARLoss(
+        self.hybrid_loss = HybridFocalDCLLoss(
             focal_gamma=focal_gamma,
             focal_alpha=focal_alpha,
-            har_alpha=har_alpha,
+            dcl_alpha=dcl_alpha,
             lambda_focal=1.0,  # Will be adjusted dynamically
             reduction=reduction
         )
@@ -186,7 +186,7 @@ class AdaptiveHybridLoss(nn.Module):
             # Pure Focal Loss during warmup
             lambda_focal = 1.0
         else:
-            # Transition to balanced or HAR-dominated
+            # Transition to balanced or DCL-dominated
             progress = (epoch - self.warmup_epochs) / (self.total_epochs - self.warmup_epochs)
 
             if self.schedule == 'linear':
@@ -203,16 +203,16 @@ class AdaptiveHybridLoss(nn.Module):
 
     def forward(self, pos_prob, neg_prob, src_degrees, dst_degrees_pos, dst_degrees_neg,
                 pos_label, neg_label):
-        """Forward pass (delegates to HybridFocalHARLoss)."""
+        """Forward pass (delegates to HybridFocalDCLLoss)."""
         return self.hybrid_loss(pos_prob, neg_prob, src_degrees, dst_degrees_pos, dst_degrees_neg,
                                pos_label, neg_label)
 
 
 def test_hybrid_loss():
     """
-    Test to verify Hybrid Focal-HAR Loss works correctly.
+    Test to verify Hybrid Focal-DCL Loss works correctly.
     """
-    print("Testing Hybrid Focal-HAR Loss...")
+    print("Testing Hybrid Focal-DCL Loss...")
 
     # Create test data
     torch.manual_seed(42)
@@ -232,13 +232,13 @@ def test_hybrid_loss():
 
     # Compare different losses
     from focal_loss import FocalLoss
-    from har_loss import HARLoss
+    from dcl_loss import DCLLoss
 
     criterion_bce = nn.BCELoss()
     criterion_focal = FocalLoss(alpha=0.25, gamma=2.0)
-    criterion_har = HARLoss(temperature=0.07, alpha=0.5)
-    criterion_hybrid = HybridFocalHARLoss(focal_gamma=2.0, focal_alpha=0.25,
-                                         har_alpha=0.5, lambda_focal=0.5)
+    criterion_har = DCLLoss(temperature=0.07, alpha=0.5)
+    criterion_hybrid = HybridFocalDCLLoss(focal_gamma=2.0, focal_alpha=0.25,
+                                         dcl_alpha=0.5, lambda_focal=0.5)
 
     # BCE
     loss_bce = (criterion_bce(pos_prob, pos_label) +
@@ -248,7 +248,7 @@ def test_hybrid_loss():
     loss_focal = (criterion_focal(pos_prob, pos_label) +
                   criterion_focal(neg_prob, neg_label))
 
-    # HAR (needs scores, not probs, and separate dst degrees)
+    # DCL (needs scores, not probs, and separate dst degrees)
     pos_scores = torch.log(pos_prob / (1 - pos_prob + 1e-7))
     neg_scores = torch.log(neg_prob / (1 - neg_prob + 1e-7))
     loss_har = criterion_har(pos_scores, neg_scores, src_degrees, dst_degrees, dst_degrees)
@@ -260,17 +260,17 @@ def test_hybrid_loss():
     print(f"\nComparison of losses:")
     print(f"  BCE:         {loss_bce.item():.4f}")
     print(f"  Focal:       {loss_focal.item():.4f}")
-    print(f"  HAR:         {loss_har.item():.4f}")
+    print(f"  DCL:         {loss_har.item():.4f}")
     print(f"  Hybrid:      {loss_hybrid.item():.4f}")
 
     # Test impact of lambda_focal
-    print(f"\nImpact of lambda_focal (Focal vs HAR balance):")
+    print(f"\nImpact of lambda_focal (Focal vs DCL balance):")
     for lambda_f in [0.0, 0.25, 0.5, 0.75, 1.0]:
-        criterion = HybridFocalHARLoss(focal_gamma=2.0, focal_alpha=0.25,
-                                      har_alpha=0.5, lambda_focal=lambda_f)
+        criterion = HybridFocalDCLLoss(focal_gamma=2.0, focal_alpha=0.25,
+                                      dcl_alpha=0.5, lambda_focal=lambda_f)
         loss = criterion(pos_prob, neg_prob, src_degrees, dst_degrees, dst_degrees,
                         pos_label, neg_label)
-        print(f"  lambda={lambda_f:.2f} (Focal={lambda_f:.0%}, HAR={1-lambda_f:.0%}): loss={loss.item():.4f}")
+        print(f"  lambda={lambda_f:.2f} (Focal={lambda_f:.0%}, DCL={1-lambda_f:.0%}): loss={loss.item():.4f}")
 
     # Test degree bias correction
     print(f"\nDegree bias correction:")
@@ -289,7 +289,7 @@ def test_hybrid_loss():
     label_low = torch.ones(10)
     label_neg_low = torch.zeros(10)
 
-    criterion = HybridFocalHARLoss(focal_gamma=2.0, har_alpha=0.5)
+    criterion = HybridFocalDCLLoss(focal_gamma=2.0, dcl_alpha=0.5)
 
     loss_high = criterion(pos_high, neg_high, high_degree, high_degree, high_degree,
                          label_high, label_neg_high)

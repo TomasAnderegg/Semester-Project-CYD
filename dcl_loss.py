@@ -1,12 +1,11 @@
 """
-HAR (Hardness Adaptive Reweighted) Contrastive Loss implementation
+DCL (Degree Contrastive Loss) implementation
 
-Paper: "Graph Contrastive Learning with Adaptive Augmentation" (2021)
-Objective: Mitigate degree bias in Graph Neural Networks
+Objective: Mitigate degree bias in Graph Neural Networks through contrastive learning
 
-HAR Loss reweights examples based on:
+DCL reweights examples based on:
 1. Node degree: Lower degree nodes get higher weights
-2. Hardness: Difficult examples get higher weights
+2. Contrastive objective: Discriminate between positive and negative pairs
 """
 
 import torch
@@ -14,14 +13,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class HARLoss(nn.Module):
+class DCLLoss(nn.Module):
     """
-    Hardness Adaptive Reweighted (HAR) Loss for link prediction.
+    Degree Contrastive Loss (DCL) for link prediction.
 
     Combats degree bias by giving more weight to low-degree nodes.
 
     Formula:
-        HAR_loss = sum_i [ w(src_i) * w(dst_i) * contrastive_loss(i) ]
+        DCL_loss = sum_i [ w(src_i) * w(dst_i) * contrastive_loss(i) ]
 
         where:
         - w(node) = degree(node)^(-alpha)  : degree-based weight
@@ -34,12 +33,12 @@ class HARLoss(nn.Module):
         reduction (str): 'none', 'mean', 'sum' (default: 'mean')
 
     Example:
-        >>> criterion = HARLoss(temperature=0.07, alpha=0.5)
-        >>> loss = criterion(pos_scores, neg_scores, src_degrees, dst_degrees)
+        >>> criterion = DCLLoss(temperature=0.07, alpha=0.5)
+        >>> loss = criterion(pos_scores, neg_scores, src_degrees, dst_degrees_pos, dst_degrees_neg)
     """
 
     def __init__(self, temperature=0.07, alpha=0.5, reduction='mean'):
-        super(HARLoss, self).__init__()
+        super(DCLLoss, self).__init__()
         self.temperature = temperature
         self.alpha = alpha
         self.reduction = reduction
@@ -61,7 +60,7 @@ class HARLoss(nn.Module):
 
     def forward(self, pos_scores, neg_scores, src_degrees, dst_degrees_pos, dst_degrees_neg):
         """
-        Compute HAR loss for link prediction.
+        Compute DCL (Degree Contrastive Loss) for link prediction.
 
         Args:
             pos_scores (Tensor): Scores for positive pairs, shape (N,)
@@ -71,7 +70,7 @@ class HARLoss(nn.Module):
             dst_degrees_neg (Tensor): Degrees of negative destination nodes, shape (N,)
 
         Returns:
-            Tensor: HAR loss (scalar)
+            Tensor: DCL loss (scalar)
         """
         # 1. Compute degree-based weights for sources (common to both pos and neg)
         w_src = self.compute_degree_weights(src_degrees)  # (N,)
@@ -113,109 +112,6 @@ class HARLoss(nn.Module):
             return loss_weighted
 
 
-class HARLossWithHardness(nn.Module):
-    """
-    HAR Loss with explicit hardness computation.
-
-    This variant also considers the hardness of each example based on
-    the similarity between embeddings.
-
-    Args:
-        temperature (float): Temperature for contrastive loss (default: 0.07)
-        alpha (float): Degree reweighting exponent (default: 0.5)
-        beta (float): Hardness weighting factor (default: 1.0)
-        reduction (str): 'none', 'mean', 'sum' (default: 'mean')
-    """
-
-    def __init__(self, temperature=0.07, alpha=0.5, beta=1.0, reduction='mean'):
-        super(HARLossWithHardness, self).__init__()
-        self.temperature = temperature
-        self.alpha = alpha
-        self.beta = beta
-        self.reduction = reduction
-
-    def compute_degree_weights(self, degrees):
-        """Compute degree-based weights: w(i) = degree(i)^(-alpha)"""
-        degrees_clamped = torch.clamp(degrees, min=1.0)
-        weights = torch.pow(degrees_clamped, -self.alpha)
-        return weights
-
-    def compute_hardness(self, pos_scores, neg_scores):
-        """
-        Compute hardness based on score difference.
-
-        Hardness = 1 - (pos_score - neg_score)
-
-        If pos_score >> neg_score: easy example (low hardness)
-        If pos_score ≈ neg_score: hard example (high hardness)
-        """
-        # Normalize scores to [0, 1]
-        pos_probs = torch.sigmoid(pos_scores)
-        neg_probs = torch.sigmoid(neg_scores)
-
-        # Hardness: smaller difference = harder
-        score_diff = pos_probs - neg_probs  # Range: [-1, 1]
-        hardness = 1.0 - score_diff  # Range: [0, 2]
-        hardness = torch.clamp(hardness, min=0.0, max=2.0)
-
-        return hardness
-
-    def forward(self, pos_scores, neg_scores, src_degrees, dst_degrees_pos, dst_degrees_neg):
-        """
-        Compute HAR loss with hardness-aware weighting.
-
-        Args:
-            pos_scores (Tensor): Scores for positive pairs, shape (N,)
-            neg_scores (Tensor): Scores for negative pairs, shape (N,)
-            src_degrees (Tensor): Degrees of source nodes, shape (N,)
-            dst_degrees_pos (Tensor): Degrees of positive destination nodes, shape (N,)
-            dst_degrees_neg (Tensor): Degrees of negative destination nodes, shape (N,)
-
-        Returns:
-            Tensor: HAR loss (scalar)
-        """
-        # 1. Compute degree-based weights for sources (common)
-        w_src = self.compute_degree_weights(src_degrees)
-
-        # 2. Compute degree-based weights for positive destinations
-        w_dst_pos = self.compute_degree_weights(dst_degrees_pos)
-        w_degree_pos = w_src * w_dst_pos
-
-        # 3. Compute degree-based weights for negative destinations
-        w_dst_neg = self.compute_degree_weights(dst_degrees_neg)
-        w_degree_neg = w_src * w_dst_neg
-
-        # Average degree weight
-        w_degree = (w_degree_pos + w_degree_neg) / 2.0
-
-        # 4. Compute hardness weights
-        hardness = self.compute_hardness(pos_scores, neg_scores)
-        w_hardness = torch.pow(hardness, self.beta)
-
-        # 5. Combined weight
-        w_total = w_degree * w_hardness
-
-        # 6. Contrastive loss
-        pos_scores_norm = pos_scores / self.temperature
-        neg_scores_norm = neg_scores / self.temperature
-
-        logits = torch.stack([pos_scores_norm, neg_scores_norm], dim=1)
-        labels = torch.zeros(pos_scores.size(0), dtype=torch.long, device=pos_scores.device)
-
-        loss_base = F.cross_entropy(logits, labels, reduction='none')
-
-        # 7. Apply total weighting
-        loss_weighted = loss_base * w_total
-
-        # 8. Reduction
-        if self.reduction == 'mean':
-            return loss_weighted.mean()
-        elif self.reduction == 'sum':
-            return loss_weighted.sum()
-        else:
-            return loss_weighted
-
-
 def build_degree_dict(data):
     """
     Build a dictionary mapping node IDs to their degrees.
@@ -242,11 +138,11 @@ def build_degree_dict(data):
     return dict(degree_dict)
 
 
-def test_har_loss():
+def test_dcl_loss():
     """
-    Test to verify HAR Loss works correctly.
+    Test to verify DCL Loss works correctly.
     """
-    print("Testing HAR Loss...")
+    print("Testing DCL Loss...")
 
     # Create test data
     torch.manual_seed(42)
@@ -261,10 +157,9 @@ def test_har_loss():
     src_degrees = torch.pow(torch.rand(batch_size), -2.0) * 10  # Range: ~1-100
     dst_degrees = torch.pow(torch.rand(batch_size), -2.0) * 10
 
-    # Compare BCE vs HAR Loss
+    # Compare BCE vs DCL Loss
     criterion_bce = nn.BCEWithLogitsLoss()
-    criterion_har = HARLoss(temperature=0.07, alpha=0.5)
-    criterion_har_hard = HARLossWithHardness(temperature=0.07, alpha=0.5, beta=1.0)
+    criterion_dcl = DCLLoss(temperature=0.07, alpha=0.5)
 
     # BCE requires labels
     pos_labels = torch.ones(batch_size)
@@ -273,17 +168,15 @@ def test_har_loss():
     all_labels = torch.cat([pos_labels, neg_labels])
 
     loss_bce = criterion_bce(all_scores, all_labels)
-    loss_har = criterion_har(pos_scores, neg_scores, src_degrees, dst_degrees, dst_degrees)
-    loss_har_hard = criterion_har_hard(pos_scores, neg_scores, src_degrees, dst_degrees, dst_degrees)
+    loss_dcl = criterion_dcl(pos_scores, neg_scores, src_degrees, dst_degrees, dst_degrees)
 
     print(f"\nBinary Cross-Entropy Loss:    {loss_bce.item():.4f}")
-    print(f"HAR Loss (alpha=0.5):          {loss_har.item():.4f}")
-    print(f"HAR Loss with Hardness:        {loss_har_hard.item():.4f}")
+    print(f"DCL Loss (alpha=0.5):          {loss_dcl.item():.4f}")
 
     # Test impact of alpha (degree reweighting strength)
     print("\nImpact of alpha (degree reweighting):")
     for alpha in [0.0, 0.25, 0.5, 0.75, 1.0]:
-        criterion = HARLoss(temperature=0.07, alpha=alpha)
+        criterion = DCLLoss(temperature=0.07, alpha=alpha)
         loss = criterion(pos_scores, neg_scores, src_degrees, dst_degrees, dst_degrees)
         print(f"  alpha={alpha:.2f}: loss={loss.item():.4f}")
 
@@ -300,7 +193,7 @@ def test_har_loss():
     pos_low = torch.randn(10) + 0.5   # Hard positives
     neg_low = torch.randn(10) - 0.5   # Hard negatives
 
-    criterion = HARLoss(temperature=0.07, alpha=0.5)
+    criterion = DCLLoss(temperature=0.07, alpha=0.5)
 
     loss_high = criterion(pos_high, neg_high, high_degree, high_degree, high_degree)
     loss_low = criterion(pos_low, neg_low, low_degree, low_degree, low_degree)
@@ -314,4 +207,4 @@ def test_har_loss():
 
 
 if __name__ == "__main__":
-    test_har_loss()
+    test_dcl_loss()

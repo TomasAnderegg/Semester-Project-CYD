@@ -19,8 +19,8 @@ from utils.data_processing import get_data, compute_time_statistics
 from tqdm import tqdm
 # from data.custom_loss import create_business_aware_loss  # AJOUT: Nouvelle loss
 from focal_loss import FocalLoss  # AJOUT: Import Focal Loss
-from har_loss import HARLoss, build_degree_dict  # AJOUT: Import HAR Loss
-from hybrid_loss import HybridFocalHARLoss  # AJOUT: Import Hybrid Loss
+from dcl_loss import DCLLoss, build_degree_dict  # AJOUT: Import DCL Loss
+from hybrid_loss import HybridFocalDCLLoss  # AJOUT: Import Hybrid Loss
 from hard_negative_mining import HardNegativeSampler, build_adjacency_dict  # AJOUT: Import Hard Negative Mining
 
 torch.manual_seed(0)
@@ -91,13 +91,13 @@ parser.add_argument('--focal_alpha', type=float, default=0.25,
                     help='Alpha parameter for Focal Loss (default: 0.25)')
 parser.add_argument('--focal_gamma', type=float, default=2.0,
                     help='Gamma parameter for Focal Loss (default: 2.0)')
-# AJOUT: Arguments pour HAR Loss
-parser.add_argument('--use_har_loss', action='store_true',
-                    help='Use HAR Loss to mitigate degree bias')
-parser.add_argument('--har_temperature', type=float, default=0.07,
-                    help='Temperature parameter for HAR Loss (default: 0.07)')
-parser.add_argument('--har_alpha', type=float, default=0.5,
-                    help='Degree reweighting exponent for HAR Loss (default: 0.5)')
+# AJOUT: Arguments pour DCL Loss
+parser.add_argument('--use_dcl_loss', action='store_true',
+                    help='Use DCL (Degree Contrastive Loss) to mitigate degree bias')
+parser.add_argument('--dcl_temperature', type=float, default=0.07,
+                    help='Temperature parameter for DCL Loss (default: 0.07)')
+parser.add_argument('--dcl_alpha', type=float, default=0.5,
+                    help='Degree reweighting exponent for DCL Loss (default: 0.5)')
 # AJOUT: Arguments pour Hard Negative Mining
 parser.add_argument('--use_hard_negatives', action='store_true',
                     help='Use hard negative mining instead of random sampling')
@@ -176,9 +176,9 @@ else:
   hard_neg_sampler = None
   train_adjacency_dict = None
 
-# Build degree dictionary if HAR Loss or Hybrid Loss is used
-if args.use_har_loss or (args.use_focal_loss and args.use_har_loss):
-  logger.info("Building degree dictionary for HAR/Hybrid Loss...")
+# Build degree dictionary if DCL Loss or Hybrid Loss is used
+if args.use_dcl_loss or (args.use_focal_loss and args.use_dcl_loss):
+  logger.info("Building degree dictionary for DCL/Hybrid Loss...")
   degree_dict = build_degree_dict(train_data)
   logger.info(f"Degree dictionary built: {len(degree_dict)} nodes")
   # Convert to tensor for faster lookup during training
@@ -226,9 +226,9 @@ for i in range(args.n_runs):
         "use_focal_loss": args.use_focal_loss,
         "focal_alpha": args.focal_alpha if args.use_focal_loss else None,
         "focal_gamma": args.focal_gamma if args.use_focal_loss else None,
-        "use_har_loss": args.use_har_loss,
-        "har_temperature": args.har_temperature if args.use_har_loss else None,
-        "har_alpha": args.har_alpha if args.use_har_loss else None,
+        "use_dcl_loss": args.use_dcl_loss,
+        "dcl_temperature": args.dcl_temperature if args.use_dcl_loss else None,
+        "dcl_alpha": args.dcl_alpha if args.use_dcl_loss else None,
         "use_hard_negatives": args.use_hard_negatives,
         "hard_neg_ratio": args.hard_neg_ratio if args.use_hard_negatives else None,
         "hard_neg_temperature": args.hard_neg_temperature if args.use_hard_negatives else None,
@@ -239,10 +239,10 @@ for i in range(args.n_runs):
   
   # Déterminer le nom de la loss function pour nommer les fichiers
   loss_name = "bce"  # Default
-  if args.use_focal_loss and args.use_har_loss:
+  if args.use_focal_loss and args.use_dcl_loss:
     loss_name = "hybrid"
-  elif args.use_har_loss:
-    loss_name = "har"
+  elif args.use_dcl_loss:
+    loss_name = "dcl"
   elif args.use_focal_loss:
     loss_name = "focal"
 
@@ -277,25 +277,25 @@ for i in range(args.n_runs):
 
   # ⚠️ IMPORTANT: Choisir la loss function à utiliser
 
-  if args.use_focal_loss and args.use_har_loss:
-    # ✅ HYBRID LOSS: Combine Focal Loss (class imbalance) + HAR (degree bias)
-    logger.info(f"Using HYBRID Focal-HAR Loss:")
+  if args.use_focal_loss and args.use_dcl_loss:
+    # ✅ HYBRID LOSS: Combine Focal Loss (class imbalance) + DCL (degree bias)
+    logger.info(f"Using HYBRID Focal-DCL Loss:")
     logger.info(f"  - Focal: alpha={args.focal_alpha}, gamma={args.focal_gamma}")
-    logger.info(f"  - HAR: alpha={args.har_alpha}")
-    criterion = HybridFocalHARLoss(
+    logger.info(f"  - DCL: alpha={args.dcl_alpha}")
+    criterion = HybridFocalDCLLoss(
       focal_gamma=args.focal_gamma,
       focal_alpha=args.focal_alpha,
-      har_alpha=args.har_alpha,
-      lambda_focal=0.5,  # Balanced: 50% Focal, 50% HAR
+      dcl_alpha=args.dcl_alpha,
+      lambda_focal=0.5,  # Balanced: 50% Focal, 50% DCL
       reduction='mean'
     )
     # Move degree tensor to device
     if degree_tensor is not None:
       degree_tensor = degree_tensor.to(device)
-  elif args.use_har_loss:
-    # ✅ HAR LOSS: Hardness Adaptive Reweighted Loss pour mitiger le degree bias
-    logger.info(f"Using HAR Loss with temperature={args.har_temperature}, alpha={args.har_alpha}")
-    criterion = HARLoss(temperature=args.har_temperature, alpha=args.har_alpha, reduction='mean')
+  elif args.use_dcl_loss:
+    # ✅ DCL LOSS: Hardness Adaptive Reweighted Loss pour mitiger le degree bias
+    logger.info(f"Using DCL Loss with temperature={args.dcl_temperature}, alpha={args.dcl_alpha}")
+    criterion = DCLLoss(temperature=args.dcl_temperature, alpha=args.dcl_alpha, reduction='mean')
     # Move degree tensor to device
     if degree_tensor is not None:
       degree_tensor = degree_tensor.to(device)
@@ -394,7 +394,7 @@ for i in range(args.n_runs):
         if args.use_hard_negatives:
           # Use hard negative mining
           node_features_np = node_features  # Already numpy array
-          negatives_batch = hard_neg_sampler.sample(
+          dst_negatives_batch = hard_neg_sampler.sample(
             sources=sources_batch,
             destinations=destinations_batch,
             embeddings=node_features_np,
@@ -403,7 +403,7 @@ for i in range(args.n_runs):
           ).flatten()
         else:
           # Use random sampling
-          _, negatives_batch = train_rand_sampler.sample(size)
+          _, dst_negatives_batch = train_rand_sampler.sample(size)
 
         with torch.no_grad():
           pos_label = torch.ones(size, dtype=torch.float, device=device)
@@ -411,28 +411,28 @@ for i in range(args.n_runs):
 
         tgn = tgn.train()
         pos_prob, neg_prob = tgn.compute_edge_probabilities(
-          sources_batch, destinations_batch, negatives_batch,
+          sources_batch, destinations_batch, dst_negatives_batch,
           timestamps_batch, edge_idxs_batch, NUM_NEIGHBORS)
 
         # Compute loss based on criterion type
-        if args.use_focal_loss and args.use_har_loss:
+        if args.use_focal_loss and args.use_dcl_loss:
           # HYBRID LOSS: Needs both probabilities and degrees
           src_degrees = degree_tensor[sources_batch]
           dst_degrees_pos = degree_tensor[destinations_batch]
-          dst_degrees_neg = degree_tensor[negatives_batch]
+          dst_degrees_neg = degree_tensor[dst_negatives_batch]
 
           loss += criterion(pos_prob.squeeze(), neg_prob.squeeze(),
                            src_degrees, dst_degrees_pos, dst_degrees_neg,
                            pos_label, neg_label)
-        elif args.use_har_loss:
-          # HAR Loss needs degrees of source and destination nodes
+        elif args.use_dcl_loss:
+          # DCL Loss needs degrees of source and destination nodes
           # Get degrees for positive pairs
           src_degrees = degree_tensor[sources_batch]
           dst_degrees_pos = degree_tensor[destinations_batch]
           # Get degrees for negative pairs
-          dst_degrees_neg = degree_tensor[negatives_batch]
+          dst_degrees_neg = degree_tensor[dst_negatives_batch]
 
-          # HAR Loss expects scores, so convert probs back to scores (logit)
+          # DCL Loss expects scores, so convert probs back to scores (logit)
           # score = log(p / (1-p))
           pos_scores = torch.log(pos_prob.squeeze() / (1 - pos_prob.squeeze() + 1e-7))
           neg_scores = torch.log(neg_prob.squeeze() / (1 - neg_prob.squeeze() + 1e-7))
@@ -634,8 +634,8 @@ for i in range(args.n_runs):
     "config": {
       "focal_alpha": args.focal_alpha if args.use_focal_loss else None,
       "focal_gamma": args.focal_gamma if args.use_focal_loss else None,
-      "har_alpha": args.har_alpha if args.use_har_loss else None,
-      "har_temperature": args.har_temperature if args.use_har_loss else None,
+      "dcl_alpha": args.dcl_alpha if args.use_dcl_loss else None,
+      "dcl_temperature": args.dcl_temperature if args.use_dcl_loss else None,
     },
     "validation": {
       "ap": val_aps,
