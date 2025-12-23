@@ -56,14 +56,14 @@ def plot_training_loss_comparison(results: Dict[str, dict], save_path: str = "lo
     colors = {
         "bce": "#3498db",      # Bleu
         "focal": "#e74c3c",    # Rouge
-        "har": "#2ecc71",      # Vert
+        "dcl": "#2ecc71",      # Vert
         "hybrid": "#9b59b6"    # Violet
     }
 
     markers = {
         "bce": "o",
         "focal": "s",
-        "har": "^",
+        "dcl": "^",
         "hybrid": "D"
     }
 
@@ -90,7 +90,7 @@ def plot_training_loss_comparison(results: Dict[str, dict], save_path: str = "lo
 
     plt.xlabel('Epoch', fontsize=13, fontweight='bold')
     plt.ylabel('Training Loss', fontsize=13, fontweight='bold')
-    plt.title('Training Loss Comparison: BCE vs Focal vs HAR vs Hybrid', fontsize=14, fontweight='bold')
+    plt.title('Training Loss Comparison: BCE vs Focal vs DCL vs Hybrid', fontsize=14, fontweight='bold')
     plt.legend(fontsize=11, loc='best', framealpha=0.9)
     plt.grid(True, alpha=0.3, linestyle='--')
     plt.tight_layout()
@@ -180,7 +180,7 @@ def plot_validation_metrics_over_epochs(results: Dict[str, dict], save_path: str
     colors = {
         "bce": "#3498db",
         "focal": "#e74c3c",
-        "har": "#2ecc71",
+        "dcl": "#2ecc71",
         "hybrid": "#9b59b6"
     }
 
@@ -256,8 +256,8 @@ def create_summary_table(results: Dict[str, dict], save_path: str = "loss_compar
             "Loss Function": loss_name.upper(),
             "Focal Alpha": config.get("focal_alpha"),
             "Focal Gamma": config.get("focal_gamma"),
-            "HAR Alpha": config.get("har_alpha"),
-            "HAR Temperature": config.get("har_temperature"),
+            "DCL Alpha": config.get("dcl_alpha"),
+            "DCL Temperature": config.get("dcl_temperature"),
             "Test AUROC": test_data.get("auc"),
             "Test AP": test_data.get("ap"),
             "Test MRR": test_data.get("mrr"),
@@ -298,8 +298,8 @@ def main():
         print("   Entraîne d'abord ton modèle avec différentes loss functions:")
         print("   - python train_self_supervised.py --data crunchbase")
         print("   - python train_self_supervised.py --data crunchbase --use_focal_loss")
-        print("   - python train_self_supervised.py --data crunchbase --use_har_loss")
-        print("   - python train_self_supervised.py --data crunchbase --use_focal_loss --use_har_loss")
+        print("   - python train_self_supervised.py --data crunchbase --use_dcl_loss")
+        print("   - python train_self_supervised.py --data crunchbase --use_focal_loss --use_dcl_loss")
         return
 
     print(f"\n✓ Chargé {len(results)} configurations de loss\n")

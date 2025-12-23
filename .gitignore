@@ -28,6 +28,8 @@ data/*.txt
 *.wandb
 *.ipynb
 *.ipynb_checkpoints 
+*.bat
+*.sh
 .DS_Store
 
 ### PyCharm ###
