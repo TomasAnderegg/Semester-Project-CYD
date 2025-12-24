@@ -18,7 +18,7 @@ import pandas as pd
 from evaluation.evaluation import eval_edge_prediction
 from model.tgn import TGN
 from utils.utils import RandEdgeSampler, get_neighbor_finder
-from utils.data_processing import get_data, compute_time_statistics
+from utils.data_processing import get_data, compute_time_statistics, Data
 
 def parse_args():
     parser = argparse.ArgumentParser('TGN Evaluation - Reproduction exacte du training')
@@ -512,7 +512,7 @@ def main():
         if args.use_memory and val_memory_backup is not None:
             tgn.memory.restore_memory(val_memory_backup)
 
-        temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger)
+        temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger, train_data, val_data)
 
     # ================================================================
     # ✅ ÉTAPE 11: Predictions & TechRank
@@ -548,17 +548,31 @@ def main():
 
     logger.info("\n✅ Evaluation complete!")
 
-def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger):
+def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger, train_data, val_data):
     """
     Validation temporelle: divise le test set en deux parties et évalue les prédictions.
+
+    ✅ CORRECTION DU DATA LEAKAGE:
+    Cette fonction crée un neighbor finder qui contient SEULEMENT train + val + history
+    (pas les liens futurs du test set). Cela évite que TGN puisse "voir le futur" lors
+    des prédictions.
+
+    Workflow:
+    1. Split test set temporellement: HISTORY (50%) + FUTURE (50%)
+    2. Créer history_ngh_finder = train + val + HISTORY (PAS FUTURE!)
+    3. Mettre à jour mémoire TGN avec HISTORY en utilisant history_ngh_finder
+    4. Générer prédictions à split_timestamp en utilisant history_ngh_finder
+    5. Comparer prédictions avec FUTURE (ground truth)
 
     Args:
         tgn: Modèle TGN
         test_data: Données de test
         full_data: Données complètes
-        full_ngh_finder: Neighbor finder
+        full_ngh_finder: Neighbor finder (DEPRECATED - non utilisé, gardé pour compatibilité)
         args: Arguments
         logger: Logger
+        train_data: Données d'entraînement (pour créer history_ngh_finder)
+        val_data: Données de validation (pour créer history_ngh_finder)
     """
     logger.info("\n" + "="*70)
     logger.info("TEMPORAL VALIDATION")
@@ -605,10 +619,47 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
     if args.use_memory:
         current_memory_backup = tgn.memory.backup_memory()
 
-    # Mettre à jour la mémoire avec l'historique
-    tgn.set_neighbor_finder(full_ngh_finder)
+    # ================================================================
+    # ✅ CORRECTION DU DATA LEAKAGE
+    # ================================================================
+    # Créer un neighbor finder qui contient SEULEMENT train + val + history
+    # (PAS les liens futurs du test set!)
+    logger.info("\n🔧 Creating history-only neighbor finder (fixing data leakage)...")
+
+    # Combiner train + val + history
+    train_val_length = len(train_data.sources) + len(val_data.sources)
+    train_val_sources = full_data.sources[:train_val_length]
+    train_val_destinations = full_data.destinations[:train_val_length]
+    train_val_timestamps = full_data.timestamps[:train_val_length]
+    train_val_edge_idxs = full_data.edge_idxs[:train_val_length]
+
+    # Ajouter l'historique (concaténer les numpy arrays)
+    history_data_sources = np.concatenate([train_val_sources, history_sources])
+    history_data_destinations = np.concatenate([train_val_destinations, history_destinations])
+    history_data_timestamps = np.concatenate([train_val_timestamps, history_timestamps])
+    history_data_edge_idxs = np.concatenate([train_val_edge_idxs, history_edge_idxs])
+
+    # Créer l'objet Data pour l'historique
+    history_data = Data(
+        sources=history_data_sources,
+        destinations=history_data_destinations,
+        timestamps=history_data_timestamps,
+        edge_idxs=history_data_edge_idxs,
+        labels=np.ones(len(history_data_sources))
+    )
+
+    # Créer le neighbor finder SANS les liens futurs
+    history_ngh_finder = get_neighbor_finder(history_data, args.uniform)
+
+    logger.info(f"✅ History neighbor finder created:")
+    logger.info(f"   Train+Val+History edges: {len(history_data_sources)}")
+    logger.info(f"   Full data edges: {len(full_data.sources)}")
+    logger.info(f"   Excluded future edges: {len(full_data.sources) - len(history_data_sources)}")
+
+    # Mettre à jour la mémoire avec l'historique en utilisant history_ngh_finder
+    tgn.set_neighbor_finder(history_ngh_finder)  # ✅ Utiliser history_ngh_finder au lieu de full_ngh_finder
     if args.use_memory and len(history_sources) > 0:
-        logger.info("Updating memory with history...")
+        logger.info("Updating memory with history (using history_ngh_finder)...")
         for i in range(0, len(history_sources), args.bs):
             s = history_sources[i:i+args.bs]
             d = history_destinations[i:i+args.bs]
@@ -619,7 +670,9 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
                 _ = tgn.compute_temporal_embeddings(s, d, d, ts, e, args.n_degree)
 
     # Générer les prédictions
-    logger.info("\nGenerating predictions...")
+    logger.info("\nGenerating predictions (using history_ngh_finder)...")
+    # ✅ IMPORTANT: TGN utilise maintenant history_ngh_finder (défini ligne 645)
+    # Les prédictions ne peuvent PAS voir les liens futurs!
 
     # Identifier tous les nodes disponibles
     all_sources = set(full_data.sources)
@@ -676,7 +729,7 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
     predictions_list.sort(key=lambda x: x[2], reverse=True)
 
     # Calculer Precision@K pour différentes valeurs de K
-    k_values = [10, 20, 50, 100, 200, 500, 1000]
+    k_values = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]
 
     logger.info("\n" + "="*70)
     logger.info("PRECISION@K RESULTS")
