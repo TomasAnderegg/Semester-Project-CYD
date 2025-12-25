@@ -512,7 +512,10 @@ def main():
         if args.use_memory and val_memory_backup is not None:
             tgn.memory.restore_memory(val_memory_backup)
 
-        temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger, train_data, val_data)
+        # Charger les mappings pour TechRank validation
+        id_to_company, id_to_investor = load_mappings(args.mapping_dir, logger)
+
+        temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger, train_data, val_data, id_to_company, id_to_investor)
 
     # ================================================================
     # ✅ ÉTAPE 11: Predictions & TechRank
@@ -548,7 +551,7 @@ def main():
 
     logger.info("\n✅ Evaluation complete!")
 
-def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger, train_data, val_data):
+def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger, train_data, val_data, id_to_company, id_to_investor):
     """
     Validation temporelle: divise le test set en deux parties et évalue les prédictions.
 
@@ -573,6 +576,8 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
         logger: Logger
         train_data: Données d'entraînement (pour créer history_ngh_finder)
         val_data: Données de validation (pour créer history_ngh_finder)
+        id_to_company: Mapping ID -> company name
+        id_to_investor: Mapping ID -> investor name
     """
     logger.info("\n" + "="*70)
     logger.info("TEMPORAL VALIDATION")
@@ -764,11 +769,335 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
         logger.info(f"  With threshold {args.prediction_threshold}: {precision:.4f} ({true_positives}/{len(top_k_above_threshold)} predictions)")
         logger.info(f"  Without threshold:  {precision_no_threshold:.4f} ({true_positives_no_threshold}/{k} predictions)")
 
+    # ================================================================
+    # ✅ NOUVELLE APPROCHE: TechRank-based Validation
+    # ================================================================
+    logger.info("\n" + "="*70)
+    logger.info("TECHRANK-BASED VALIDATION")
+    logger.info("="*70)
+
+    techrank_based_validation(
+        predictions_list,
+        future_sources,
+        future_destinations,
+        full_data,
+        id_to_company,
+        id_to_investor,
+        logger
+    )
+
     # Restaurer la mémoire
     if args.use_memory:
         tgn.memory.restore_memory(current_memory_backup)
 
     logger.info("\n✅ Temporal validation complete!")
+
+
+def techrank_based_validation(predictions_list, future_sources, future_destinations, full_data, id_to_company, id_to_investor, logger):
+    """
+    Validation basée sur TechRank: compare les rankings des entreprises entre prédictions et ground truth.
+
+    Workflow:
+    1. Créer un graphe biparti à partir de TOUTES les prédictions (pas de threshold/top-K)
+    2. Appliquer TechRank sur le graphe de prédictions → Ranking_pred
+    3. Créer un graphe biparti à partir du ground truth (future links)
+    4. Appliquer TechRank sur le graphe ground truth → Ranking_true
+    5. Comparer les deux rankings avec corrélation de Spearman
+
+    Args:
+        predictions_list: Liste de (source, destination, proba)
+        future_sources: Sources des liens futurs (ground truth)
+        future_destinations: Destinations des liens futurs (ground truth)
+        full_data: Données complètes (pour récupérer les mappings)
+        id_to_company: Mapping ID -> company name
+        id_to_investor: Mapping ID -> investor name
+        logger: Logger
+    """
+    import networkx as nx
+    from scipy.stats import spearmanr
+
+    # Convention bipartite (cohérente avec le reste du code)
+    COMPANY_BIPARTITE = 0
+    INVESTOR_BIPARTITE = 1
+
+    logger.info("\n📊 Creating prediction graph (all predictions, no threshold)...")
+
+    # ================================================================
+    # 1. CRÉER LE GRAPHE DE PRÉDICTIONS (BIPARTI) avec noms préfixés
+    # ================================================================
+    pred_graph = nx.Graph()
+    pred_dict_companies = {}
+    pred_dict_investors = {}
+
+    for src_id, dst_id, prob in predictions_list:
+        src_id = int(src_id)
+        dst_id = int(dst_id)
+
+        # Récupérer les noms de base
+        company_base_name = id_to_company.get(src_id, f"company_{src_id}")
+        investor_base_name = id_to_investor.get(dst_id, f"investor_{dst_id}")
+
+        # Préfixer pour éviter les collisions (même pattern que generate_predictions_and_graph)
+        company_name = f"COMPANY_{company_base_name}"
+        investor_name = f"INVESTOR_{investor_base_name}"
+
+        # Créer les entrées dans les dictionnaires si elles n'existent pas
+        if company_name not in pred_dict_companies:
+            pred_dict_companies[company_name] = {
+                'id': src_id,
+                'name': company_name,
+                'base_name': company_base_name,
+                'technologies': [],
+                'total_funding': 0.0,
+                'num_funding_rounds': 0
+            }
+
+        if investor_name not in pred_dict_investors:
+            pred_dict_investors[investor_name] = {
+                'investor_id': dst_id,
+                'name': investor_name,
+                'base_name': investor_base_name,
+                'num_investments': 0,
+                'total_invested': 0.0
+            }
+
+        # Mettre à jour les statistiques
+        pred_dict_companies[company_name]['total_funding'] += prob
+        pred_dict_companies[company_name]['num_funding_rounds'] += 1
+        pred_dict_investors[investor_name]['num_investments'] += 1
+        pred_dict_investors[investor_name]['total_invested'] += prob
+
+        # Ajouter les nœuds et arêtes au graphe
+        pred_graph.add_node(company_name, bipartite=COMPANY_BIPARTITE)
+        pred_graph.add_node(investor_name, bipartite=INVESTOR_BIPARTITE)
+        pred_graph.add_edge(company_name, investor_name, weight=prob)
+
+    logger.info(f"   Prediction graph: {pred_graph.number_of_nodes()} nodes, {pred_graph.number_of_edges()} edges")
+    logger.info(f"   Companies: {len(pred_dict_companies)}, Investors: {len(pred_dict_investors)}")
+
+    # ================================================================
+    # 2. CRÉER LE GRAPHE GROUND TRUTH (BIPARTI) avec noms préfixés
+    # ================================================================
+    logger.info("\n📊 Creating ground truth graph...")
+
+    gt_graph = nx.Graph()
+    gt_dict_companies = {}
+    gt_dict_investors = {}
+
+    for src_id, dst_id in zip(future_sources, future_destinations):
+        src_id = int(src_id)
+        dst_id = int(dst_id)
+
+        # Récupérer les noms de base
+        company_base_name = id_to_company.get(src_id, f"company_{src_id}")
+        investor_base_name = id_to_investor.get(dst_id, f"investor_{dst_id}")
+
+        # Préfixer pour éviter les collisions
+        company_name = f"COMPANY_{company_base_name}"
+        investor_name = f"INVESTOR_{investor_base_name}"
+
+        # Créer les entrées dans les dictionnaires si elles n'existent pas
+        if company_name not in gt_dict_companies:
+            gt_dict_companies[company_name] = {
+                'id': src_id,
+                'name': company_name,
+                'base_name': company_base_name,
+                'technologies': [],
+                'total_funding': 0.0,
+                'num_funding_rounds': 0
+            }
+
+        if investor_name not in gt_dict_investors:
+            gt_dict_investors[investor_name] = {
+                'investor_id': dst_id,
+                'name': investor_name,
+                'base_name': investor_base_name,
+                'num_investments': 0,
+                'total_invested': 0.0
+            }
+
+        # Mettre à jour les statistiques (weight=1.0 pour ground truth)
+        gt_dict_companies[company_name]['total_funding'] += 1.0
+        gt_dict_companies[company_name]['num_funding_rounds'] += 1
+        gt_dict_investors[investor_name]['num_investments'] += 1
+        gt_dict_investors[investor_name]['total_invested'] += 1.0
+
+        # Ajouter les nœuds et arêtes au graphe
+        gt_graph.add_node(company_name, bipartite=COMPANY_BIPARTITE)
+        gt_graph.add_node(investor_name, bipartite=INVESTOR_BIPARTITE)
+        gt_graph.add_edge(company_name, investor_name, weight=1.0)
+
+    logger.info(f"   Ground truth graph: {gt_graph.number_of_nodes()} nodes, {gt_graph.number_of_edges()} edges")
+    logger.info(f"   Companies: {len(gt_dict_companies)}, Investors: {len(gt_dict_investors)}")
+
+    # ================================================================
+    # 3. LANCER TECHRANK SUR LES DEUX GRAPHES
+    # ================================================================
+    logger.info("\n🚀 Running TechRank on both graphs...")
+
+    try:
+        # Import TechRank
+        # from code.TechRank import run_techrank_on_graph
+
+        # Lancer TechRank sur les prédictions
+        logger.info("\n   → Prediction graph...")
+        df_companies_pred, df_investors_pred = run_techrank_on_graph(
+            pred_graph, pred_dict_companies, pred_dict_investors, logger, "predictions"
+        )
+
+        # Lancer TechRank sur le ground truth
+        logger.info("\n   → Ground truth graph...")
+        df_companies_gt, df_investors_gt = run_techrank_on_graph(
+            gt_graph, gt_dict_companies, gt_dict_investors, logger, "ground_truth"
+        )
+
+        # ================================================================
+        # 4. COMPARER LES RANKINGS AVEC SPEARMAN
+        # ================================================================
+        if df_companies_pred is not None and df_companies_gt is not None:
+            logger.info("\n" + "="*70)
+            logger.info("SPEARMAN CORRELATION ANALYSIS")
+            logger.info("="*70)
+
+            # Merger les deux dataframes sur final_configuration (nom de l'entreprise)
+            merged = df_companies_pred.merge(
+                df_companies_gt,
+                on='final_configuration',
+                suffixes=('_pred', '_gt'),
+                how='inner'
+            )
+
+            logger.info(f"\n📊 Companies comparison:")
+            logger.info(f"   Companies in predictions: {len(df_companies_pred)}")
+            logger.info(f"   Companies in ground truth: {len(df_companies_gt)}")
+            logger.info(f"   Common companies: {len(merged)}")
+
+            if len(merged) > 0:
+                # Calculer la corrélation de Spearman
+                spearman_corr, p_value = spearmanr(
+                    merged['techrank_pred'],
+                    merged['techrank_gt']
+                )
+
+                logger.info(f"\n✅ Spearman Correlation (Companies):")
+                logger.info(f"   Correlation: {spearman_corr:.4f}")
+                logger.info(f"   P-value: {p_value:.6f}")
+                logger.info(f"   Significance: {'***' if p_value < 0.001 else '**' if p_value < 0.01 else '*' if p_value < 0.05 else 'ns'}")
+
+                # Calculer le Top-K overlap
+                for k in [10, 20, 50, 100]:
+                    if k <= len(merged):
+                        top_k_pred = set(merged.nlargest(k, 'techrank_pred')['final_configuration'])
+                        top_k_gt = set(merged.nlargest(k, 'techrank_gt')['final_configuration'])
+                        overlap = len(top_k_pred & top_k_gt)
+                        overlap_pct = overlap / k * 100
+
+                        logger.info(f"\n   Top-{k} overlap: {overlap}/{k} ({overlap_pct:.1f}%)")
+
+                # Afficher les top 10 de chaque ranking
+                logger.info("\n📊 Top 10 Companies - Prediction Ranking:")
+                top_pred = merged.nlargest(10, 'techrank_pred')[['final_configuration', 'techrank_pred', 'techrank_gt']]
+                for idx, (_, row) in enumerate(top_pred.iterrows(), 1):
+                    display_name = row['final_configuration'].replace("COMPANY_", "")
+                    logger.info(f"   #{idx:2d} {display_name:40s} → Pred: {row['techrank_pred']:.6f}, GT: {row['techrank_gt']:.6f}")
+
+                logger.info("\n📊 Top 10 Companies - Ground Truth Ranking:")
+                top_gt = merged.nlargest(10, 'techrank_gt')[['final_configuration', 'techrank_pred', 'techrank_gt']]
+                for idx, (_, row) in enumerate(top_gt.iterrows(), 1):
+                    display_name = row['final_configuration'].replace("COMPANY_", "")
+                    logger.info(f"   #{idx:2d} {display_name:40s} → GT: {row['techrank_gt']:.6f}, Pred: {row['techrank_pred']:.6f}")
+            else:
+                logger.error("❌ No common companies between predictions and ground truth!")
+        else:
+            logger.error("❌ TechRank failed on one or both graphs!")
+
+    except Exception as e:
+        logger.error(f"❌ TechRank validation failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def run_techrank_on_graph(graph, dict_companies, dict_investors, logger, graph_name="graph"):
+    """
+    Lance TechRank sur un graphe biparti donné.
+
+    Args:
+        graph: Graphe NetworkX biparti
+        dict_companies: Dictionnaire {nom -> {id, name, base_name, ...}} des companies
+        dict_investors: Dictionnaire {nom -> {investor_id, name, base_name, ...}} des investors
+        logger: Logger
+        graph_name: Nom du graphe (pour les logs)
+
+    Returns:
+        (df_companies_rank, df_investors_rank): DataFrames avec les scores TechRank
+    """
+    import pickle
+    from pathlib import Path
+
+    # Filtrer les dictionnaires pour ne garder que les nodes dans le graphe
+    # Les noms dans les dicts ont déjà le préfixe COMPANY_/INVESTOR_
+    graph_nodes = set(graph.nodes())
+
+    dict_companies_filtered = {name: info for name, info in dict_companies.items() if name in graph_nodes}
+    dict_investors_filtered = {name: info for name, info in dict_investors.items() if name in graph_nodes}
+
+    logger.info(f"\n🔧 [{graph_name}] Filtered dictionaries:")
+    logger.info(f"   Companies in graph: {len(dict_companies_filtered)}")
+    logger.info(f"   Investors in graph: {len(dict_investors_filtered)}")
+
+    # Sauvegarder temporairement pour TechRank
+    num_nodes = graph.number_of_nodes()
+    save_dir_classes = Path("savings/bipartite_invest_comp/classes")
+    save_dir_networks = Path("savings/bipartite_invest_comp/networks")
+    save_dir_classes.mkdir(parents=True, exist_ok=True)
+    save_dir_networks.mkdir(parents=True, exist_ok=True)
+
+    # Sauvegarder les dictionnaires au format attendu par TechRank
+    with open(save_dir_classes / f'dict_companies_{num_nodes}.pickle', 'wb') as f:
+        pickle.dump(dict_companies_filtered, f)
+    with open(save_dir_classes / f'dict_investors_{num_nodes}.pickle', 'wb') as f:
+        pickle.dump(dict_investors_filtered, f)
+    with open(save_dir_networks / f'bipartite_graph_{num_nodes}.gpickle', 'wb') as f:
+        pickle.dump(graph, f)
+
+    logger.info(f"   Saved files:")
+    logger.info(f"   - dict_companies_{num_nodes}.pickle ({len(dict_companies_filtered)} companies)")
+    logger.info(f"   - dict_investors_{num_nodes}.pickle ({len(dict_investors_filtered)} investors)")
+    logger.info(f"   - bipartite_graph_{num_nodes}.gpickle ({graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges)")
+
+    try:
+        from code.TechRank import run_techrank
+
+        logger.info(f"\n🚀 [{graph_name}] Running TechRank...")
+
+        # Appliquer TechRank en passant les dictionnaires directement
+        df_companies_rank, df_investors_rank, dict_comp_result, dict_inv_result = run_techrank(
+            num_comp=num_nodes,
+            num_tech=num_nodes,
+            flag_cybersecurity=False,
+            alpha=0.3,
+            beta=-5.0,
+            do_plot=False,
+            dict_investors=dict_investors_filtered,
+            dict_comp=dict_companies_filtered,
+            B=graph
+        )
+
+        logger.info(f"   ✅ [{graph_name}] TechRank completed successfully!")
+
+        if df_companies_rank is not None:
+            non_zero = (df_companies_rank['techrank'] > 0).sum()
+            logger.info(f"   [{graph_name}] Companies with score > 0: {non_zero}/{len(df_companies_rank)}")
+
+        return df_companies_rank, df_investors_rank
+
+    except ImportError as e:
+        logger.error(f"❌ [{graph_name}] Cannot import TechRank: {e}")
+        return None, None
+    except Exception as e:
+        logger.error(f"❌ [{graph_name}] TechRank error: {e}", exc_info=True)
+        return None, None
+
 
 def filter_edges_after_training(full_data, train_data, logger):
     """Filtre les arêtes après le timestamp max du train"""
@@ -1246,7 +1575,7 @@ def run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger):
         from code.TechRank import run_techrank
         
         logger.info("\n🚀 Lancement de TechRank...")
-        logger.info(f"   Alpha: 0.8, Beta: -0.6")
+        logger.info(f"   Alpha: 0.3, Beta: -5")
         logger.info(f"   Companies: {len(dict_companies_filtered)}")
         logger.info(f"   Investors: {len(dict_investors_filtered)}")
 
@@ -1257,8 +1586,8 @@ def run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger):
             num_comp=num_nodes,
             num_tech=num_nodes,
             flag_cybersecurity=False,
-            alpha=0.8,
-            beta=-0.6,
+            alpha=0.3,
+            beta=-5.0,
             do_plot=False,
             dict_investors=dict_investors_filtered,
             dict_comp=dict_companies_filtered,

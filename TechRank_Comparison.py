@@ -15,6 +15,7 @@ import numpy as np
 from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy.stats import spearmanr
 
 def parse_args():
     parser = argparse.ArgumentParser('TechRank Delta Analysis for Companies')
@@ -372,6 +373,37 @@ def analyze_company_deltas(df_before, df_after, threshold, top_k, save_dir, logg
         ascending=False, method='dense'
     )
     df_delta['rank_change'] = df_delta['rank_before'] - df_delta['rank_after']
+
+    # ============================
+    # Spearman Rank Correlation
+    # ============================
+    if len(df_delta) > 1:
+        spearman_corr, p_value = spearmanr(
+            df_delta['techrank_before'],
+            df_delta['techrank_after']
+        )
+
+        logger.info(f"\n📊 SPEARMAN RANK CORRELATION ANALYSIS:")
+        logger.info(f"   Correlation: {spearman_corr:.4f}")
+        logger.info(f"   P-value: {p_value:.6f}")
+        logger.info(f"   Significance: {'***' if p_value < 0.001 else '**' if p_value < 0.01 else '*' if p_value < 0.05 else 'ns'}")
+        logger.info(f"   Sample size: {len(df_delta)} companies")
+
+        # Interprétation
+        if spearman_corr > 0.9:
+            interpretation = "Very strong positive correlation (rankings are very similar)"
+        elif spearman_corr > 0.7:
+            interpretation = "Strong positive correlation (rankings are similar)"
+        elif spearman_corr > 0.5:
+            interpretation = "Moderate positive correlation (some similarity in rankings)"
+        elif spearman_corr > 0.3:
+            interpretation = "Weak positive correlation (rankings differ significantly)"
+        elif spearman_corr > -0.3:
+            interpretation = "No correlation (rankings are independent)"
+        else:
+            interpretation = "Negative correlation (rankings are inverted)"
+
+        logger.info(f"   Interpretation: {interpretation}")
 
     # ============================
     # Stats globales
