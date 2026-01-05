@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 import pickle
 import csv
+from datetime import datetime
 
 import torch
 import numpy as np
@@ -276,6 +277,19 @@ def main():
     logger.info(f"   Val: {len(val_data.sources)} interactions")
     logger.info(f"   Test: {len(test_data.sources)} interactions")
     logger.info(f"   New nodes test: {len(new_node_test_data.sources)} interactions")
+
+    # Afficher la timeline complète
+    train_min = datetime.fromtimestamp(train_data.timestamps[0]).strftime('%Y-%m-%d')
+    train_max = datetime.fromtimestamp(train_data.timestamps[-1]).strftime('%Y-%m-%d')
+    val_min = datetime.fromtimestamp(val_data.timestamps[0]).strftime('%Y-%m-%d')
+    val_max = datetime.fromtimestamp(val_data.timestamps[-1]).strftime('%Y-%m-%d')
+    test_min = datetime.fromtimestamp(test_data.timestamps[0]).strftime('%Y-%m-%d')
+    test_max = datetime.fromtimestamp(test_data.timestamps[-1]).strftime('%Y-%m-%d')
+
+    logger.info(f"\n📅 DATASET TIMELINE:")
+    logger.info(f"   Train:  {train_min} → {train_max}")
+    logger.info(f"   Val:    {val_min} → {val_max}")
+    logger.info(f"   Test:   {test_min} → {test_max}")
 
     # ================================================================
     # ✅ ÉTAPE 2: Créer LES MÊMES neighbor finders qu'au training
@@ -551,6 +565,197 @@ def main():
 
     logger.info("\n✅ Evaluation complete!")
 
+def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_values, logger, experiment_name=None):
+    """
+    Analyse visuelle des erreurs de prédiction par compagnie via scatter plot.
+
+    Sépare les entreprises avec/sans vrais liens pour éviter le problème de division par zéro.
+
+    Args:
+        predictions_list: Liste de (company_id, investor_id, prob) triée par prob
+        true_future_links: Set de (company_id, investor_id) vrais liens
+        k_values: Liste des valeurs de K à analyser
+        logger: Logger
+        experiment_name: Nom de l'expérience pour les exports (optionnel)
+    """
+    import matplotlib.pyplot as plt
+    import csv
+    from pathlib import Path
+
+    logger.info("\n" + "="*70)
+    logger.info("PREDICTION ERROR ANALYSIS: Scatter Plot Visualization")
+    logger.info("="*70)
+
+    # Créer un dossier pour les exports
+    export_dir = Path("bias_analysis_results")
+    export_dir.mkdir(exist_ok=True)
+
+    # Analyser pour différentes valeurs de K
+    for k in k_values:
+        if k > len(predictions_list):
+            continue
+
+        logger.info(f"\n📊 Analysis for Top-{k} predictions:")
+        logger.info("-" * 70)
+
+        # Prendre les top-K prédictions
+        top_k_predictions = predictions_list[:k]
+
+        # Compter par compagnie
+        company_stats = {}
+
+        # Initialiser: compter les vrais liens par compagnie
+        for company_id, investor_id in true_future_links:
+            if company_id not in company_stats:
+                company_stats[company_id] = {
+                    'true_links': 0,
+                    'predicted_links': 0,
+                    'true_positives': 0,
+                    'false_positives': 0
+                }
+            company_stats[company_id]['true_links'] += 1
+
+        # Compter les prédictions par compagnie
+        for company_id, investor_id, _ in top_k_predictions:
+            if company_id not in company_stats:
+                company_stats[company_id] = {
+                    'true_links': 0,
+                    'predicted_links': 0,
+                    'true_positives': 0,
+                    'false_positives': 0
+                }
+
+            company_stats[company_id]['predicted_links'] += 1
+
+            if (company_id, investor_id) in true_future_links:
+                company_stats[company_id]['true_positives'] += 1
+            else:
+                company_stats[company_id]['false_positives'] += 1
+
+        # ================================================================
+        # ✅ CORRECTION: Séparer en deux populations distinctes
+        # ================================================================
+        companies_with_true_links = {}
+        companies_without_true_links = {}
+
+        for company_id, stats in company_stats.items():
+            if stats['predicted_links'] > 0:  # Seulement celles avec prédictions
+                if stats['true_links'] > 0:
+                    companies_with_true_links[company_id] = stats
+                else:
+                    companies_without_true_links[company_id] = stats
+
+        # === Distribution des vrais liens ===
+        logger.info(f"\n   📈 DISTRIBUTION OF TRUE FUTURE LINKS:")
+        true_links_distribution = {}
+        for stats in company_stats.values():
+            count = stats['true_links']
+            true_links_distribution[count] = true_links_distribution.get(count, 0) + 1
+
+        for count in sorted(true_links_distribution.keys())[:10]:  # Limiter à 10 premières lignes
+            logger.info(f"      Companies with {count} true links: {true_links_distribution[count]}")
+        if len(true_links_distribution) > 10:
+            logger.info(f"      ... ({len(true_links_distribution) - 10} more categories)")
+
+        # ================================================================
+        # Statistiques de base
+        # ================================================================
+        if companies_with_true_links:
+            logger.info(f"\n   📊 Companies WITH true future links: {len(companies_with_true_links)}")
+
+        if companies_without_true_links:
+            logger.info(f"   📊 Companies WITHOUT true future links: {len(companies_without_true_links)}")
+
+            # Top-5 compagnies avec le plus de faux positifs
+            sorted_companies = sorted(companies_without_true_links.items(),
+                                     key=lambda x: x[1]['false_positives'],
+                                     reverse=True)[:5]
+
+            logger.info(f"\n      🎯 Top-5 Companies by False Positives (no true links):")
+            for company_id, stats in sorted_companies:
+                logger.info(f"         Company {company_id:4d}: {stats['false_positives']:4d} false positives")
+
+        # ================================================================
+        # SCATTER PLOT: True Links vs False Positives
+        # ================================================================
+        if companies_with_true_links and k >= 500:
+            try:
+                plt.figure(figsize=(10, 7))
+
+                # Données pour le scatter plot
+                true_links_plot = [stats['true_links'] for stats in companies_with_true_links.values()]
+                false_pos_plot = [stats['false_positives'] for stats in companies_with_true_links.values()]
+
+                # Scatter plot
+                plt.scatter(true_links_plot, false_pos_plot, alpha=0.6, s=60, color='steelblue', edgecolors='black', linewidth=0.5)
+
+                plt.xlabel('True Future Links (Ground Truth)', fontsize=13, fontweight='bold')
+                plt.ylabel('False Positives (Prediction Errors)', fontsize=13, fontweight='bold')
+                plt.title(f'Prediction Error Pattern Analysis (Top-{k})', fontsize=15, fontweight='bold')
+                plt.grid(True, alpha=0.3, linestyle='--')
+
+                # Ajouter une ligne de tendance avec R²
+                if len(true_links_plot) > 1:
+                    z = np.polyfit(true_links_plot, false_pos_plot, 1)
+                    p = np.poly1d(z)
+                    x_line = np.linspace(min(true_links_plot), max(true_links_plot), 100)
+
+                    # Calculer R²
+                    from sklearn.metrics import r2_score
+                    y_pred_line = p(np.array(true_links_plot))
+                    r2 = r2_score(false_pos_plot, y_pred_line)
+
+                    plt.plot(x_line, p(x_line), "r--", alpha=0.8, linewidth=2,
+                            label=f'Trend: y = {z[0]:.2f}x + {z[1]:.2f} (R² = {r2:.3f})')
+                    plt.legend(fontsize=11, loc='upper left')
+
+                # Annotations
+                plt.text(0.98, 0.02,
+                        'Interpretation:\n• Structured/aligned → systematic pattern\n• Diffuse/scattered → random errors',
+                        transform=plt.gca().transAxes,
+                        fontsize=9,
+                        verticalalignment='bottom',
+                        horizontalalignment='right',
+                        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+
+                # Sauvegarder
+                plot_filename = export_dir / f"scatter_error_analysis_top{k}_{experiment_name or 'default'}.png"
+                plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
+                plt.close()
+
+                logger.info(f"\n      📊 Scatter plot saved: {plot_filename}")
+                logger.info(f"         → Examine the plot to assess error patterns visually")
+
+            except Exception as e:
+                logger.warning(f"      ⚠️  Could not create scatter plot: {e}")
+
+        # ================================================================
+        # EXPORT CSV
+        # ================================================================
+        csv_filename = export_dir / f"error_analysis_{experiment_name or 'default'}_top{k}.csv"
+        try:
+            with open(csv_filename, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['company_id', 'true_links', 'predicted_links',
+                                'true_positives', 'false_positives', 'has_true_links'])
+
+                for company_id, stats in company_stats.items():
+                    if stats['predicted_links'] > 0:
+                        has_true = stats['true_links'] > 0
+                        writer.writerow([
+                            company_id,
+                            stats['true_links'],
+                            stats['predicted_links'],
+                            stats['true_positives'],
+                            stats['false_positives'],
+                            has_true
+                        ])
+            logger.info(f"      📄 CSV exported: {csv_filename}")
+        except Exception as e:
+            logger.warning(f"      ⚠️  Could not export CSV: {e}")
+
+    logger.info("\n" + "="*70)
+
 def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger, train_data, val_data, id_to_company, id_to_investor):
     """
     Validation temporelle: divise le test set en deux parties et évalue les prédictions.
@@ -600,11 +805,21 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
     split_idx = int(len(test_timestamps) * args.temporal_split)
     split_timestamp = test_timestamps[split_idx]
 
+    # Convertir les timestamps en dates lisibles
+    min_test_ts = test_timestamps[0]
+    max_test_ts = test_timestamps[-1]
+    min_test_date = datetime.fromtimestamp(min_test_ts).strftime('%Y-%m-%d')
+    max_test_date = datetime.fromtimestamp(max_test_ts).strftime('%Y-%m-%d')
+    split_date = datetime.fromtimestamp(split_timestamp).strftime('%Y-%m-%d')
+
+    logger.info(f"\n📅 TEMPORAL SPLIT INFORMATION:")
     logger.info(f"Test set: {len(test_timestamps)} interactions")
+    logger.info(f"Test set time range: {min_test_date} to {max_test_date}")
     logger.info(f"Split ratio: {args.temporal_split:.1%}")
-    logger.info(f"Split timestamp: {split_timestamp:.2f}")
-    logger.info(f"History (before split): {split_idx} interactions")
-    logger.info(f"Ground truth (after split): {len(test_timestamps) - split_idx} interactions")
+    logger.info(f"Split timestamp: {split_timestamp:.2f} ({split_date})")
+    logger.info(f"\n📊 SPLIT BREAKDOWN:")
+    logger.info(f"History (before {split_date}): {split_idx} interactions")
+    logger.info(f"Ground truth (after {split_date}): {len(test_timestamps) - split_idx} interactions")
 
     # Partie 1: Historique (pour construire la mémoire)
     history_sources = test_sources[:split_idx]
@@ -768,6 +983,18 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
         logger.info(f"\nPrecision@{k:4d}:")
         logger.info(f"  With threshold {args.prediction_threshold}: {precision:.4f} ({true_positives}/{len(top_k_above_threshold)} predictions)")
         logger.info(f"  Without threshold:  {precision_no_threshold:.4f} ({true_positives_no_threshold}/{k} predictions)")
+
+    # ================================================================
+    # ERROR PATTERN ANALYSIS: Visual Inspection (Scatter Plot)
+    # ================================================================
+    # Generate scatter plots to visually assess error patterns
+    analyze_prediction_bias_per_company(
+        predictions_list,
+        true_future_links,
+        k_values=[100, 500, 1000, 5000],
+        logger=logger,
+        experiment_name=f"temporal_split_{args.temporal_split:.1f}"
+    )
 
     # ================================================================
     # ✅ NOUVELLE APPROCHE: TechRank-based Validation
