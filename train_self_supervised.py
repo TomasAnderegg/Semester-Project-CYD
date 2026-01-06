@@ -286,7 +286,8 @@ for i in range(args.n_runs):
       focal_gamma=args.focal_gamma,
       focal_alpha=args.focal_alpha,
       dcl_alpha=args.dcl_alpha,
-      lambda_focal=0.5,  # Balanced: 50% Focal, 50% DCL
+      alpha_focal=0.5,  # Weight for Focal Loss component
+      alpha_dcl=0.5,    # Weight for DCL Loss component
       reduction='mean'
     )
     # Move degree tensor to device
