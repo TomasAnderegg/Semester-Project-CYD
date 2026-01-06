@@ -2,7 +2,7 @@ import duckdb
 import pandas as pd
 from pathlib import Path
 
-# 📁 Chemins
+# Chemins
 db_path = r"C:\Users\tjga9\Documents\Tomas\EPFL\MA3\CYD PDS\Crunchbase dataset\crunchbase.duckdb"
 comp_tech_csv = r"C:\Users\tjga9\Documents\Tomas\EPFL\MA3\CYD PDS\Code\savings\csv_results\companies_rank_500_default.csv"
 output_dir = Path(r"C:\Users\tjga9\Documents\Tomas\EPFL\MA3\CYD PDS\Code\savings\csv/funding_rounds")
@@ -16,10 +16,10 @@ con = duckdb.connect(db_path)
 
 MINIMUM_NUM_FUNDING = 5
 
-# 🔍 UUID que tu veux inspecter
+# UUID que tu veux inspecter
 TARGET_UUID = "1ecfb336-a948-b94a-7741-46aa44136e3c"
 
-# 🔍 Recherche des détails dans organizations
+# Recherche des détails dans organizations
 query_details = f"""
     SELECT
         name,
@@ -31,7 +31,7 @@ query_details = f"""
 df_details = con.execute(query_details).fetchdf()
 
 print("\n🔎 Détails de l'organisation ciblée :")
-print(df_details if not df_details.empty else "⚠️ Aucun résultat trouvé.")
+print(df_details if not df_details.empty else "[WARNING] Aucun résultat trouvé.")
 
 
 # Liste pour stocker toutes les levées de fonds
@@ -73,7 +73,7 @@ for company_name in df_companies["final_configuration"]:
             all_funding_data.append(df_funding)
 
     except Exception as e:
-        print(f"⚠️ Erreur pour '{company_name}' : {e}")
+        print(f"[WARNING] Erreur pour '{company_name}' : {e}")
 
 
 # Concaténer toutes les données et sauvegarder
@@ -92,8 +92,8 @@ if all_funding_data:
     print(f"💾 CSV des entreprises avec >=5 levées de fonds sauvegardé : {csv_5plus_path}")
 
 else:
-    print("⚠️ Aucune levée de fonds trouvée pour toutes les entreprises.")
+    print("[WARNING] Aucune levée de fonds trouvée pour toutes les entreprises.")
 
 # Fermer la connexion
 con.close()
-print("\n✅ Extraction terminée.")
+print("\n[OK] Extraction terminée.")

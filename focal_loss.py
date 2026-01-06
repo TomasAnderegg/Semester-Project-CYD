@@ -195,7 +195,7 @@ def test_focal_loss():
     print(f"    BCE:   {criterion_bce(hard_pred, hard_target).item():.4f}")
     print(f"    Focal: {criterion_focal(hard_pred, hard_target).item():.4f}")
 
-    print("\n✅ Tests terminés!")
+    print("\n[OK] Tests terminés!")
 
 
 if __name__ == "__main__":

@@ -37,7 +37,7 @@ SAVE_DIR_NETWORKS = "savings/bipartite_invest/networks"
 
 SAVE_DIR_CLASSES = "savings/bipartite_invest_comp/classes"
 SAVE_DIR_NETWORKS = "savings/bipartite_invest_comp/networks"
-SAVE_DIR_CSV = "savings/bipartite_invest_comp/csv_exports"  # ✅ NOUVEAU: dossier pour les CSV
+SAVE_DIR_CSV = "savings/bipartite_invest_comp/csv_exports"  # [OK] NOUVEAU: dossier pour les CSV
 
 FLAG_FILTER = False  # Mettre True si tu veux filtrer
 FILTER_KEYWORDS = ['Quantum Computing', 'Quantum Key Distribution']  # Keywords pour filtrage optionnel
@@ -110,7 +110,7 @@ def load_data(use_duckdb=True, table_name=""):
 #     # Sauvegarder le DataFrame
 #     df_companies.to_csv(f'{SAVE_DIR_CLASSES}/{prefix}companies_ranked_{limit}.csv', index=False)
 
-#     print(f"\n✓ Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
+#     print(f"\n[OK] Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
 
 def run_techrank_on_bipartite(B, dict_companies, dict_investors, limit, 
                                alpha=0.8, beta=-0.6):
@@ -150,14 +150,14 @@ def run_techrank_on_bipartite(B, dict_companies, dict_investors, limit,
             B=B
         )
         
-        print("\n✓ TechRank exécuté avec succès!")
+        print("\n[OK] TechRank exécuté avec succès!")
         print(f"  - {len(df_investors_rank)} investisseurs classés")
         print(f"  - {len(df_companies_rank)} entreprises classées")
         
         return df_investors_rank, df_companies_rank
         
     except Exception as e:
-        print(f"\n❌ Erreur lors de l'exécution de TechRank: {e}")
+        print(f"\n[ERROR] Erreur lors de l'exécution de TechRank: {e}")
         import traceback
         traceback.print_exc()
         return None, None
@@ -286,7 +286,7 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
     with open(mapping_dir / f"{output_prefix}_investor_id_map.pickle", "wb") as f:
         pickle.dump(user_map, f)
         
-    print(f"\n✓ Fichiers TGN préparés pour '{output_prefix}'.")
+    print(f"\n[OK] Fichiers TGN préparés pour '{output_prefix}'.")
     
     # =================================================================
     # VÉRIFICATION DES MAPPINGS EN CSV (AJOUT DEMANDÉ)
@@ -300,7 +300,7 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
     
     csv_company_map_path = mapping_dir / f"{output_prefix}_company_map_verification.csv"
     df_company_map.to_csv(csv_company_map_path, index=False)
-    print(f"✓ Fichier de vérification Company ID sauvegardé: {csv_company_map_path}")
+    print(f"[OK] Fichier de vérification Company ID sauvegardé: {csv_company_map_path}")
 
     # 2. Créer le DataFrame de mapping des INVESTISSEURS (v = user)
     df_investor_map = pd.DataFrame(
@@ -310,7 +310,7 @@ def prepare_tgn_input(B, max_time=None, output_prefix="investment_bipartite"):
     
     csv_investor_map_path = mapping_dir / f"{output_prefix}_investor_map_verification.csv"
     df_investor_map.to_csv(csv_investor_map_path, index=False)
-    print(f"✓ Fichier de vérification Investor ID sauvegardé: {csv_investor_map_path}")
+    print(f"[OK] Fichier de vérification Investor ID sauvegardé: {csv_investor_map_path}")
     
     # =================================================================
     # FIN VÉRIFICATION
@@ -364,7 +364,7 @@ def temporal_split_graph(B, train_ratio=0.85, val_ratio=0.0):
             all_timestamps.append(min_ts)
     
     if not all_timestamps:
-        print("❌ Aucun timestamp trouvé dans le graphe!")
+        print("[ERROR] Aucun timestamp trouvé dans le graphe!")
         return B, B, B, None, None
     
     # Trier et calculer les seuils
@@ -485,7 +485,7 @@ def save_split_data(B_train, B_val, B_test, dict_split, limit, output_dir=None):
         graph_path = split_dir / f"bipartite_graph_{split_name}.gpickle"
         with open(graph_path, 'wb') as f:
             pickle.dump(graph, f)
-        print(f"✓ Graphe {split_name} sauvegardé: {graph_path}")
+        print(f"[OK] Graphe {split_name} sauvegardé: {graph_path}")
     
     # Sauvegarder les dictionnaires
     dict_dir = split_dir / "dictionaries"
@@ -500,7 +500,7 @@ def save_split_data(B_train, B_val, B_test, dict_split, limit, output_dir=None):
         with open(inv_path, 'wb') as f:
             pickle.dump(dict_split['investors'][split_name], f)
         
-        print(f"✓ Dictionnaires {split_name} sauvegardés")
+        print(f"[OK] Dictionnaires {split_name} sauvegardés")
     
     # Sauvegarder les métadonnées
     metadata = {
@@ -523,9 +523,9 @@ def save_split_data(B_train, B_val, B_test, dict_split, limit, output_dir=None):
         pickle.dump(metadata, f)
     
     pd.DataFrame([metadata]).to_csv(split_dir / 'split_metadata.csv', index=False)
-    print(f"✓ Métadonnées sauvegardées")
+    print(f"[OK] Métadonnées sauvegardées")
     
-    print(f"\n✓ Tous les splits sauvegardés dans {split_dir}")
+    print(f"\n[OK] Tous les splits sauvegardés dans {split_dir}")
 
 
 # ===================================================================
@@ -675,7 +675,7 @@ def merge_and_clean_final(df_funding, df_investments):
     #  SAUVEGARDER LE RÉSULTAT DU MERGE COMPLET
     csv_path = f"{SAVE_DIR_CSV}/merged_funding_investments_full.csv"
     df_merged.to_csv(csv_path, index=False)
-    print(f"✓ CSV du merge complet sauvegardé : {csv_path}")
+    print(f"[OK] CSV du merge complet sauvegardé : {csv_path}")
     print(f"  Colonnes: {list(df_merged.columns)}")
     print(f"  Shape: {df_merged.shape}")
     
@@ -701,7 +701,7 @@ def merge_and_clean_final(df_funding, df_investments):
         #  SAUVEGARDER AUSSI LE RÉSULTAT FILTRÉ
         csv_path_graph = f"{SAVE_DIR_CSV}/merged_for_graph.csv"
         df_graph.to_csv(csv_path_graph, index=False)
-        print(f"✓ CSV pour le graphe sauvegardé : {csv_path_graph}")
+        print(f"[OK] CSV pour le graphe sauvegardé : {csv_path_graph}")
         print(f"  Colonnes gardées: {list(df_graph.columns)}")
         
         print("----------en tete de df_graph--------:")
@@ -734,7 +734,7 @@ def filter_merged_by_organizations(df_merged, df_organizations, keywords=FILTER_
     # for col in possible_uuid_cols:
     #     if col in df_organizations.columns:
     #         uuid_col = col
-    #         print(f"  ✓ Colonne UUID détectée: '{uuid_col}'")
+    #         print(f"  [OK] Colonne UUID détectée: '{uuid_col}'")
     #         break
     
     # if df_organizations["uuid"] is None:
@@ -789,7 +789,7 @@ def filter_merged_by_organizations(df_merged, df_organizations, keywords=FILTER_
     print(f"  Lignes après filtrage: {final_rows:,}")
     
     if final_rows == 0:
-        print("\n  ⚠️ ATTENTION: Aucune correspondance trouvée!")
+        print("\n  [WARNING] ATTENTION: Aucune correspondance trouvée!")
         print("  Vérifiez que les UUIDs sont au même format dans les deux fichiers")
         # Afficher des exemples pour comparaison
         sample_merged_uuids = df_merged['org_uuid'].dropna().head(5).tolist()
@@ -806,7 +806,7 @@ def filter_merged_by_organizations(df_merged, df_organizations, keywords=FILTER_
     # Sauvegarder le résultat filtré
     csv_filtered_path = f"{SAVE_DIR_CSV}/merged_filtered_by_organizations.csv"
     df_merged_keyworded.to_csv(csv_filtered_path, index=False)
-    print(f"\n✓ CSV filtré sauvegardé: {csv_filtered_path}")
+    print(f"\n[OK] CSV filtré sauvegardé: {csv_filtered_path}")
     
     return df_merged_keyworded
 
@@ -1108,7 +1108,7 @@ def save_graph(B, limit):
     file_graph = f"{SAVE_DIR_NETWORKS}/investment_graph_{limit}.gpickle"
     with open(file_graph, 'wb') as f:
         pickle.dump(B, f)
-    print(f"✓ Graphe sauvegardé : {file_graph}")
+    print(f"[OK] Graphe sauvegardé : {file_graph}")
 
 
 def save_graph_and_dicts(B, dict_companies, dict_investors, limit):
@@ -1119,16 +1119,16 @@ def save_graph_and_dicts(B, dict_companies, dict_investors, limit):
     # Sauvegarder les dictionnaires
     with open(f'{SAVE_DIR_CLASSES}/dict_companies_{limit}.pickle', 'wb') as f:
         pickle.dump(dict_companies, f)
-    print(f"✓ Dictionnaire companies sauvegardé : {SAVE_DIR_CLASSES}/dict_companies_{limit}.pickle")
+    print(f"[OK] Dictionnaire companies sauvegardé : {SAVE_DIR_CLASSES}/dict_companies_{limit}.pickle")
 
     with open(f'{SAVE_DIR_CLASSES}/dict_investors_{limit}.pickle', 'wb') as f:
         pickle.dump(dict_investors, f)
-    print(f"✓ Dictionnaire investors sauvegardé : {SAVE_DIR_CLASSES}/dict_investors_{limit}.pickle")
+    print(f"[OK] Dictionnaire investors sauvegardé : {SAVE_DIR_CLASSES}/dict_investors_{limit}.pickle")
 
     # Sauvegarder le graphe avec pickle directement
     with open(f"{SAVE_DIR_NETWORKS}/bipartite_graph_{limit}.gpickle", "wb") as f:
         pickle.dump(B, f)
-    print(f"✓ Graphe sauvegardé : {SAVE_DIR_NETWORKS}/bipartite_graph_{limit}.gpickle")
+    print(f"[OK] Graphe sauvegardé : {SAVE_DIR_NETWORKS}/bipartite_graph_{limit}.gpickle")
     
     # NOUVEAU: Sauvegarder un CSV avec les informations des arêtes
     edge_data = []
@@ -1144,9 +1144,9 @@ def save_graph_and_dicts(B, dict_companies, dict_investors, limit):
     df_edges = pd.DataFrame(edge_data)
     csv_edges_path = f"{SAVE_DIR_CSV}/edge_funding_info_{limit}.csv"
     df_edges.to_csv(csv_edges_path, index=False)
-    print(f"✓ Informations des arêtes sauvegardées : {csv_edges_path}")
+    print(f"[OK] Informations des arêtes sauvegardées : {csv_edges_path}")
 
-    print(f"\n✓ Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
+    print(f"\n[OK] Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
 
 
 # ===================================================================
@@ -1160,7 +1160,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
     df_investments = load_data(use_duckdb=USE_DUCKDB, table_name=TABLE_NAME_INVESTMENTS)
     df_funding = load_data(use_duckdb=USE_DUCKDB, table_name=TABLE_NAME_FUNDING)
 
-     # ✅ NOUVEAU: Charger le fichier organizations
+     # [OK] NOUVEAU: Charger le fichier organizations
     # df_organizations = load_data_from_csv(DATA_PATH_ORGA_CSV)
     df_organizations = load_data(use_duckdb=USE_DUCKDB, table_name=TABLE_NAME_ORGA)
 
@@ -1214,7 +1214,7 @@ def main(max_companies_plot=20, max_investors_plot=20, run_techrank_flag=True):
 
         # Sauvegarde temporaire pour inspection
         # df_graph.to_csv("debug_df_graphcaca21.csv", index=False)
-        print("✓ Fichier debug_df_graph.csv sauvegardé, tu peux l'ouvrir dans Excel ou VSCode pour vérifier.")
+        print("[OK] Fichier debug_df_graph.csv sauvegardé, tu peux l'ouvrir dans Excel ou VSCode pour vérifier.")
         print("Colonnes :", df_graph.columns.tolist())
         print("nobres de lignes dans df_graph :", len(df_graph))
         print(df_graph.head(5))

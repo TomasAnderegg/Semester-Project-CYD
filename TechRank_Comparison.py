@@ -54,10 +54,10 @@ def load_mappings(mapping_dir, dataset_name, logger):
         id_to_investor = {int(row['Investor_ID_TGN']): str(row['Investor_Name']) 
                          for _, row in df_inv.iterrows()}
         
-        logger.info(f"✅ Mappings loaded: {len(id_to_company)} companies, {len(id_to_investor)} investors")
+        logger.info(f"[OK] Mappings loaded: {len(id_to_company)} companies, {len(id_to_investor)} investors")
         return id_to_company, id_to_investor
     
-    logger.error("❌ CSV mapping files not found!")
+    logger.error("[ERROR] CSV mapping files not found!")
     return {}, {}
 
 def build_ground_truth_graph(dataset_name, id_to_company, id_to_investor, logger):
@@ -72,7 +72,7 @@ def build_ground_truth_graph(dataset_name, id_to_company, id_to_investor, logger
     # Charger les données de test
     test_csv = f'./data/data_split/{dataset_name}_filtered_test.csv'
     if not Path(test_csv).exists():
-        logger.error(f"❌ Test file not found: {test_csv}")
+        logger.error(f"[ERROR] Test file not found: {test_csv}")
         return None, None, None
     
     df_test = pd.read_csv(test_csv)
@@ -103,7 +103,7 @@ def build_ground_truth_graph(dataset_name, id_to_company, id_to_investor, logger
         company_base_name = id_to_company.get(company_id, f"company_{company_id}")
         investor_base_name = id_to_investor.get(investor_id, f"investor_{investor_id}")
 
-        # ⚠️ IMPORTANT: Utiliser les mêmes préfixes que dans TGN_eval.py
+        # [WARNING] IMPORTANT: Utiliser les mêmes préfixes que dans TGN_eval.py
         # pour que les noms correspondent lors du merge des dataframes!
         company_name = f"COMPANY_{company_base_name}"
         investor_name = f"INVESTOR_{investor_base_name}"
@@ -195,18 +195,18 @@ def build_ground_truth_graph(dataset_name, id_to_company, id_to_investor, logger
                     'total_invested': 0.0
                 }
     
-    logger.info(f"✅ Ground truth graph created:")
+    logger.info(f"[OK] Ground truth graph created:")
     logger.info(f"   Nodes: {B.number_of_nodes()}")
     logger.info(f"   Edges: {B.number_of_edges()}")
     logger.info(f"   Companies: {len(dict_companies)}")
     logger.info(f"   Investors: {len(dict_investors)}")
 
     # Debug: vérifier les premiers noms
-    logger.info(f"\n🔍 DEBUG - Premiers noms de companies dans dict_companies:")
+    logger.info(f"\nDEBUG - Premiers noms de companies dans dict_companies:")
     for i, name in enumerate(list(dict_companies.keys())[:5]):
         logger.info(f"   {i+1}. {name}")
 
-    logger.info(f"\n🔍 DEBUG - Premiers noms d'investors dans dict_investors:")
+    logger.info(f"\nDEBUG - Premiers noms d'investors dans dict_investors:")
     for i, name in enumerate(list(dict_investors.keys())[:5]):
         logger.info(f"   {i+1}. {name}")
     
@@ -223,7 +223,7 @@ def load_predicted_graph(dataset_name, logger):
     dict_inv_path = Path(f'dict_investors_{dataset_name}.pickle')
     
     if not graph_path.exists():
-        logger.error(f"❌ Predicted graph not found: {graph_path}")
+        logger.error(f"[ERROR] Predicted graph not found: {graph_path}")
         logger.error("   Run: python tgn_evaluation_fixed.py --run_techrank first!")
         return None, None, None
     
@@ -236,18 +236,18 @@ def load_predicted_graph(dataset_name, logger):
     with open(dict_inv_path, 'rb') as f:
         dict_investors_pred = pickle.load(f)
     
-    logger.info(f"✅ Predicted graph loaded:")
+    logger.info(f"[OK] Predicted graph loaded:")
     logger.info(f"   Nodes: {B_pred.number_of_nodes()}")
     logger.info(f"   Edges: {B_pred.number_of_edges()}")
     logger.info(f"   Companies: {len(dict_companies_pred)}")
     logger.info(f"   Investors: {len(dict_investors_pred)}")
 
     # Debug: vérifier les premiers noms
-    logger.info(f"\n🔍 DEBUG - Premiers noms dans dict_companies_pred:")
+    logger.info(f"\nDEBUG - Premiers noms dans dict_companies_pred:")
     for i, name in enumerate(list(dict_companies_pred.keys())[:5]):
         logger.info(f"   {i+1}. {name}")
 
-    logger.info(f"\n🔍 DEBUG - Premiers noms dans dict_investors_pred:")
+    logger.info(f"\nDEBUG - Premiers noms dans dict_investors_pred:")
     for i, name in enumerate(list(dict_investors_pred.keys())[:5]):
         logger.info(f"   {i+1}. {name}")
 
@@ -266,7 +266,7 @@ def run_techrank_on_graph(B, dict_companies, dict_investors, alpha, beta, label,
         num_nodes = B.number_of_nodes()
         
         logger.info(f"Running TechRank...")
-        # ⚠️ IMPORTANT: Ordre corrigé pour correspondre à TGN_eval.py
+        # [WARNING] IMPORTANT: Ordre corrigé pour correspondre à TGN_eval.py
         # run_techrank retourne (df_companies, df_investors) dans cet ordre
         df_companies_rank, df_investors_rank, _, _ = run_techrank(
             num_comp=num_nodes,
@@ -280,7 +280,7 @@ def run_techrank_on_graph(B, dict_companies, dict_investors, alpha, beta, label,
             B=B
         )
         
-        logger.info(f"✅ TechRank completed for {label}")
+        logger.info(f"[OK] TechRank completed for {label}")
 
         if df_companies_rank is not None:
             non_zero = (df_companies_rank['techrank'] > 0).sum()
@@ -288,11 +288,11 @@ def run_techrank_on_graph(B, dict_companies, dict_investors, alpha, beta, label,
             logger.info(f"   Companies with score > 0: {non_zero}/{len(df_companies_rank)}")
             logger.info(f"   Max TechRank score: {max_score:.6f}")
 
-        # ⚠️ IMPORTANT: Retourner dans l'ordre (companies, investors) pour cohérence
+        # [WARNING] IMPORTANT: Retourner dans l'ordre (companies, investors) pour cohérence
         return df_companies_rank, df_investors_rank
         
     except Exception as e:
-        logger.error(f"❌ Error running TechRank: {e}", exc_info=True)
+        logger.error(f"[ERROR] Error running TechRank: {e}", exc_info=True)
         return None, None
 
 def analyze_company_deltas(df_before, df_after, threshold, top_k, save_dir, logger, plot=False, top_k_viz=20):
@@ -309,7 +309,7 @@ def analyze_company_deltas(df_before, df_after, threshold, top_k, save_dir, logg
     save_dir.mkdir(parents=True, exist_ok=True)
 
     if df_before is None or df_after is None:
-        logger.error("❌ Missing TechRank results")
+        logger.error("[ERROR] Missing TechRank results")
         return None, None
 
     # Merge BEFORE / AFTER
@@ -332,7 +332,7 @@ def analyze_company_deltas(df_before, df_after, threshold, top_k, save_dir, logg
     # Threshold minimum pour éviter les deltas relatifs artificiellement élevés
     min_techrank_threshold = 1e-6
 
-    logger.info(f"\n🔍 Filtrage des entreprises:")
+    logger.info(f"\nFiltrage des entreprises:")
     logger.info(f"   Avant filtrage: {len(df_delta)} entreprises")
     logger.info(f"   Threshold minimum: techrank_before > {min_techrank_threshold}")
 
@@ -383,7 +383,7 @@ def analyze_company_deltas(df_before, df_after, threshold, top_k, save_dir, logg
             df_delta['techrank_after']
         )
 
-        logger.info(f"\n📊 SPEARMAN RANK CORRELATION ANALYSIS:")
+        logger.info(f"\nSPEARMAN RANK CORRELATION ANALYSIS:")
         logger.info(f"   Correlation: {spearman_corr:.4f}")
         logger.info(f"   P-value: {p_value:.6f}")
         logger.info(f"   Significance: {'***' if p_value < 0.001 else '**' if p_value < 0.01 else '*' if p_value < 0.05 else 'ns'}")
@@ -408,7 +408,7 @@ def analyze_company_deltas(df_before, df_after, threshold, top_k, save_dir, logg
     # ============================
     # Stats globales
     # ============================
-    logger.info(f"\n📊 STATISTIQUES GLOBALES:")
+    logger.info(f"\nSTATISTIQUES GLOBALES:")
     logger.info(f"   Total companies analysed: {len(df_delta)}")
     logger.info(f"   Positive delta: {(df_delta['techrank_delta'] > 0).sum()}")
     logger.info(f"   Negative delta: {(df_delta['techrank_delta'] < 0).sum()}")
@@ -420,7 +420,7 @@ def analyze_company_deltas(df_before, df_after, threshold, top_k, save_dir, logg
     df_promising = df_delta[df_delta['techrank_delta'] > threshold].copy()
     df_promising = df_promising.sort_values('techrank_delta', ascending=False)
 
-    logger.info(f"\n🚀 ENTREPRISES PROMETTEUSES (delta > {threshold}): {len(df_promising)}")
+    logger.info(f"\nENTREPRISES PROMETTEUSES (delta > {threshold}): {len(df_promising)}")
 
     if not df_promising.empty:
         logger.info(
@@ -452,7 +452,7 @@ def analyze_company_deltas(df_before, df_after, threshold, top_k, save_dir, logg
     df_declining = df_delta[df_delta['techrank_delta'] < -threshold]
     df_declining = df_declining.sort_values('techrank_delta')
 
-    logger.info(f"\n📉 ENTREPRISES EN DÉCLIN (delta < -{threshold}): {len(df_declining)}")
+    logger.info(f"\nENTREPRISES EN DÉCLIN (delta < -{threshold}): {len(df_declining)}")
 
     # ============================
     # Visualisations
@@ -477,7 +477,7 @@ def create_cross_methodology_bump_chart(save_dir, logger):
 
     Les données proviennent du tableau du rapport (extraction manuelle Crunchbase).
     """
-    logger.info(f"\n📊 Generating cross-methodology bump chart...")
+    logger.info(f"\nGenerating cross-methodology bump chart...")
 
     # Données du tableau du rapport (top 4 TGN)
     data = {
@@ -580,7 +580,7 @@ def create_cross_methodology_bump_chart(save_dir, logger):
     plt.savefig(png_path, dpi=300, bbox_inches='tight')
     plt.savefig(pdf_path, bbox_inches='tight')
 
-    logger.info(f"   ✅ Cross-methodology bump chart saved:")
+    logger.info(f"   [OK] Cross-methodology bump chart saved:")
     logger.info(f"      PNG: {png_path}")
     logger.info(f"      PDF: {pdf_path}")
 
@@ -592,7 +592,7 @@ def create_cross_methodology_bump_chart(save_dir, logger):
     logger.info(f"      CSV: {csv_path}")
 
     # Analyse des divergences
-    logger.info(f"\n📊 Divergence Analysis:")
+    logger.info(f"\nDivergence Analysis:")
     for idx, row in df.iterrows():
         company = row['Company']
         tgn_rank = row['TGN_Rank']
@@ -619,7 +619,7 @@ def create_bump_chart(df_delta, save_dir, logger, top_n=20):
         save_dir: Dossier où sauvegarder le graphique
         top_n: Nombre d'entreprises à afficher (par défaut 20)
     """
-    logger.info(f"\n📈 Generating bump chart for top {top_n} rank changes...")
+    logger.info(f"\nGenerating bump chart for top {top_n} rank changes...")
 
     # Sélectionner les top N entreprises avec le plus grand changement de rang absolu
     df_top = df_delta.nlargest(top_n, 'rank_change').copy()
@@ -699,13 +699,13 @@ def create_bump_chart(df_delta, save_dir, logger, top_n=20):
     plt.tight_layout()
     bump_chart_path = save_dir / f'bump_chart_top{top_n}_rank_changes.png'
     plt.savefig(bump_chart_path, dpi=300, bbox_inches='tight')
-    logger.info(f"   ✅ Saved bump chart: {bump_chart_path}")
+    logger.info(f"   [OK] Saved bump chart: {bump_chart_path}")
     plt.close()
 
 
 def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, top_k_viz=20):
     """Crée des visualisations pour l'analyse"""
-    logger.info(f"\n📊 Generating visualizations...")
+    logger.info(f"\nGenerating visualizations...")
 
     save_dir = Path(save_dir)
     
@@ -784,7 +784,7 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
         plt.tight_layout()
         before_after_path = save_dir / f'top{top_k_viz}_before_after_comparison.png'
         plt.savefig(before_after_path, dpi=300, bbox_inches='tight')
-        logger.info(f"   ✅ Saved plot: {before_after_path}")
+        logger.info(f"   [OK] Saved plot: {before_after_path}")
         plt.close()
     
     # 2. Distribution des deltas
@@ -859,7 +859,7 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
     plt.tight_layout()
     plot_path = save_dir / 'techrank_delta_analysis.png'
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-    logger.info(f"   ✅ Saved plot: {plot_path}")
+    logger.info(f"   [OK] Saved plot: {plot_path}")
     plt.close()
     
     # 3. Rank changes
@@ -888,7 +888,7 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
         plt.tight_layout()
         rank_plot_path = save_dir / 'rank_changes.png'
         plt.savefig(rank_plot_path, dpi=300, bbox_inches='tight')
-        logger.info(f"   ✅ Saved plot: {rank_plot_path}")
+        logger.info(f"   [OK] Saved plot: {rank_plot_path}")
         plt.close()
 
 def main():
@@ -906,7 +906,7 @@ def main():
     id_to_company, id_to_investor = load_mappings(args.mapping_dir, args.data, logger)
     
     if not id_to_company or not id_to_investor:
-        logger.error("❌ Failed to load mappings. Exiting.")
+        logger.error("[ERROR] Failed to load mappings. Exiting.")
         return
     
     # 1. Construire le graphe AVANT TGN (ground truth)
@@ -915,19 +915,19 @@ def main():
     )
     
     if B_before is None:
-        logger.error("❌ Failed to build ground truth graph. Exiting.")
+        logger.error("[ERROR] Failed to build ground truth graph. Exiting.")
         return
     
     # 2. Charger le graphe APRÈS TGN (prédictions)
     B_after, dict_comp_after, dict_inv_after = load_predicted_graph(args.data, logger)
     
     if B_after is None:
-        logger.error("❌ Failed to load predicted graph.")
+        logger.error("[ERROR] Failed to load predicted graph.")
         logger.error("   Run: python tgn_evaluation_fixed.py --run_techrank first!")
         return
     
     # 3. Calculer TechRank AVANT TGN
-    # ⚠️ Maintenant run_techrank_on_graph retourne (companies, investors)
+    # [WARNING] Maintenant run_techrank_on_graph retourne (companies, investors)
     df_comp_before, _ = run_techrank_on_graph(
         B_before, dict_comp_before, dict_inv_before,
         args.alpha, args.beta, "AVANT TGN (Ground Truth)", logger
@@ -935,7 +935,7 @@ def main():
 
     # Debug: vérifier les premiers noms
     if df_comp_before is not None and len(df_comp_before) > 0:
-        logger.info(f"\n🔍 DEBUG - Premiers noms dans df_comp_before:")
+        logger.info(f"\nDEBUG - Premiers noms dans df_comp_before:")
         for name in df_comp_before['final_configuration'].head(5):
             logger.info(f"   {name}")
 
@@ -944,7 +944,7 @@ def main():
 
 
     # 4. Calculer TechRank APRÈS TGN
-    # ⚠️ Maintenant run_techrank_on_graph retourne (companies, investors)
+    # [WARNING] Maintenant run_techrank_on_graph retourne (companies, investors)
     df_comp_after, _ = run_techrank_on_graph(
         B_after, dict_comp_after, dict_inv_after,
         args.alpha, args.beta, "APRÈS TGN (Predictions)", logger
@@ -961,11 +961,11 @@ def main():
     
     # 6. Résumé final
     logger.info("\n" + "="*70)
-    logger.info("✅ ANALYSE TERMINÉE!")
+    logger.info("[OK] ANALYSE TERMINÉE!")
     logger.info("="*70)
     
     if df_promising is not None and len(df_promising) > 0:
-        logger.info(f"\n🎯 RÉSULTATS CLÉS:")
+        logger.info(f"\nRÉSULTATS CLÉS:")
         logger.info(f"   - {len(df_promising)} entreprises prometteuses identifiées (delta > {args.threshold})")
         logger.info(f"   - Top {args.top_k} sauvegardées dans: {args.save_dir}/")
         logger.info(f"   - Fichiers générés:")
@@ -975,13 +975,13 @@ def main():
             logger.info(f"     • techrank_delta_analysis.png")
             logger.info(f"     • rank_changes.png")
         
-        logger.info(f"\n💡 UTILISATION:")
+        logger.info(f"\nUTILISATION:")
         logger.info(f"   Les entreprises dans promising_companies_top{args.top_k}.csv sont celles")
         logger.info(f"   que le modèle TGN considère comme sous-évaluées par les données brutes.")
         logger.info(f"   Un delta élevé suggère un potentiel de croissance non capturé dans les")
         logger.info(f"   interactions historiques mais détecté par le modèle.")
     else:
-        logger.warning(f"\n⚠️  Aucune entreprise avec delta > {args.threshold} trouvée")
+        logger.warning(f"\n[WARNING]  Aucune entreprise avec delta > {args.threshold} trouvée")
         logger.info(f"   Essayez de réduire le threshold avec --threshold")
 
 if __name__ == "__main__":

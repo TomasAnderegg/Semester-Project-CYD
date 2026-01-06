@@ -17,7 +17,7 @@ RAW_DATA_PATH = "debug_df_graphcaca21.csv"
 
 def load_data():
     """Charge toutes les données nécessaires"""
-    print("📁 Chargement des données...")
+    print("Chargement des données...")
     
     tgn_edges = pd.read_csv(TGN_EDGES_PATH)
     print(f"  Edges TGN chargées: {len(tgn_edges):,}")
@@ -208,7 +208,7 @@ def create_positive_samples(tgn_edges, raw_data, id_to_company, id_to_investor, 
     else:
         edges = tgn_edges[tgn_edges['ts'] > val_cutoff]
     
-    print(f"\n🔍 Création des positifs ({split_type}): {len(edges)} edges")
+    print(f"\nCréation des positifs ({split_type}): {len(edges)} edges")
     
     for idx, row in tqdm(edges.iterrows(), total=len(edges), desc=f"Processing {split_type} positives"):
         company = id_to_company.get(int(row['u']), f"company_{row['u']}")
@@ -234,7 +234,7 @@ def create_negative_samples(positives, raw_data, num_negatives_per_positive=1):
     all_companies = raw_data['org_name'].unique()
     all_investors = raw_data['investor_name'].unique()
     
-    print(f"\n🔍 Création des négatifs: {len(positives)} × {num_negatives_per_positive}")
+    print(f"\nCréation des négatifs: {len(positives)} × {num_negatives_per_positive}")
     
     for pos in tqdm(positives, desc="Generating negatives"):
         company = pos['company']
@@ -282,7 +282,7 @@ def create_ranking_samples(tgn_edges, raw_data, id_to_company, id_to_investor, s
     
     all_companies = raw_data['org_name'].unique()
     
-    print(f"\n🎯 Création des samples de RANKING ({split_type}): {len(edges)} queries")
+    print(f"\nCréation des samples de RANKING ({split_type}): {len(edges)} queries")
     
     for idx, row in tqdm(edges.iterrows(), total=len(edges), desc=f"Processing {split_type} ranking"):
         true_company = id_to_company.get(int(row['u']), f"company_{row['u']}")
@@ -346,7 +346,7 @@ def compute_ranking_metrics(model, ranking_samples, k_values=[10, 50]):
     mrr_scores = []
     recall_at_k = {k: [] for k in k_values}
     
-    print(f"\n📊 Calcul des métriques de ranking sur {len(ranking_samples)} queries...")
+    print(f"\nCalcul des métriques de ranking sur {len(ranking_samples)} queries...")
     
     for sample in tqdm(ranking_samples, desc="Computing ranking metrics"):
         candidates = sample['candidates']
@@ -391,7 +391,7 @@ def prepare_dataset(positives, negatives):
     X = np.array([s['features'] for s in all_samples])
     y = np.array([s['label'] for s in all_samples])
     
-    print(f"\n📊 Dataset final:")
+    print(f"\nDataset final:")
     print(f"  Total samples: {len(all_samples)}")
     print(f"  Positives: {len(positives)} ({100*len(positives)/len(all_samples):.1f}%)")
     print(f"  Negatives: {len(negatives)} ({100*len(negatives)/len(all_samples):.1f}%)")
@@ -467,7 +467,7 @@ def main():
         verbose=0
     )
     
-    print("\n🔧 Entraînement en cours...")
+    print("\nEntraînement en cours...")
     rf.fit(X_train, y_train)
 
     # 7. Évaluation - VALIDATION SET
@@ -480,14 +480,14 @@ def main():
     val_auc = roc_auc_score(y_val, y_val_pred_proba)
     val_ap = average_precision_score(y_val, y_val_pred_proba)
 
-    print(f"\n📊 Métriques de Classification (Validation):")
+    print(f"\nMétriques de Classification (Validation):")
     print(f"  AUROC:               {val_auc:.4f}")
     print(f"  Average Precision:   {val_ap:.4f}")
 
     # Ranking metrics sur validation
     val_mrr, val_recall_k = compute_ranking_metrics(rf, val_ranking_samples, k_values=[10, 50])
 
-    print(f"\n📊 Métriques de Ranking (Validation):")
+    print(f"\nMétriques de Ranking (Validation):")
     print(f"  MRR:                 {val_mrr:.4f}")
     print(f"  Recall@10:           {val_recall_k[10]:.4f}")
     print(f"  Recall@50:           {val_recall_k[50]:.4f}")
@@ -502,14 +502,14 @@ def main():
     test_auc = roc_auc_score(y_test, y_test_pred_proba)
     test_ap = average_precision_score(y_test, y_test_pred_proba)
 
-    print(f"\n📊 Métriques de Classification (Test):")
+    print(f"\nMétriques de Classification (Test):")
     print(f"  AUROC:               {test_auc:.4f}")
     print(f"  Average Precision:   {test_ap:.4f}")
 
     # Ranking metrics sur test
     test_mrr, test_recall_k = compute_ranking_metrics(rf, test_ranking_samples, k_values=[10, 50])
 
-    print(f"\n📊 Métriques de Ranking (Test):")
+    print(f"\nMétriques de Ranking (Test):")
     print(f"  MRR:                 {test_mrr:.4f}")
     print(f"  Recall@10:           {test_recall_k[10]:.4f}")
     print(f"  Recall@50:           {test_recall_k[50]:.4f}")
@@ -540,7 +540,7 @@ def main():
     importances = rf.feature_importances_
     indices = np.argsort(importances)[::-1]
     
-    print("\n📈 Top 10 des features les plus importantes:")
+    print("\nTop 10 des features les plus importantes:")
     for i in range(min(10, len(feature_names))):
         print(f"  {i+1:2d}. {feature_names[indices[i]]:<35} {importances[indices[i]]:.4f}")
     
@@ -550,7 +550,7 @@ def main():
     print("="*80)
 
     print(f"""
-    🎯 RANDOM FOREST BASELINE (toutes métriques):
+    RANDOM FOREST BASELINE (toutes métriques):
 
     VALIDATION SET:
       Classification Metrics:
@@ -579,14 +579,14 @@ def main():
        - Si TGN ≈ RF: TGN ne capture pas mieux la temporalité
        - Si TGN > RF (+5-15%): TGN fonctionne bien!
 
-    🎯 OBJECTIFS POUR TGN (TEST SET):
+    OBJECTIFS POUR TGN (TEST SET):
        - AUROC:     > {test_auc + 0.05:.4f} (+5%)
        - AP:        > {test_ap + 0.05:.4f} (+5%)
        - MRR:       > {test_mrr + 0.05:.4f} (+5%)
        - Recall@10: > {test_recall_k[10] + 0.05:.4f} (+5%)
        - Recall@50: > {test_recall_k[50] + 0.05:.4f} (+5%)
 
-    ✅ IMPORTANT:
+    [OK] IMPORTANT:
        - Split temporel 70/15/15 (train/val/test) comme TGN
        - Même évaluation temporelle que TGN (prédiction FUTURE uniquement)
        - Pas de data leakage (features calculées sur historique uniquement)
@@ -616,7 +616,7 @@ def main():
     with open('rf_baseline_results.json', 'w') as f:
         json.dump(results, f, indent=2)
 
-    print("\n✅ Résultats sauvegardés dans: rf_baseline_results.json")
+    print("\n[OK] Résultats sauvegardés dans: rf_baseline_results.json")
 
 if __name__ == "__main__":
     main()

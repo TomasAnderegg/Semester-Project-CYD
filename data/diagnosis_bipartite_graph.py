@@ -241,7 +241,7 @@ def comprehensive_graph_diagnosis(G, investors: List, companies: List) -> Dict:
     print("="*80)
     
     # 1. Calculer toutes les métriques
-    print("\n📊 CALCUL DES MÉTRIQUES...")
+    print("\nCALCUL DES MÉTRIQUES...")
     deg_stats = calculate_degree_statistics(G, investors, companies)
     density_stats = calculate_bipartite_density(G, investors, companies)
     imbalance_stats = calculate_imbalance_metrics(G, investors, companies, deg_stats)
@@ -252,37 +252,37 @@ def comprehensive_graph_diagnosis(G, investors: List, companies: List) -> Dict:
     warnings = []
     recommendations = []
     
-    print("\n🔍 DÉTECTION DES PROBLÈMES...")
+    print("\nDÉTECTION DES PROBLÈMES...")
     
     # A. Vérifier la sparsité
     if density_stats['density'] < 0.0001:
-        problems.append("⚠️  HYPER SPARSE: densité < 0.01% - risque de sur-apprentissage élevé")
+        problems.append("[WARNING]  HYPER SPARSE: densité < 0.01% - risque de sur-apprentissage élevé")
         recommendations.append("• Utiliser negative sampling intelligent avec hard negatives")
         recommendations.append("• Ajouter des features de graphe globales (PageRank, centralité)")
         recommendations.append("• Considérer data augmentation via métapaths")
     elif density_stats['density'] < 0.001:
-        warnings.append("⚠️  Très sparse: densité < 0.1% - nécessite techniques spéciales")
+        warnings.append("[WARNING]  Très sparse: densité < 0.1% - nécessite techniques spéciales")
         recommendations.append("• Augmenter le batch size pour mieux explorer l'espace")
         recommendations.append("• Utiliser des embeddings pré-entraînés si disponibles")
     
     # B. Vérifier l'inégalité des degrés (Gini)
     if deg_stats['investors']['gini'] > 0.8 or deg_stats['companies']['gini'] > 0.8:
-        problems.append("⚠️  INÉGALITÉ EXTRÊME: Gini > 0.8 - quelques hubs dominent le réseau")
+        problems.append("[WARNING]  INÉGALITÉ EXTRÊME: Gini > 0.8 - quelques hubs dominent le réseau")
         recommendations.append("• Pondération inverse des fréquences dans la loss")
         recommendations.append("• Downsampling des hubs ou oversampling des nœuds périphériques")
         recommendations.append("• Utiliser des techniques robustes aux outliers")
     elif deg_stats['investors']['gini'] > 0.6 or deg_stats['companies']['gini'] > 0.6:
-        warnings.append("⚠️  Inégalité forte: Gini > 0.6 - réseau très hétérogène")
+        warnings.append("[WARNING]  Inégalité forte: Gini > 0.6 - réseau très hétérogène")
         recommendations.append("• Normaliser les degrés dans les features")
     
     # C. Vérifier le déséquilibre pour edge prediction
     if imbalance_stats['avg_positive_rate'] < 0.01:
-        problems.append(f"⚠️  DÉSÉQUILIBRE EXTRÊME: seulement {imbalance_stats['avg_positive_rate']*100:.2f}% de liens positifs")
+        problems.append(f"[WARNING]  DÉSÉQUILIBRE EXTRÊME: seulement {imbalance_stats['avg_positive_rate']*100:.2f}% de liens positifs")
         recommendations.append("• Utiliser Focal Loss ou autre loss adaptative")
         recommendations.append("• Oversampling agressif des positifs")
         recommendations.append("• Génération synthétique de positifs (SMOTE-like)")
     elif imbalance_stats['avg_positive_rate'] < 0.05:
-        warnings.append(f"⚠️  Déséquilibre important: {imbalance_stats['avg_positive_rate']*100:.2f}% de positifs")
+        warnings.append(f"[WARNING]  Déséquilibre important: {imbalance_stats['avg_positive_rate']*100:.2f}% de positifs")
         recommendations.append("• Balanced batch sampling")
         recommendations.append("• Poids de classe dans la loss")
     
@@ -292,22 +292,22 @@ def comprehensive_graph_diagnosis(G, investors: List, companies: List) -> Dict:
     isolated_percentage = isolated_total / total_nodes * 100
     
     if isolated_percentage > 20:
-        problems.append(f"⚠️  COLD START: {isolated_percentage:.1f}% de nœuds isolés")
+        problems.append(f"[WARNING]  COLD START: {isolated_percentage:.1f}% de nœuds isolés")
         recommendations.append("• Ajouter des features externes (secteur, localisation)")
         recommendations.append("• Transfer learning depuis nœuds similaires")
         recommendations.append("• Modèle à deux étages: pré-entraînement sur sous-graphe connecté")
     elif isolated_percentage > 10:
-        warnings.append(f"⚠️  Nombre significatif de nœuds isolés: {isolated_percentage:.1f}%")
+        warnings.append(f"[WARNING]  Nombre significatif de nœuds isolés: {isolated_percentage:.1f}%")
     
     # E. Vérifier la connectivité
     if not connectivity_stats['is_connected'] and connectivity_stats['largest_component_percentage'] < 80:
-        warnings.append(f"⚠️  Graphe fragmenté: plus grande composante = {connectivity_stats['largest_component_percentage']:.1f}%")
+        warnings.append(f"[WARNING]  Graphe fragmenté: plus grande composante = {connectivity_stats['largest_component_percentage']:.1f}%")
         recommendations.append("• Analyser chaque composante séparément si elles ont des dynamiques différentes")
         recommendations.append("• Se concentrer sur la plus grande composante pour l'entraînement")
     
     # F. Vérifier l'assortativité
     if abs(connectivity_stats['assortativity_investors']) > 0.4:
-        warnings.append(f"⚠️  Assortativité forte chez les investisseurs: {connectivity_stats['assortativité_investors']:.2f}")
+        warnings.append(f"[WARNING]  Assortativité forte chez les investisseurs: {connectivity_stats['assortativité_investors']:.2f}")
         recommendations.append("• Intégrer l'assortativité comme feature contextuelle")
     
     # 3. Calculer un score de santé
@@ -338,7 +338,7 @@ def comprehensive_graph_diagnosis(G, investors: List, companies: List) -> Dict:
     print("RAPPORT DE DIAGNOSTIC")
     print("="*80)
     
-    print(f"\n📈 MÉTRIQUES CLÉS:")
+    print(f"\nMÉTRIQUES CLÉS:")
     print(f"  • Investisseurs: {len(investors)}")
     print(f"  • Entreprises: {len(companies)}")
     print(f"  • Arêtes: {density_stats['edges']}")
@@ -353,7 +353,7 @@ def comprehensive_graph_diagnosis(G, investors: List, companies: List) -> Dict:
     print(f"  • Assortativité investisseurs: {connectivity_stats['assortativity_investors']:.3f}")
     print(f"  • Assortativité entreprises: {connectivity_stats['assortativity_companies']:.3f}")
     
-    print(f"\n📊 DISTRIBUTION DES DEGRÉS:")
+    print(f"\nDISTRIBUTION DES DEGRÉS:")
     print(f"  Investisseurs: μ={deg_stats['investors']['mean']:.2f}, σ={deg_stats['investors']['std']:.2f}, "
           f"skew={deg_stats['investors']['skewness']:.2f}, kurt={deg_stats['investors']['kurtosis']:.2f}")
     print(f"  Entreprises: μ={deg_stats['companies']['mean']:.2f}, σ={deg_stats['companies']['std']:.2f}, "
@@ -364,32 +364,32 @@ def comprehensive_graph_diagnosis(G, investors: List, companies: List) -> Dict:
     power_law_comp = calculate_power_law_fit(deg_stats['companies']['degrees'])
     
     if power_law_inv['is_power_law']:
-        print(f"  ✓ Distribution investisseurs suit une loi de puissance (α={power_law_inv['alpha']:.2f}, R²={power_law_inv['r_squared']:.2f})")
+        print(f"  [OK] Distribution investisseurs suit une loi de puissance (α={power_law_inv['alpha']:.2f}, R²={power_law_inv['r_squared']:.2f})")
     if power_law_comp['is_power_law']:
-        print(f"  ✓ Distribution entreprises suit une loi de puissance (α={power_law_comp['alpha']:.2f}, R²={power_law_comp['r_squared']:.2f})")
+        print(f"  [OK] Distribution entreprises suit une loi de puissance (α={power_law_comp['alpha']:.2f}, R²={power_law_comp['r_squared']:.2f})")
     
-    print(f"\n🎯 SCORE DE SANTÉ: {health_score:.0f}/100")
+    print(f"\nSCORE DE SANTÉ: {health_score:.0f}/100")
     if health_score >= 80:
-        print("  ✅ EXCELLENT - TGN devrait bien performer")
+        print("  [OK] EXCELLENT - TGN devrait bien performer")
     elif health_score >= 60:
-        print("  ⚠️  BON - Quelques ajustements nécessaires")
+        print("  [WARNING]  BON - Quelques ajustements nécessaires")
     elif health_score >= 40:
-        print("  ⚠️  MOYEN - Techniques spéciales requises")
+        print("  [WARNING]  MOYEN - Techniques spéciales requises")
     else:
-        print("  ❌ DIFFICILE - Repenser l'approche ou enrichir les données")
+        print("  [ERROR] DIFFICILE - Repenser l'approche ou enrichir les données")
     
     if problems:
-        print(f"\n❌ PROBLÈMES CRITIQUES ({len(problems)}):")
+        print(f"\n[ERROR] PROBLÈMES CRITIQUES ({len(problems)}):")
         for i, problem in enumerate(problems, 1):
             print(f"  {i}. {problem}")
     
     if warnings:
-        print(f"\n⚠️  AVERTISSEMENTS ({len(warnings)}):")
+        print(f"\n[WARNING]  AVERTISSEMENTS ({len(warnings)}):")
         for i, warning in enumerate(warnings, 1):
             print(f"  {i}. {warning}")
     
     if recommendations:
-        print(f"\n💡 RECOMMANDATIONS ({len(set(recommendations))}):")
+        print(f"\nRECOMMANDATIONS ({len(set(recommendations))}):")
         for i, rec in enumerate(sorted(set(recommendations)), 1):
             print(f"  {i}. {rec}")
     
@@ -658,7 +658,7 @@ def visualize_metrics_dashboard(diagnosis_results: Dict, save_path: str = None):
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"✓ Dashboard sauvegardé: {save_path}")
+        print(f"[OK] Dashboard sauvegardé: {save_path}")
     
     plt.show()
 
@@ -696,7 +696,7 @@ def main_graph_analysis():
     with open(f'{SAVE_DIR_CLASSES}/dict_investors_{NUM_TECH}.pickle', 'rb') as f:
         dict_tech = pickle.load(f)
     
-    print(f"✓ Données chargées:")
+    print(f"[OK] Données chargées:")
     print(f"  - Graphe: {B.number_of_nodes()} nœuds, {B.number_of_edges()} arêtes")
     print(f"  - Dictionnaires: {len(dict_companies)} companies, {len(dict_tech)} investors")
     
@@ -704,13 +704,13 @@ def main_graph_analysis():
     companies = extract_nodes(B, 0)  # Companies
     investors = extract_nodes(B, 1)  # Investors
     
-    print(f"\n📊 COMPOSITION DU GRAPHE:")
+    print(f"\nCOMPOSITION DU GRAPHE:")
     print(f"  - Companies: {len(companies)}")
     print(f"  - Investors: {len(investors)}")
     
     # Vérifier que c'est bien bipartite
     if not is_bipartite(B):
-        print("❌ ERREUR: Le graphe n'est pas bipartite!")
+        print("[ERROR] ERREUR: Le graphe n'est pas bipartite!")
         return
     
     # Exécuter le diagnostic complet
@@ -726,7 +726,7 @@ def main_graph_analysis():
     with open(results_path, 'wb') as f:
         pickle.dump(diagnosis_results, f)
     
-    print(f"\n✅ ANALYSE TERMINÉE")
+    print(f"\n[OK] ANALYSE TERMINÉE")
     print(f"   - Dashboard: {dashboard_path}")
     print(f"   - Résultats détaillés: {results_path}")
     
@@ -753,7 +753,7 @@ if __name__ == "__main__":
         health_score = diagnosis_results['health_score']
         metrics = diagnosis_results['metrics']
         
-        print(f"\n🎯 CONFIGURATION RECOMMANDÉE POUR TGN:")
+        print(f"\nCONFIGURATION RECOMMANDÉE POUR TGN:")
         
         if health_score >= 80:
             print("  • Utiliser l'architecture TGN standard")

@@ -40,7 +40,7 @@ def load_graph_and_matrix(num_comp, num_investors, flag_cybersecurity):
     with open(f'{SAVE_DIR_CLASSES}/dict_investors_{num_investors}.pickle', 'rb') as f:
         dict_investors = pickle.load(f)
 
-    print("✓ Data loaded:")
+    print("[OK] Data loaded:")
     print(f"  - Graph: {B.number_of_nodes()} nodes, {B.number_of_edges()} edges")
     print(f"  - Dictionaries: {len(dict_companies)} companies, {len(dict_investors)} investors")
 
@@ -195,11 +195,11 @@ def assess_techrank_readiness(B, matrix_data, graph_data):
         issues.append("Investors with zero degree detected")
 
     if issues:
-        print("⚠️ Issues detected:")
+        print("[WARNING] Issues detected:")
         for i in issues:
             print(f"  - {i}")
     else:
-        print("✅ Graph is suitable for TechRank")
+        print("[OK] Graph is suitable for TechRank")
 
 # ===================================================================
 # REPORT PIPELINE
@@ -212,7 +212,7 @@ def generate_analysis_report(B, M, dict_companies, dict_investors):
     plot_matrix_visualization(M)
     assess_techrank_readiness(B, matrix_data, graph_data)
 
-    print("\n✓ Analysis completed.")
+    print("\n[OK] Analysis completed.")
     print(f"Results saved in {SAVE_DIR_ANALYSIS}/")
 
 # ===================================================================

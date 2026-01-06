@@ -66,12 +66,12 @@ def CB_data_cleaning(
     
     # Supprimer les colonnes
     df = df.drop(to_drop, axis=1, errors='ignore')
-    print(f"   ✓ Colonnes à supprimer traitées")
+    print(f"   [OK] Colonnes à supprimer traitées")
     
     # Renommer les colonnes
     if to_rename:
         df = df.rename(columns=to_rename)
-        print(f"   ✓ Colonnes renommées: {list(to_rename.keys())}")
+        print(f"   [OK] Colonnes renommées: {list(to_rename.keys())}")
     
     # Vérifier les doublons
     for key, item in to_check_double.items():
@@ -79,7 +79,7 @@ def CB_data_cleaning(
         if key in df.columns and item in df.columns:
             if (df[key] == df[item]).all():
                 df = df.drop([item], axis=1)
-                print(f"   ✓ Colonne {item} supprimée (doublon de {key})")
+                print(f"   [OK] Colonne {item} supprimée (doublon de {key})")
     
     # Supprimer les lignes avec NaN dans certaines colonnes
     if len(drop_if_nan) > 0:
@@ -87,12 +87,12 @@ def CB_data_cleaning(
         for col in drop_if_nan:
             if col in df.columns:
                 df = df.dropna(subset=[col])
-        print(f"   ✓ {before - len(df):,} lignes supprimées (NaN dans {drop_if_nan})")
+        print(f"   [OK] {before - len(df):,} lignes supprimées (NaN dans {drop_if_nan})")
     
     # Trier
     if len(sort_by) > 0 and sort_by in df.columns:
         df = df.sort_values(sort_by).reset_index(drop=True)
-        print(f"   ✓ Données triées par '{sort_by}'")
+        print(f"   [OK] Données triées par '{sort_by}'")
     
     print(f"   Lignes après nettoyage: {len(df):,}")
     
@@ -126,7 +126,7 @@ def load_data_from_duckdb(filepath, table_name):
     table_names = [t[0] for t in tables]
     
     if table_name not in table_names:
-        print(f"⚠️  Table '{table_name}' non trouvée!")
+        print(f"[WARNING]  Table '{table_name}' non trouvée!")
         print(f"   Tables disponibles: {table_names}")
         conn.close()
         return None
@@ -137,8 +137,8 @@ def load_data_from_duckdb(filepath, table_name):
     
     conn.close()
     
-    print(f"✓ {len(df):,} lignes chargées depuis '{table_name}'")
-    print(f"✓ {len(df.columns)} colonnes disponibles")
+    print(f"[OK] {len(df):,} lignes chargées depuis '{table_name}'")
+    print(f"[OK] {len(df.columns)} colonnes disponibles")
     
     return df
 
@@ -153,8 +153,8 @@ def load_data_from_csv(filepath):
         raise FileNotFoundError(f"Fichier CSV introuvable: {filepath}")
     
     df = pd.read_csv(filepath)
-    print(f"✓ {len(df):,} lignes chargées depuis {Path(filepath).name}")
-    print(f"✓ {len(df.columns)} colonnes disponibles")
+    print(f"[OK] {len(df):,} lignes chargées depuis {Path(filepath).name}")
+    print(f"[OK] {len(df.columns)} colonnes disponibles")
     
     return df
 
@@ -263,12 +263,12 @@ def merge_investments_funding(df_funding, df_investments):
     
     # Vérifier que la colonne de fusion existe
     if 'funding_round_uuid' not in df_funding.columns:
-        print("⚠️  'funding_round_uuid' manquant dans df_funding")
+        print("[WARNING]  'funding_round_uuid' manquant dans df_funding")
         print(f"   Colonnes disponibles: {df_funding.columns.tolist()}")
         return None
     
     if 'funding_round_uuid' not in df_investments.columns:
-        print("⚠️  'funding_round_uuid' manquant dans df_investments")
+        print("[WARNING]  'funding_round_uuid' manquant dans df_investments")
         print(f"   Colonnes disponibles: {df_investments.columns.tolist()}")
         return None
     
@@ -300,16 +300,16 @@ def extract_investment_graph(df):
     # Compter les entités
     if 'org_name' in df.columns:
         companies = df['org_name'].dropna().unique()
-        print(f"✓ {len(companies):,} companies uniques")
+        print(f"[OK] {len(companies):,} companies uniques")
     else:
-        print("⚠️  Colonne 'org_name' non trouvée")
+        print("[WARNING]  Colonne 'org_name' non trouvée")
         companies = []
     
     if 'investor_name' in df.columns:
         investors = df['investor_name'].dropna().unique()
-        print(f"✓ {len(investors):,} investors uniques")
+        print(f"[OK] {len(investors):,} investors uniques")
     else:
-        print("⚠️  Colonne 'investor_name' non trouvée")
+        print("[WARNING]  Colonne 'investor_name' non trouvée")
         investors = []
     
     # Créer les nœuds et arêtes
@@ -333,7 +333,7 @@ def extract_investment_graph(df):
             )
             edges_created += 1
     
-    print(f"✓ Graphe créé: {G.number_of_nodes()} nœuds, {G.number_of_edges()} arêtes")
+    print(f"[OK] Graphe créé: {G.number_of_nodes()} nœuds, {G.number_of_edges()} arêtes")
     
     return G
 
@@ -359,7 +359,7 @@ def main():
             # df_funding = load_data_from_duckdb(DATA_PATH_DUCKDB, 'funding_rounds')
             
             if df_investments is None :
-                print("\n❌ Impossible de charger les données depuis DuckDB")
+                print("\n[ERROR] Impossible de charger les données depuis DuckDB")
                 return None
         else:
             df_investments = load_data_from_csv(DATA_PATH_INVESTMENTS_CSV)
@@ -377,7 +377,7 @@ def main():
         # df_merged = merge_investments_funding(df_funding_clean, df_investments_clean)
         
         # if df_merged is None or len(df_merged) == 0:
-        #     print("\n⚠️  Fusion échouée ou résultat vide")
+        #     print("\n[WARNING]  Fusion échouée ou résultat vide")
         #     return None
         
         # 4. Nettoyer le résultat fusionné
@@ -400,27 +400,27 @@ def main():
             graph_file = f"{SAVE_DIR_NETWORKS}/investment_graph.gpickle"
             with open(graph_file, "wb") as f:
                 pickle.dump(G, f)
-            print(f"\n✓ Graphe d'investissement sauvegardé: {graph_file}")
+            print(f"\n[OK] Graphe d'investissement sauvegardé: {graph_file}")
         
         # 7. Sauvegarder le DataFrame final
         output_file = f"{SAVE_DIR_CLASSES}/df_invest_funding.pickle"
         with open(output_file, "wb") as f:
             pickle.dump(df_investments_clean, f)
-        print(f"✓ DataFrame sauvegardé: {output_file}")
+        print(f"[OK] DataFrame sauvegardé: {output_file}")
         
         # Alternative: sauvegarder en CSV
         csv_file = f"{SAVE_DIR_CLASSES}/df_investments_clean.csv"
         df_investments_clean.to_csv(csv_file, index=False)
-        print(f"✓ CSV sauvegardé: {csv_file}")
+        print(f"[OK] CSV sauvegardé: {csv_file}")
         
         print(f"\n{'='*60}")
-        print(" "*15 + "✓ TRAITEMENT TERMINÉ")
+        print(" "*15 + "[OK] TRAITEMENT TERMINÉ")
         print(f"{'='*60}\n")
         
         return df_investments_clean
         
     except Exception as e:
-        print(f"\n❌ ERREUR: {type(e).__name__}")
+        print(f"\n[ERROR] ERREUR: {type(e).__name__}")
         print(f"   {str(e)}")
         import traceback
         traceback.print_exc()

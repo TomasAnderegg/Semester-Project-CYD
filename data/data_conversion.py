@@ -136,7 +136,7 @@ def filter_cybersecurity(df, keywords):
     mask_combined = mask_cat | mask_desc
     df_filtered = df[mask_combined].reset_index(drop=True)
     
-    print(f"✓ Total d'entreprises cybersécurité: {len(df_filtered):,}")
+    print(f"[OK] Total d'entreprises cybersécurité: {len(df_filtered):,}")
     return df_filtered
 
 # ===================================================================
@@ -149,7 +149,7 @@ def extract_tripartite_graph(companies_df, investments_df, funding_rounds_df):
     for col in ['organization_id', 'uuid', 'id', 'org_id']:
         if col in companies_df.columns:
             org_id_col = col
-            print(f"✓ Colonne ID organisation trouvée: {org_id_col}")
+            print(f"[OK] Colonne ID organisation trouvée: {org_id_col}")
             break
     if org_id_col is None:
         raise ValueError("Aucune colonne ID organisation trouvée")
@@ -214,7 +214,7 @@ def extract_tripartite_graph(companies_df, investments_df, funding_rounds_df):
             if pd.notna(funding_uuid) and pd.notna(tech_name):
                 B.add_edge(funding_uuid, tech_name, type='investment_technology')
 
-    print(f"✓ Graphe créé : {B.number_of_nodes()} nœuds, {B.number_of_edges()} arêtes")
+    print(f"[OK] Graphe créé : {B.number_of_nodes()} nœuds, {B.number_of_edges()} arêtes")
     return B
 
 # ===================================================================
@@ -280,7 +280,7 @@ def save_graph_and_dicts(B, companies_df, limit, is_cybersecurity):
     file_graph = f"{SAVE_DIR_NETWORKS}/{suffix}graph_{limit}.gpickle"
     with open(file_graph,'wb') as f:
         pickle.dump(B,f)
-    print(f"✓ Graphe sauvegardé : {file_graph}")
+    print(f"[OK] Graphe sauvegardé : {file_graph}")
 
 # ===================================================================
 # MAIN
@@ -298,7 +298,7 @@ def main():
     if FLAG_CYBERSECURITY:
         df_comp_proc = filter_cybersecurity(df_comp_proc, CYBERSECURITY_KEYWORDS)
         if len(df_comp_proc)==0:
-            print("⚠️ Aucune entreprise cybersécurité trouvée")
+            print("[WARNING] Aucune entreprise cybersécurité trouvée")
             return
 
     for limit in LIMITS:

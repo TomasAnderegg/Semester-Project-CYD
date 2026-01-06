@@ -275,10 +275,10 @@ for i in range(args.n_runs):
   # CONFIGURATION DE LA LOSS FUNCTION
   # ================================================================
 
-  # ⚠️ IMPORTANT: Choisir la loss function à utiliser
+  # [WARNING] IMPORTANT: Choisir la loss function à utiliser
 
   if args.use_focal_loss and args.use_dcl_loss:
-    # ✅ HYBRID LOSS: Combine Focal Loss (class imbalance) + DCL (degree bias)
+    # [OK] HYBRID LOSS: Combine Focal Loss (class imbalance) + DCL (degree bias)
     logger.info(f"Using HYBRID Focal-DCL Loss:")
     logger.info(f"  - Focal: alpha={args.focal_alpha}, gamma={args.focal_gamma}")
     logger.info(f"  - DCL: alpha={args.dcl_alpha}")
@@ -293,14 +293,14 @@ for i in range(args.n_runs):
     if degree_tensor is not None:
       degree_tensor = degree_tensor.to(device)
   elif args.use_dcl_loss:
-    # ✅ DCL LOSS: Degree Constrastive Loss pour mitiger le degree bias
+    # [OK] DCL LOSS: Degree Constrastive Loss pour mitiger le degree bias
     logger.info(f"Using DCL Loss with temperature={args.dcl_temperature}, alpha={args.dcl_alpha}")
     criterion = DCLLoss(temperature=args.dcl_temperature, alpha=args.dcl_alpha, reduction='mean')
     # Move degree tensor to device
     if degree_tensor is not None:
       degree_tensor = degree_tensor.to(device)
   elif args.use_focal_loss:
-    # ✅ FOCAL LOSS: Pour gérer le déséquilibre de classes
+    # [OK] FOCAL LOSS: Pour gérer le déséquilibre de classes
     logger.info(f"Using Focal Loss with alpha={args.focal_alpha}, gamma={args.focal_gamma}")
     criterion = FocalLoss(alpha=args.focal_alpha, gamma=args.focal_gamma, reduction='mean')
     # criterion = AdaptiveFocalLoss(gamma=args.focal_gamma, reduction='mean')

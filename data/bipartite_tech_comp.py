@@ -138,7 +138,7 @@ def filter_cybersecurity(df: pd.DataFrame, keywords: List[str] = ['quantum compu
 
     # Normaliser les keywords
     normalized_keywords = [k.strip().lower() for k in keywords]
-    print(f"🔍 Keywords recherchés : {normalized_keywords}")
+    print(f"Keywords recherchés : {normalized_keywords}")
 
     def match_contains_keywords(entry):
         """
@@ -160,7 +160,7 @@ def filter_cybersecurity(df: pd.DataFrame, keywords: List[str] = ['quantum compu
     df_filtered = df.loc[mask_cat].reset_index(drop=True)
 
     # Statistiques
-    print(f"✓ Entreprises contenant les keywords : {mask_cat.sum():,}")
+    print(f"[OK] Entreprises contenant les keywords : {mask_cat.sum():,}")
     print(f"➡️  Total d'entreprises filtrées : {len(df_filtered):,}")
 
     # Afficher les catégories matchées
@@ -182,7 +182,7 @@ def filter_cybersecurity(df: pd.DataFrame, keywords: List[str] = ['quantum compu
         for idx, row in df_filtered[['name', 'category_groups']].head(10).iterrows():
             print(f"  • {row['name']}: {row['category_groups']}")
     else:
-        print("\n⚠️  Aucune entreprise trouvée !")
+        print("\n[WARNING]  Aucune entreprise trouvée !")
 
     return df_filtered
 
@@ -203,7 +203,7 @@ def extract_classes_company_tech_all(df, keywords=None):
     dict_tech = {}
     B = nx.Graph()
     
-    print(f"\n🔧 Construction du graphe bipartite...")
+    print(f"\nConstruction du graphe bipartite...")
     print(f"   Mode: Garder TOUTES les technologies des entreprises filtrées")
     
     companies_without_tech = []
@@ -231,7 +231,7 @@ def extract_classes_company_tech_all(df, keywords=None):
         categories = row['category_groups']
         
         if isinstance(categories, list) and len(categories) > 0:
-            # ✅ Ajouter TOUTES les technologies, pas de filtre
+            # [OK] Ajouter TOUTES les technologies, pas de filtre
             for tech in categories:
                 tech_normalized = str(tech).strip()
                 all_techs_found.add(tech_normalized.lower())
@@ -259,18 +259,18 @@ def extract_classes_company_tech_all(df, keywords=None):
             companies_without_tech.append(comp_name)
     
     # Rapport
-    print(f"\n✓ Graphe créé :")
+    print(f"\n[OK] Graphe créé :")
     print(f"   - Entreprises : {len(dict_companies)}")
     print(f"   - Technologies (TOUTES) : {len(dict_tech)}")
     print(f"   - Technologies uniques : {len(all_techs_found)}")
     print(f"   - Arêtes : {B.number_of_edges()}")
     
     if companies_without_tech:
-        print(f"\n⚠️  {len(companies_without_tech)} entreprises sans technologie")
+        print(f"\n[WARNING]  {len(companies_without_tech)} entreprises sans technologie")
         print(f"   Exemples : {companies_without_tech[:5]}")
     
     # Afficher quelques exemples de technologies trouvées
-    print(f"\n📊 Exemples de technologies dans le graphe :")
+    print(f"\nExemples de technologies dans le graphe :")
     sample_techs = sorted(all_techs_found)[:10]
     for tech in sample_techs:
         print(f"   • {tech}")
@@ -403,9 +403,9 @@ def analyze_graph_structure(B):
     print(f"Nœuds isolés: {len(isolated_nodes)}")
 
     if nx.is_bipartite(B):
-        print("✓ Graphe confirmé bipartite")
+        print("[OK] Graphe confirmé bipartite")
     else:
-        print("❌ Graphe non bipartite")
+        print("[ERROR] Graphe non bipartite")
     
     return {
         'companies': companies,
@@ -415,7 +415,7 @@ def analyze_graph_structure(B):
 
 
 # ===================================================================
-# ✅ SAVING FUNCTION (corrigée)
+# [OK] SAVING FUNCTION (corrigée)
 # ===================================================================
 
 def save_graph_and_dicts(B, df_companies, dict_companies, dict_tech, limit, flag_cybersecurity):
@@ -432,14 +432,14 @@ def save_graph_and_dicts(B, df_companies, dict_companies, dict_tech, limit, flag
     with open(f'{SAVE_DIR_CLASSES}/{prefix}dict_tech_ranked_{limit}.pickle', 'wb') as f:
         pickle.dump(dict_tech, f)
 
-    # ✅ Sauvegarder le graphe avec pickle directement (évite tout bug NetworkX)
+    # [OK] Sauvegarder le graphe avec pickle directement (évite tout bug NetworkX)
     with open(f"{SAVE_DIR_NETWORKS}/{prefix}bipartite_graph_{limit}.gpickle", "wb") as f:
         pickle.dump(B, f)
 
     # Sauvegarder le DataFrame
     df_companies.to_csv(f'{SAVE_DIR_CLASSES}/{prefix}companies_ranked_{limit}.csv', index=False)
 
-    print(f"\n✓ Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
+    print(f"\n[OK] Résultats sauvegardés dans {SAVE_DIR_CLASSES}/ et {SAVE_DIR_NETWORKS}/")
 # ===================================================================
 # MAIN
 # ===================================================================
@@ -458,18 +458,18 @@ def main():
         return
 
     for limit in LIMITS:
-                # ✅ PASSER LES KEYWORDS à la fonction
+                # [OK] PASSER LES KEYWORDS à la fonction
         dict_companies, dict_tech, B = extract_classes_company_tech_all(df_comp_filter,keywords=CYBERSECURITY_KEYWORDS)
 
         # 3. DIAGNOSTIC CRITIQUE
         if B.number_of_nodes() == 0:
-            print("❌ Graphe vide - aucune entreprise avec technologies cybersecurity")
+            print("[ERROR] Graphe vide - aucune entreprise avec technologies cybersecurity")
             continue
             
         companies = [n for n, d in B.nodes(data=True) if d['bipartite'] == 0]
         techs = [n for n, d in B.nodes(data=True) if d['bipartite'] == 1]
         
-        print(f"📈 MÉTRIQUES RÉSEAU CYBERSECURITY:")
+        print(f"MÉTRIQUES RÉSEAU CYBERSECURITY:")
         print(f"  - Companies: {len(companies)}")
         print(f"  - Technologies CYBERSECURITY: {len(techs)}")
         print(f"  - Arêtes: {B.number_of_edges()}")
@@ -477,15 +477,15 @@ def main():
         # Vérifier s'il y a des entreprises sans connexion
         isolated_companies = [node for node in companies if B.degree(node) == 0]
         if isolated_companies:
-            print(f"⚠️  Entreprises sans connexion: {len(isolated_companies)}")
+            print(f"[WARNING]  Entreprises sans connexion: {len(isolated_companies)}")
             print(f"   Exemples: {isolated_companies[:3]}")
         else:
-            print("✅ Toutes les entreprises ont au moins une connexion")
+            print("[OK] Toutes les entreprises ont au moins une connexion")
         
         analyze_graph_structure(B)
 
 
-        # ✅ Appel corrigé
+        # [OK] Appel corrigé
         save_graph_and_dicts(B, df_comp_filter, dict_companies, dict_tech, limit, FLAG_CYBERSECURITY)
 
 

@@ -79,7 +79,7 @@ def diagnostic_data_leakage():
     print(f"  total_raised_amount_usd = 0 (TOUJOURS)")
     print(f"  num_funding_rounds = 0 (TOUJOURS)")
     
-    print("\n⚠️  CONCLUSION PROBLÈME 1:")
+    print("\n[WARNING]  CONCLUSION PROBLÈME 1:")
     print("  Les négatives ont TOUJOURS raised=0 et rounds=0")
     print("  Les positives ont PRESQUE TOUJOURS raised>0 et rounds>0")
     print("  → Le RF peut distinguer avec 100% de précision juste avec ces features!")
@@ -123,7 +123,7 @@ def diagnostic_data_leakage():
     print(f"  Existent déjà dans le graphe: {neg_exist_in_graph}")
     print(f"  N'existent pas dans le graphe: {100 - neg_exist_in_graph}")
     
-    print("\n⚠️  CONCLUSION PROBLÈME 2:")
+    print("\n[WARNING]  CONCLUSION PROBLÈME 2:")
     if neg_exist_in_graph > 0:
         print("  Certaines 'négatives' existent en fait dans le graphe!")
         print("  → Mais elles ont raised=0 car on les sample APRÈS l'événement")
@@ -151,11 +151,11 @@ def diagnostic_data_leakage():
     if edge_data_neg:
         print(f"  → raised={edge_data_neg.get('total_raised_amount_usd', 0)}")
         print(f"  → rounds={edge_data_neg.get('num_funding_rounds', 0)}")
-        print(f"  ⚠️  Cette 'négative' a en fait des données!")
+        print(f"  [WARNING]  Cette 'négative' a en fait des données!")
     else:
         print(f"  → Edge n'existe pas, donc raised=0, rounds=0")
     
-    print("\n⚠️  CONCLUSION PROBLÈME 3:")
+    print("\n[WARNING]  CONCLUSION PROBLÈME 3:")
     print("  Les négatives ont edge_ts=0, donc on ne compte AUCUN funding round")
     print("  → Elles ont TOUJOURS raised=0 et rounds=0")
     print("  → Signal parfait pour les distinguer des positives!")
@@ -182,7 +182,7 @@ def diagnostic_data_leakage():
     print("   else: predict 1 (positive)")
     print("   → Précision parfaite!")
     
-    print("\n💡 POURQUOI LE TGN NE FAIT PAS AUC=1.0:")
+    print("\nPOURQUOI LE TGN NE FAIT PAS AUC=1.0:")
     print("   - Le TGN apprend des embeddings complexes")
     print("   - Il n'a peut-être pas encore appris cette règle simple")
     print("   - Ou il overfitte sur d'autres patterns moins utiles")
@@ -190,19 +190,19 @@ def diagnostic_data_leakage():
     print("\n" + "="*70)
     print("SOLUTIONS POSSIBLES")
     print("="*70)
-    print("\n✅ SOLUTION 1: Négatives plus réalistes")
+    print("\n[OK] SOLUTION 1: Négatives plus réalistes")
     print("   Générer des négatives qui ont aussi raised>0 et rounds>0")
     print("   → Sampler parmi les edges EXISTANTS mais à un autre timestamp")
     
-    print("\n✅ SOLUTION 2: Ne pas utiliser raised et rounds comme features")
+    print("\n[OK] SOLUTION 2: Ne pas utiliser raised et rounds comme features")
     print("   Utiliser UNIQUEMENT les degrés: [u_deg, v_deg]")
     print("   → Test si le problème persiste")
     
-    print("\n✅ SOLUTION 3: Negative sampling temporel")
+    print("\n[OK] SOLUTION 3: Negative sampling temporel")
     print("   Pour chaque positive au temps t, créer une négative")
     print("   en prenant un edge qui existe à t-1 mais pas à t")
     
-    print("\n✅ SOLUTION 4: Vérifier ce que fait réellement TGN")
+    print("\n[OK] SOLUTION 4: Vérifier ce que fait réellement TGN")
     print("   Inspecter les edge_features et node_features du TGN")
     print("   → Voir s'il a accès aux mêmes informations")
 
@@ -317,7 +317,7 @@ def test_rf_degree_only():
     print(f"  AUC = {roc_auc_score(y_test, y_pred):.4f}")
     print(f"  AP  = {average_precision_score(y_test, y_pred):.4f}")
     
-    print("\n💡 Si AUC < 1.0, alors le problème était bien raised/rounds!")
+    print("\nSi AUC < 1.0, alors le problème était bien raised/rounds!")
     print("   Si AUC ≈ 1.0, alors même les degrés sont trop discriminants")
 
 

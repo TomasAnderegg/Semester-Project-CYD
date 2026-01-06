@@ -44,7 +44,7 @@ def test_ranking_mechanism():
 
     # Vérification
     if positive_rank == 1:
-        print("✅ TOP PROBA = VRAI PRÉDICTION!")
+        print("[OK] TOP PROBA = VRAI PRÉDICTION!")
         print(f"   MRR contribution: 1/{positive_rank.item()} = {1.0/positive_rank.item():.2f}")
         print(f"   Recall@1: True")
         print(f"   Recall@10: True")
@@ -70,7 +70,7 @@ def test_ranking_mechanism():
     print(f"\nPosition du vrai investisseur (indice 0): RANG {positive_rank.item()}")
 
     if positive_rank != 1:
-        print(f"❌ Top proba ≠ vrai prédiction")
+        print(f"[ERROR] Top proba ≠ vrai prédiction")
         print(f"   Top proba = indice {rankings[0, 0].item()} (score {all_scores[0, rankings[0, 0]].item():.2f})")
         print(f"   MRR contribution: 1/{positive_rank.item()} = {1.0/positive_rank.item():.2f}")
         print(f"   Recall@1: False")
@@ -98,7 +98,7 @@ def test_ranking_mechanism():
     positive_rank = (rankings == 0).nonzero(as_tuple=True)[1] + 1
     print(f"\nPosition du vrai investisseur (indice 0): RANG {positive_rank.item()}")
 
-    print(f"❌ Très mauvaise prédiction!")
+    print(f"[ERROR] Très mauvaise prédiction!")
     print(f"   MRR contribution: 1/{positive_rank.item()} = {1.0/positive_rank.item():.4f}")
     print(f"   Recall@1: False")
     print(f"   Recall@10: False")
@@ -146,10 +146,10 @@ def test_ranking_mechanism():
     print("\n" + "=" * 70)
     print("CONCLUSION:")
     print("=" * 70)
-    print("✓ Si rang = 1 → Top proba = Vrai prédiction")
-    print("✓ Indice 0 dans all_scores = TOUJOURS le vrai investisseur")
-    print("✓ argsort(descending=True) classe du meilleur au pire")
-    print("✓ (rankings == 0).nonzero() trouve la position du vrai")
+    print("[OK] Si rang = 1 → Top proba = Vrai prédiction")
+    print("[OK] Indice 0 dans all_scores = TOUJOURS le vrai investisseur")
+    print("[OK] argsort(descending=True) classe du meilleur au pire")
+    print("[OK] (rankings == 0).nonzero() trouve la position du vrai")
     print("=" * 70)
 
 

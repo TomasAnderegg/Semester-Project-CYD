@@ -108,18 +108,18 @@ def run_experiment(config, index, total):
 
         elapsed_time = time.time() - start_time
 
-        print(f"\n✓ {config['name']} terminé en {elapsed_time/60:.1f} minutes")
+        print(f"\n[OK] {config['name']} terminé en {elapsed_time/60:.1f} minutes")
         return True
 
     except subprocess.CalledProcessError as e:
         elapsed_time = time.time() - start_time
 
-        print(f"\n❌ {config['name']} a échoué après {elapsed_time/60:.1f} minutes")
+        print(f"\n[ERROR] {config['name']} a échoué après {elapsed_time/60:.1f} minutes")
         print(f"   Code de sortie: {e.returncode}")
         return False
 
     except KeyboardInterrupt:
-        print(f"\n⚠️  Expérience interrompue par l'utilisateur")
+        print(f"\n[WARNING]  Expérience interrompue par l'utilisateur")
         return False
 
 
@@ -132,7 +132,7 @@ def main():
     print(f"Nombre de configurations: {len(CONFIGURATIONS)}")
     print(f"Runs par configuration: 6")
     print(f"Epochs par run: 50")
-    print("\n⚠️  Estimation du temps total: ~4-8 heures (dépend de ton GPU)")
+    print("\n[WARNING]  Estimation du temps total: ~4-8 heures (dépend de ton GPU)")
 
     input("\nAppuie sur Entrée pour commencer les expériences...")
 
@@ -164,7 +164,7 @@ def main():
     print("\nRésultats:")
 
     for result in results:
-        status = "✓ Succès" if result["success"] else "❌ Échec"
+        status = "[OK] Succès" if result["success"] else "[ERROR] Échec"
         print(f"  {status:12} - {result['name']}")
 
     successes = sum(1 for r in results if r["success"])
@@ -183,5 +183,5 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\n⚠️  Script interrompu par l'utilisateur\n")
+        print("\n\n[WARNING]  Script interrompu par l'utilisateur\n")
         sys.exit(1)

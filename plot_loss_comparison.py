@@ -27,7 +27,7 @@ def load_results(results_dir: str = "results") -> Dict[str, dict]:
     results_path = Path(results_dir)
 
     if not results_path.exists():
-        print(f"❌ Le dossier {results_dir}/ n'existe pas")
+        print(f"[ERROR] Le dossier {results_dir}/ n'existe pas")
         return {}
 
     all_results = {}
@@ -39,9 +39,9 @@ def load_results(results_dir: str = "results") -> Dict[str, dict]:
 
             loss_name = data.get("loss_function", json_file.stem)
             all_results[loss_name] = data
-            print(f"✓ Loaded {json_file.name}")
+            print(f"[OK] Loaded {json_file.name}")
         except Exception as e:
-            print(f"⚠️  Erreur lors du chargement de {json_file.name}: {e}")
+            print(f"[WARNING]  Erreur lors du chargement de {json_file.name}: {e}")
 
     return all_results
 
@@ -71,7 +71,7 @@ def plot_training_loss_comparison(results: Dict[str, dict], save_path: str = "lo
         train_losses = data.get("training", {}).get("losses", [])
 
         if not train_losses:
-            print(f"⚠️  Pas de training losses pour {loss_name}")
+            print(f"[WARNING]  Pas de training losses pour {loss_name}")
             continue
 
         epochs = list(range(1, len(train_losses) + 1))
@@ -95,7 +95,7 @@ def plot_training_loss_comparison(results: Dict[str, dict], save_path: str = "lo
     plt.grid(True, alpha=0.3, linestyle='--')
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"✓ Training loss plot saved: {save_path}")
+    print(f"[OK] Training loss plot saved: {save_path}")
     plt.close()
 
 
@@ -125,7 +125,7 @@ def plot_test_metrics_comparison(results: Dict[str, dict], save_path: str = "los
         recall_50s.append(test_data.get("recall_50", 0))
 
     if not loss_names:
-        print("⚠️  Pas de données de test disponibles")
+        print("[WARNING]  Pas de données de test disponibles")
         return
 
     # Créer le bar plot
@@ -166,7 +166,7 @@ def plot_test_metrics_comparison(results: Dict[str, dict], save_path: str = "los
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"✓ Test metrics plot saved: {save_path}")
+    print(f"[OK] Test metrics plot saved: {save_path}")
     plt.close()
 
 
@@ -237,7 +237,7 @@ def plot_validation_metrics_over_epochs(results: Dict[str, dict], save_path: str
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"✓ Validation metrics plot saved: {save_path}")
+    print(f"[OK] Validation metrics plot saved: {save_path}")
     plt.close()
 
 
@@ -274,7 +274,7 @@ def create_summary_table(results: Dict[str, dict], save_path: str = "loss_compar
 
     df = pd.DataFrame(rows)
     df.to_csv(save_path, index=False, float_format='%.4f')
-    print(f"✓ Summary table saved: {save_path}")
+    print(f"[OK] Summary table saved: {save_path}")
 
     # Afficher aussi dans le terminal
     print("\n" + "="*80)
@@ -294,7 +294,7 @@ def main():
     results = load_results("results")
 
     if not results:
-        print("\n❌ Aucun fichier de résultats trouvé dans results/")
+        print("\n[ERROR] Aucun fichier de résultats trouvé dans results/")
         print("   Entraîne d'abord ton modèle avec différentes loss functions:")
         print("   - python train_self_supervised.py --data crunchbase")
         print("   - python train_self_supervised.py --data crunchbase --use_focal_loss")
@@ -302,7 +302,7 @@ def main():
         print("   - python train_self_supervised.py --data crunchbase --use_focal_loss --use_dcl_loss")
         return
 
-    print(f"\n✓ Chargé {len(results)} configurations de loss\n")
+    print(f"\n[OK] Chargé {len(results)} configurations de loss\n")
 
     # Créer le dossier de sortie
     output_dir = Path("loss_comparison_plots")
@@ -316,7 +316,7 @@ def main():
     create_summary_table(results, output_dir / "summary_table.csv")
 
     print(f"\n{'='*80}")
-    print(f"✅ Tous les plots ont été générés dans: {output_dir}/")
+    print(f"[OK] Tous les plots ont été générés dans: {output_dir}/")
     print(f"{'='*80}\n")
 
 

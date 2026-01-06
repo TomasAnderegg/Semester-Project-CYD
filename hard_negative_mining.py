@@ -290,7 +290,7 @@ def test_hard_negative_sampler():
         true_conns = adj_dict.get(src, set())
         assert all(neg not in true_conns for neg in neg_dsts), "Negative sampled from true connections!"
 
-    print("\n✅ Tests passed!")
+    print("\n[OK] Tests passed!")
 
     # Test de comparaison: hard vs random
     print("\n" + "="*60)
@@ -334,7 +334,7 @@ def test_hard_negative_sampler():
     print(f"  From cluster 1 (similar): {random_from_cluster1}/10")
     print(f"\n➡️ Hard negatives select {hard_from_cluster1}x more similar nodes than random")
 
-    print("\n✅ All tests passed!")
+    print("\n[OK] All tests passed!")
 
 
 if __name__ == "__main__":

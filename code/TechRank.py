@@ -207,7 +207,7 @@ def generator_order_w(M, alpha, beta, normalize=True):
         yield {'iteration': i, 'fitness': fitness_next, 'ubiquity': ubiquity_next}
 
 def find_convergence_debug(M, alpha, beta, fit_or_ubiq, do_plot=False, flag_cybersecurity=False, preferences=''):
-    # ⚠️ CORRECTION: fitness rank les LIGNES (Companies), ubiquity rank les COLONNES (Investors)
+    # [WARNING] CORRECTION: fitness rank les LIGNES (Companies), ubiquity rank les COLONNES (Investors)
     # Avec convention: bipartite=0=Companies (lignes), bipartite=1=Investors (colonnes)
     if fit_or_ubiq=='fitness':
         name='Companies'; M_shape=M.shape[0]  # Lignes = Companies
@@ -281,7 +281,7 @@ def rank_df_class_corrected(convergence, dict_class, node_order=None):
     """
     fit_or_ubiq = 'fitness' if 'fitness' in convergence else 'ubiquity'
 
-    # ⚠️ IMPORTANT: Utiliser node_order si fourni, sinon dict_class.keys()
+    # [WARNING] IMPORTANT: Utiliser node_order si fourni, sinon dict_class.keys()
     if node_order is not None:
         list_names = node_order
     else:
@@ -407,13 +407,13 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_C
     create_directories()
     # dict_investors, dict_comp, B = load_saved_data(num_comp, num_tech, flag_cybersecurity)
     
-    # ✅ MODIFICATION: Charger depuis les fichiers OU utiliser les paramètres
+    # [OK] MODIFICATION: Charger depuis les fichiers OU utiliser les paramètres
     if dict_investors is None or dict_comp is None or B is None:
         # Mode normal: charger depuis les fichiers
         dict_investors, dict_comp, B = load_saved_data(num_comp, num_tech, flag_cybersecurity)
     else:
         # Mode avec données fournies: utiliser directement
-        print(f"✓ Utilisation des données fournies: {len(dict_investors)} investors, {len(dict_comp)} companies")
+        print(f"[OK] Utilisation des données fournies: {len(dict_investors)} investors, {len(dict_comp)} companies")
     
     # Vérifier que B n'est pas None
     if B is None:
@@ -441,7 +441,7 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_C
     convergence_comp = find_convergence_debug(M, alpha, beta, 'fitness', do_plot=do_plot)
     time_conv_comp = time.time() - start_time
 
-    # ⚠️ CORRECTION: fitness rank les LIGNES (Companies), donc utiliser dict_comp!
+    # [WARNING] CORRECTION: fitness rank les LIGNES (Companies), donc utiliser dict_comp!
     # Passer set0 pour avoir les noms dans le bon ordre
     df_final_companies, dict_comp = rank_df_class_corrected(convergence_comp, dict_comp, node_order=set0)
 
@@ -453,7 +453,7 @@ def run_techrank(num_comp=NUM_COMP, num_tech=NUM_TECH, flag_cybersecurity=FLAG_C
     convergence_tech = find_convergence_debug(M, alpha, beta, 'ubiquity', do_plot=do_plot)
     time_conv_tech = time.time() - start_time
 
-    # ⚠️ CORRECTION: ubiquity rank les COLONNES (Investors), donc utiliser dict_investors!
+    # [WARNING] CORRECTION: ubiquity rank les COLONNES (Investors), donc utiliser dict_investors!
     # Passer set1 pour avoir les noms dans le bon ordre
     df_final_tech, dict_investors = rank_df_class_corrected(convergence_tech, dict_investors, node_order=set1)
     

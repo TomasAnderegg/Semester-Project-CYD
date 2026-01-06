@@ -203,7 +203,7 @@ def test_dcl_loss():
     print(f"  Ratio (low/high):              {loss_low.item() / loss_high.item():.2f}x")
     print(f"  → Low-degree nodes contribute more to loss (as intended)")
 
-    print("\n✅ Tests terminés!")
+    print("\n[OK] Tests terminés!")
 
 
 if __name__ == "__main__":

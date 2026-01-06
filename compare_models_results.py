@@ -121,7 +121,7 @@ def print_comparison_table(models):
     print("="*100)
 
     # Recommendations
-    print("\n📊 ANALYSE:")
+    print("\nANALYSE:")
 
     # Find best model for each metric
     best_models = {}
@@ -152,12 +152,12 @@ def print_comparison_table(models):
         if best_model:
             best_models[metric_name] = best_model
 
-    print("\n🏆 Meilleur modèle par métrique:")
+    print("\nMeilleur modèle par métrique:")
     for metric_name, best_model in best_models.items():
         print(f"   {metric_name:<30}: {best_model}")
 
     # Overall recommendation
-    print("\n💡 RECOMMANDATION:")
+    print("\nRECOMMANDATION:")
 
     # Count wins
     model_wins = {}
@@ -173,11 +173,11 @@ def print_comparison_table(models):
             if results and 'precision_1000' in results:
                 p1000 = results['precision_1000']
                 if p1000 >= 0.01:  # 1% or higher
-                    print(f"   ✅ '{model_name}' atteint {p1000:.2%} de Precision@1000 (bon pour TechRank)")
+                    print(f"   [OK] '{model_name}' atteint {p1000:.2%} de Precision@1000 (bon pour TechRank)")
                 elif p1000 >= 0.005:  # 0.5% or higher
-                    print(f"   ⚠️  '{model_name}' atteint {p1000:.2%} de Precision@1000 (acceptable)")
+                    print(f"   [WARNING]  '{model_name}' atteint {p1000:.2%} de Precision@1000 (acceptable)")
                 else:
-                    print(f"   ❌ '{model_name}' atteint seulement {p1000:.2%} de Precision@1000 (faible)")
+                    print(f"   [ERROR] '{model_name}' atteint seulement {p1000:.2%} de Precision@1000 (faible)")
 
 
 def main():
@@ -194,15 +194,15 @@ def main():
         models[model_name] = results
 
         if results:
-            print(f"✅ Loaded results for {model_name}")
+            print(f"[OK] Loaded results for {model_name}")
         else:
-            print(f"❌ No results found for {model_name} (file: {log_file})")
+            print(f"[ERROR] No results found for {model_name} (file: {log_file})")
 
     # Print comparison
     if any(r is not None for r in models.values()):
         print_comparison_table(models)
     else:
-        print("\n❌ No results found. Please run training and evaluation first.")
+        print("\n[ERROR] No results found. Please run training and evaluation first.")
         print("\nRun this command to train and evaluate all models:")
         print("   bash compare_all_models.sh")
         print("\nOr run individual training commands from HARD_NEGATIVE_MINING_README.md")

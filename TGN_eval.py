@@ -64,7 +64,7 @@ def detect_model_params_from_checkpoint(checkpoint_path, logger):
     """
     Détecte automatiquement les hyperparamètres du modèle depuis le checkpoint
     """
-    logger.info("🔍 Auto-detecting model parameters from checkpoint...")
+    logger.info("Auto-detecting model parameters from checkpoint...")
     
     checkpoint = torch.load(checkpoint_path, map_location='cpu')
     
@@ -74,25 +74,25 @@ def detect_model_params_from_checkpoint(checkpoint_path, logger):
     if 'memory.memory' in checkpoint:
         memory_shape = checkpoint['memory.memory'].shape
         params['memory_dim'] = memory_shape[1]
-        logger.info(f"   ✓ Detected memory_dim: {params['memory_dim']}")
+        logger.info(f"   [OK] Detected memory_dim: {params['memory_dim']}")
     
     # Détecter message_dim depuis message_function si disponible
     if 'message_function.message_linear_1.weight' in checkpoint:
         msg_shape = checkpoint['message_function.message_linear_1.weight'].shape
         params['message_dim'] = msg_shape[0]
-        logger.info(f"   ✓ Detected message_dim: {params['message_dim']}")
+        logger.info(f"   [OK] Detected message_dim: {params['message_dim']}")
     
     # Détecter node_dim depuis embedding_module
     if 'embedding_module.linear.weight' in checkpoint:
         node_shape = checkpoint['embedding_module.linear.weight'].shape
         params['node_dim'] = node_shape[1]
-        logger.info(f"   ✓ Detected node_dim: {params['node_dim']}")
+        logger.info(f"   [OK] Detected node_dim: {params['node_dim']}")
     
     # Détecter n_heads depuis attention layers
     if 'embedding_module.attention_models.0.attention.out_proj.weight' in checkpoint:
         out_proj_shape = checkpoint['embedding_module.attention_models.0.attention.out_proj.weight'].shape
         # Le nombre de têtes peut être déduit de la structure
-        logger.info(f"   ⚠️  n_heads detection: check manually (typically 2)")
+        logger.info(f"   [WARNING]  n_heads detection: check manually (typically 2)")
     
     return params
 
@@ -102,7 +102,7 @@ def setup_logger():
 
 def process_data_chronologically(data, tgn_model, ngh_finder, batch_size, n_neighbors, logger):
     """
-    ⚠️ CRITIQUE: Parcours chronologique pour construire la mémoire
+    [WARNING] CRITIQUE: Parcours chronologique pour construire la mémoire
     Cette fonction doit être appelée dans le même ordre qu'au training
     """
     tgn_model.set_neighbor_finder(ngh_finder)
@@ -116,7 +116,7 @@ def process_data_chronologically(data, tgn_model, ngh_finder, batch_size, n_neig
         logger.debug("No interactions to process")
         return
 
-    # ⚠️ IMPORTANT: Trier chronologiquement (comme au training)
+    # [WARNING] IMPORTANT: Trier chronologiquement (comme au training)
     sorted_idx = np.argsort(timestamps)
     sources = sources[sorted_idx]
     destinations = destinations[sorted_idx]
@@ -161,11 +161,11 @@ def load_mappings(mapping_dir, logger):
             id_to_investor = {int(row['Investor_ID_TGN']): str(row['Investor_Name']) 
                              for _, row in df_inv.iterrows()}
             
-            logger.info(f"✅ Mappings loaded: {len(id_to_company)} companies, {len(id_to_investor)} investors")
+            logger.info(f"[OK] Mappings loaded: {len(id_to_company)} companies, {len(id_to_investor)} investors")
             return id_to_company, id_to_investor
             
         except Exception as e:
-            logger.warning(f"⚠️  Error loading CSV mappings: {e}")
+            logger.warning(f"[WARNING]  Error loading CSV mappings: {e}")
     
     # Fallback sur pickle
     logger.info("Trying pickle fallback...")
@@ -189,10 +189,10 @@ def load_mappings(mapping_dir, logger):
         else:
             id_to_investor = {int(k): str(v) for k, v in investor_map.items()}
         
-        logger.info(f"✅ Mappings loaded from pickle: {len(id_to_company)} companies, {len(id_to_investor)} investors")
+        logger.info(f"[OK] Mappings loaded from pickle: {len(id_to_company)} companies, {len(id_to_investor)} investors")
         return id_to_company, id_to_investor
     
-    logger.error("❌ No mapping files found!")
+    logger.error("[ERROR] No mapping files found!")
     return id_to_company, id_to_investor
 
 def main():
@@ -208,7 +208,7 @@ def main():
     logger.info("\n" + "="*70)
     logger.info("HYPERPARAMETERS")
     logger.info("="*70)
-    logger.info(f"⚠️  IMPORTANT: Use the SAME hyperparameters as training!")
+    logger.info(f"[WARNING]  IMPORTANT: Use the SAME hyperparameters as training!")
     logger.info(f"   batch_size: {args.bs}")
     logger.info(f"   n_degree: {args.n_degree}")
     logger.info(f"   n_head: {args.n_head}")
@@ -225,7 +225,7 @@ def main():
     # ================================================================
     if args.auto_detect_params or args.memory_dim is None:
         if not Path(args.model_path).exists():
-            logger.error(f"❌ Model file not found: {args.model_path}")
+            logger.error(f"[ERROR] Model file not found: {args.model_path}")
             sys.exit(1)
         
         logger.info("\n" + "="*70)
@@ -237,19 +237,19 @@ def main():
         # Override args with detected parameters
         if args.memory_dim is None and 'memory_dim' in detected_params:
             args.memory_dim = detected_params['memory_dim']
-            logger.info(f"✅ Using detected memory_dim: {args.memory_dim}")
+            logger.info(f"[OK] Using detected memory_dim: {args.memory_dim}")
         
         if args.auto_detect_params:
             if 'message_dim' in detected_params:
                 args.message_dim = detected_params['message_dim']
-                logger.info(f"✅ Using detected message_dim: {args.message_dim}")
+                logger.info(f"[OK] Using detected message_dim: {args.message_dim}")
             if 'node_dim' in detected_params:
                 args.node_dim = detected_params['node_dim']
-                logger.info(f"✅ Using detected node_dim: {args.node_dim}")
+                logger.info(f"[OK] Using detected node_dim: {args.node_dim}")
     
     # Fallback si toujours None
     if args.memory_dim is None:
-        logger.error("❌ Could not detect memory_dim from checkpoint!")
+        logger.error("[ERROR] Could not detect memory_dim from checkpoint!")
         logger.error("   Please specify --memory_dim manually")
         logger.error("   Check your training logs or pickle file for the correct value")
         sys.exit(1)
@@ -258,7 +258,7 @@ def main():
     logger.info(f"\nDevice: {device}")
 
     # ================================================================
-    # ✅ ÉTAPE 1: Charger LES MÊMES DONNÉES qu'au training
+    # [OK] ÉTAPE 1: Charger LES MÊMES DONNÉES qu'au training
     # ================================================================
     logger.info("\n" + "="*70)
     logger.info("STEP 1: Loading FULL dataset (train+val+test)")
@@ -271,7 +271,7 @@ def main():
         randomize_features=args.randomize_features
     )
     
-    logger.info(f"✅ Dataset loaded:")
+    logger.info(f"[OK] Dataset loaded:")
     logger.info(f"   Full data: {len(full_data.sources)} interactions")
     logger.info(f"   Train: {len(train_data.sources)} interactions")
     logger.info(f"   Val: {len(val_data.sources)} interactions")
@@ -292,7 +292,7 @@ def main():
     logger.info(f"   Test:   {test_min} → {test_max}")
 
     # ================================================================
-    # ✅ ÉTAPE 2: Créer LES MÊMES neighbor finders qu'au training
+    # [OK] ÉTAPE 2: Créer LES MÊMES neighbor finders qu'au training
     # ================================================================
     logger.info("\n" + "="*70)
     logger.info("STEP 2: Creating neighbor finders")
@@ -301,10 +301,10 @@ def main():
     train_ngh_finder = get_neighbor_finder(train_data, args.uniform)
     full_ngh_finder = get_neighbor_finder(full_data, args.uniform)
     
-    logger.info("✅ Neighbor finders created (train + full)")
+    logger.info("[OK] Neighbor finders created (train + full)")
 
     # ================================================================
-    # ✅ ÉTAPE 3: Créer LES MÊMES samplers qu'au training
+    # [OK] ÉTAPE 3: Créer LES MÊMES samplers qu'au training
     # ================================================================
     logger.info("\n" + "="*70)
     logger.info("STEP 3: Creating random samplers")
@@ -313,10 +313,10 @@ def main():
     test_rand_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=2)
     nn_test_rand_sampler = RandEdgeSampler(new_node_test_data.sources, new_node_test_data.destinations, seed=3)
     
-    logger.info("✅ Random samplers created")
+    logger.info("[OK] Random samplers created")
 
     # ================================================================
-    # ✅ ÉTAPE 4: Calculer LES MÊMES time statistics qu'au training
+    # [OK] ÉTAPE 4: Calculer LES MÊMES time statistics qu'au training
     # ================================================================
     logger.info("\n" + "="*70)
     logger.info("STEP 4: Computing time statistics")
@@ -325,19 +325,19 @@ def main():
     mean_time_shift_src, std_time_shift_src, mean_time_shift_dst, std_time_shift_dst = \
         compute_time_statistics(full_data.sources, full_data.destinations, full_data.timestamps)
     
-    logger.info(f"✅ Time statistics computed:")
+    logger.info(f"[OK] Time statistics computed:")
     logger.info(f"   Source: mean={mean_time_shift_src:.2f}, std={std_time_shift_src:.2f}")
     logger.info(f"   Dest: mean={mean_time_shift_dst:.2f}, std={std_time_shift_dst:.2f}")
 
     # ================================================================
-    # ✅ ÉTAPE 5: Initialiser le modèle EXACTEMENT comme au training
+    # [OK] ÉTAPE 5: Initialiser le modèle EXACTEMENT comme au training
     # ================================================================
     logger.info("\n" + "="*70)
     logger.info("STEP 5: Initializing model")
     logger.info("="*70)
     
     tgn = TGN(
-        neighbor_finder=train_ngh_finder,  # ⚠️ IMPORTANT: Commencer avec train_ngh_finder
+        neighbor_finder=train_ngh_finder,  # [WARNING] IMPORTANT: Commencer avec train_ngh_finder
         node_features=node_features,
         edge_features=edge_features,
         device=device,
@@ -363,22 +363,22 @@ def main():
     )
     
     tgn = tgn.to(device)
-    logger.info("✅ Model initialized")
+    logger.info("[OK] Model initialized")
 
     # ================================================================
-    # ✅ ÉTAPE 6: Charger les poids du modèle
+    # [OK] ÉTAPE 6: Charger les poids du modèle
     # ================================================================
     logger.info("\n" + "="*70)
     logger.info("STEP 6: Loading model weights")
     logger.info("="*70)
     
     if not Path(args.model_path).exists():
-        logger.error(f"❌ Model file not found: {args.model_path}")
+        logger.error(f"[ERROR] Model file not found: {args.model_path}")
         sys.exit(1)
     
     checkpoint = torch.load(args.model_path, map_location=device)
     
-    # ⚠️ IMPORTANT: Ne PAS supprimer les memory states si use_memory=True
+    # [WARNING] IMPORTANT: Ne PAS supprimer les memory states si use_memory=True
     # Car on veut reconstruire l'état exact du training
     if not args.use_memory:
         for key in list(checkpoint.keys()):
@@ -387,10 +387,10 @@ def main():
     
     tgn.load_state_dict(checkpoint, strict=False)
     tgn.eval()
-    logger.info("✅ Model weights loaded")
+    logger.info("[OK] Model weights loaded")
 
     # ================================================================
-    # ✅ ÉTAPE 7: Reconstruire la mémoire EXACTEMENT comme au training
+    # [OK] ÉTAPE 7: Reconstruire la mémoire EXACTEMENT comme au training
     # ================================================================
     logger.info("\n" + "="*70)
     logger.info("STEP 7: Rebuilding memory from training data")
@@ -403,20 +403,20 @@ def main():
         logger.info("Processing training data chronologically...")
         process_data_chronologically(train_data, tgn, train_ngh_finder, args.bs, args.n_degree, logger)
         
-        logger.info("✅ Memory rebuilt from training data")
+        logger.info("[OK] Memory rebuilt from training data")
         train_memory_backup = tgn.memory.backup_memory()
     else:
-        logger.info("⚠️  No memory module used")
+        logger.info("[WARNING]  No memory module used")
         train_memory_backup = None
 
     # ================================================================
-    # ✅ ÉTAPE 8: Validation (pour comparaison)
+    # [OK] ÉTAPE 8: Validation (pour comparaison)
     # ================================================================
     logger.info("\n" + "="*70)
     logger.info("STEP 8: Validation evaluation")
     logger.info("="*70)
     
-    tgn.set_neighbor_finder(full_ngh_finder)  # ⚠️ IMPORTANT: Utiliser full_ngh_finder pour val/test
+    tgn.set_neighbor_finder(full_ngh_finder)  # [WARNING] IMPORTANT: Utiliser full_ngh_finder pour val/test
     
     val_rand_sampler = RandEdgeSampler(full_data.sources, full_data.destinations, seed=0)
     nn_val_rand_sampler = RandEdgeSampler(new_node_val_data.sources, new_node_val_data.destinations, seed=1)
@@ -432,7 +432,7 @@ def main():
         n_neighbors=args.n_degree
     )
     
-    logger.info("📊 Validation Results (old nodes):")
+    logger.info("Validation Results (old nodes):")
     logger.info(f"   AUROC: {val_auc:.4f}")
     logger.info(f"   AP: {val_ap:.4f}")
     logger.info(f"   MRR: {val_mrr:.4f}")
@@ -450,7 +450,7 @@ def main():
         n_neighbors=args.n_degree
     )
     
-    logger.info("📊 Validation Results (new nodes):")
+    logger.info("Validation Results (new nodes):")
     logger.info(f"   AUROC: {nn_val_auc:.4f}")
     logger.info(f"   AP: {nn_val_ap:.4f}")
     logger.info(f"   MRR: {nn_val_mrr:.4f}")
@@ -461,7 +461,7 @@ def main():
         tgn.memory.restore_memory(val_memory_backup)
 
     # ================================================================
-    # ✅ ÉTAPE 9: Test (metrics principales)
+    # [OK] ÉTAPE 9: Test (metrics principales)
     # ================================================================
     logger.info("\n" + "="*70)
     logger.info("STEP 9: Test evaluation")
@@ -474,7 +474,7 @@ def main():
         n_neighbors=args.n_degree
     )
     
-    logger.info("📊 Test Results (old nodes):")
+    logger.info("Test Results (old nodes):")
     logger.info(f"   AUROC: {test_auc:.4f}")
     logger.info(f"   AP: {test_ap:.4f}")
     logger.info(f"   MRR: {test_mrr:.4f}")
@@ -491,7 +491,7 @@ def main():
         n_neighbors=args.n_degree
     )
     
-    logger.info("📊 Test Results (new nodes):")
+    logger.info("Test Results (new nodes):")
     logger.info(f"   AUROC: {nn_test_auc:.4f}")
     logger.info(f"   AP: {nn_test_ap:.4f}")
     logger.info(f"   MRR: {nn_test_mrr:.4f}")
@@ -504,14 +504,14 @@ def main():
     logger.info("\n" + "="*70)
     logger.info("EVALUATION SUMMARY")
     logger.info("="*70)
-    logger.info("\n📊 Test Results (Old Nodes):")
+    logger.info("\nTest Results (Old Nodes):")
     logger.info(f"   AUROC: {test_auc:.4f}")
     logger.info(f"   AP: {test_ap:.4f}")
     logger.info(f"   MRR: {test_mrr:.4f}")
     logger.info(f"   Recall@10: {test_recall_10:.4f}")
     logger.info(f"   Recall@50: {test_recall_50:.4f}")
     
-    logger.info("\n📊 Test Results (New Nodes):")
+    logger.info("\nTest Results (New Nodes):")
     logger.info(f"   AUROC: {nn_test_auc:.4f}")
     logger.info(f"   AP: {nn_test_ap:.4f}")
     logger.info(f"   MRR: {nn_test_mrr:.4f}")
@@ -519,7 +519,7 @@ def main():
     logger.info(f"   Recall@50: {nn_test_recall_50:.4f}")
 
     # ================================================================
-    # ✅ ÉTAPE 10: Temporal Validation (optional)
+    # [OK] ÉTAPE 10: Temporal Validation (optional)
     # ================================================================
     if args.temporal_validation:
         # Restaurer la mémoire à l'état après validation avant de faire la validation temporelle
@@ -532,7 +532,7 @@ def main():
         temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger, train_data, val_data, id_to_company, id_to_investor)
 
     # ================================================================
-    # ✅ ÉTAPE 11: Predictions & TechRank
+    # [OK] ÉTAPE 11: Predictions & TechRank
     # ================================================================
     if args.run_techrank:
         logger.info("\n" + "="*70)
@@ -541,7 +541,7 @@ def main():
         
         id_to_company, id_to_investor = load_mappings(args.mapping_dir, logger)
         
-        # ⚠️ IMPORTANT: Restaurer la mémoire à l'état après validation
+        # [WARNING] IMPORTANT: Restaurer la mémoire à l'état après validation
         # pour éviter les erreurs de timestamps
         if args.use_memory and val_memory_backup is not None:
             logger.info("Restoring memory to post-validation state for predictions...")
@@ -563,7 +563,7 @@ def main():
         # Lancer TechRank
         run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger)
 
-    logger.info("\n✅ Evaluation complete!")
+    logger.info("\n[OK] Evaluation complete!")
 
 def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_values, logger, experiment_name=None):
     """
@@ -595,7 +595,7 @@ def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_v
         if k > len(predictions_list):
             continue
 
-        logger.info(f"\n📊 Analysis for Top-{k} predictions:")
+        logger.info(f"\nAnalysis for Top-{k} predictions:")
         logger.info("-" * 70)
 
         # Prendre les top-K prédictions
@@ -633,7 +633,7 @@ def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_v
                 company_stats[company_id]['false_positives'] += 1
 
         # ================================================================
-        # ✅ CORRECTION: Séparer en deux populations distinctes
+        # [OK] CORRECTION: Séparer en deux populations distinctes
         # ================================================================
         companies_with_true_links = {}
         companies_without_true_links = {}
@@ -646,7 +646,7 @@ def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_v
                     companies_without_true_links[company_id] = stats
 
         # === Distribution des vrais liens ===
-        logger.info(f"\n   📈 DISTRIBUTION OF TRUE FUTURE LINKS:")
+        logger.info(f"\n   DISTRIBUTION OF TRUE FUTURE LINKS:")
         true_links_distribution = {}
         for stats in company_stats.values():
             count = stats['true_links']
@@ -661,17 +661,17 @@ def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_v
         # Statistiques de base
         # ================================================================
         if companies_with_true_links:
-            logger.info(f"\n   📊 Companies WITH true future links: {len(companies_with_true_links)}")
+            logger.info(f"\n   Companies WITH true future links: {len(companies_with_true_links)}")
 
         if companies_without_true_links:
-            logger.info(f"   📊 Companies WITHOUT true future links: {len(companies_without_true_links)}")
+            logger.info(f"   Companies WITHOUT true future links: {len(companies_without_true_links)}")
 
             # Top-5 compagnies avec le plus de faux positifs
             sorted_companies = sorted(companies_without_true_links.items(),
                                      key=lambda x: x[1]['false_positives'],
                                      reverse=True)[:5]
 
-            logger.info(f"\n      🎯 Top-5 Companies by False Positives (no true links):")
+            logger.info(f"\n      Top-5 Companies by False Positives (no true links):")
             for company_id, stats in sorted_companies:
                 logger.info(f"         Company {company_id:4d}: {stats['false_positives']:4d} false positives")
 
@@ -723,11 +723,11 @@ def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_v
                 plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
                 plt.close()
 
-                logger.info(f"\n      📊 Scatter plot saved: {plot_filename}")
+                logger.info(f"\n      Scatter plot saved: {plot_filename}")
                 logger.info(f"         → Examine the plot to assess error patterns visually")
 
             except Exception as e:
-                logger.warning(f"      ⚠️  Could not create scatter plot: {e}")
+                logger.warning(f"      [WARNING]  Could not create scatter plot: {e}")
 
         # ================================================================
         # EXPORT CSV
@@ -750,9 +750,9 @@ def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_v
                             stats['false_positives'],
                             has_true
                         ])
-            logger.info(f"      📄 CSV exported: {csv_filename}")
+            logger.info(f"      CSV exported: {csv_filename}")
         except Exception as e:
-            logger.warning(f"      ⚠️  Could not export CSV: {e}")
+            logger.warning(f"      [WARNING]  Could not export CSV: {e}")
 
     logger.info("\n" + "="*70)
 
@@ -760,7 +760,7 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
     """
     Validation temporelle: divise le test set en deux parties et évalue les prédictions.
 
-    ✅ CORRECTION DU DATA LEAKAGE:
+    [OK] CORRECTION DU DATA LEAKAGE:
     Cette fonction crée un neighbor finder qui contient SEULEMENT train + val + history
     (pas les liens futurs du test set). Cela évite que TGN puisse "voir le futur" lors
     des prédictions.
@@ -817,7 +817,7 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
     logger.info(f"Test set time range: {min_test_date} to {max_test_date}")
     logger.info(f"Split ratio: {args.temporal_split:.1%}")
     logger.info(f"Split timestamp: {split_timestamp:.2f} ({split_date})")
-    logger.info(f"\n📊 SPLIT BREAKDOWN:")
+    logger.info(f"\nSPLIT BREAKDOWN:")
     logger.info(f"History (before {split_date}): {split_idx} interactions")
     logger.info(f"Ground truth (after {split_date}): {len(test_timestamps) - split_idx} interactions")
 
@@ -840,11 +840,11 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
         current_memory_backup = tgn.memory.backup_memory()
 
     # ================================================================
-    # ✅ CORRECTION DU DATA LEAKAGE
+    # [OK] CORRECTION DU DATA LEAKAGE
     # ================================================================
     # Créer un neighbor finder qui contient SEULEMENT train + val + history
     # (PAS les liens futurs du test set!)
-    logger.info("\n🔧 Creating history-only neighbor finder (fixing data leakage)...")
+    logger.info("\nCreating history-only neighbor finder (fixing data leakage)...")
 
     # Combiner train + val + history
     train_val_length = len(train_data.sources) + len(val_data.sources)
@@ -871,13 +871,13 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
     # Créer le neighbor finder SANS les liens futurs
     history_ngh_finder = get_neighbor_finder(history_data, args.uniform)
 
-    logger.info(f"✅ History neighbor finder created:")
+    logger.info(f"[OK] History neighbor finder created:")
     logger.info(f"   Train+Val+History edges: {len(history_data_sources)}")
     logger.info(f"   Full data edges: {len(full_data.sources)}")
     logger.info(f"   Excluded future edges: {len(full_data.sources) - len(history_data_sources)}")
 
     # Mettre à jour la mémoire avec l'historique en utilisant history_ngh_finder
-    tgn.set_neighbor_finder(history_ngh_finder)  # ✅ Utiliser history_ngh_finder au lieu de full_ngh_finder
+    tgn.set_neighbor_finder(history_ngh_finder)  # [OK] Utiliser history_ngh_finder au lieu de full_ngh_finder
     if args.use_memory and len(history_sources) > 0:
         logger.info("Updating memory with history (using history_ngh_finder)...")
         for i in range(0, len(history_sources), args.bs):
@@ -891,7 +891,7 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
 
     # Générer les prédictions
     logger.info("\nGenerating predictions (using history_ngh_finder)...")
-    # ✅ IMPORTANT: TGN utilise maintenant history_ngh_finder (défini ligne 645)
+    # [OK] IMPORTANT: TGN utilise maintenant history_ngh_finder (défini ligne 645)
     # Les prédictions ne peuvent PAS voir les liens futurs!
 
     # Identifier tous les nodes disponibles
@@ -997,7 +997,7 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
     )
 
     # ================================================================
-    # ✅ NOUVELLE APPROCHE: TechRank-based Validation
+    # [OK] NOUVELLE APPROCHE: TechRank-based Validation
     # ================================================================
     logger.info("\n" + "="*70)
     logger.info("TECHRANK-BASED VALIDATION")
@@ -1017,7 +1017,7 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
     if args.use_memory:
         tgn.memory.restore_memory(current_memory_backup)
 
-    logger.info("\n✅ Temporal validation complete!")
+    logger.info("\n[OK] Temporal validation complete!")
 
 
 def techrank_based_validation(predictions_list, future_sources, future_destinations, full_data, id_to_company, id_to_investor, logger):
@@ -1047,7 +1047,7 @@ def techrank_based_validation(predictions_list, future_sources, future_destinati
     COMPANY_BIPARTITE = 0
     INVESTOR_BIPARTITE = 1
 
-    logger.info("\n📊 Creating prediction graph (all predictions, no threshold)...")
+    logger.info("\nCreating prediction graph (all predictions, no threshold)...")
 
     # ================================================================
     # 1. CRÉER LE GRAPHE DE PRÉDICTIONS (BIPARTI) avec noms préfixés
@@ -1105,7 +1105,7 @@ def techrank_based_validation(predictions_list, future_sources, future_destinati
     # ================================================================
     # 2. CRÉER LE GRAPHE GROUND TRUTH (BIPARTI) avec noms préfixés
     # ================================================================
-    logger.info("\n📊 Creating ground truth graph...")
+    logger.info("\nCreating ground truth graph...")
 
     gt_graph = nx.Graph()
     gt_dict_companies = {}
@@ -1160,7 +1160,7 @@ def techrank_based_validation(predictions_list, future_sources, future_destinati
     # ================================================================
     # 3. LANCER TECHRANK SUR LES DEUX GRAPHES
     # ================================================================
-    logger.info("\n🚀 Running TechRank on both graphs...")
+    logger.info("\nRunning TechRank on both graphs...")
 
     try:
         # Import TechRank
@@ -1194,7 +1194,7 @@ def techrank_based_validation(predictions_list, future_sources, future_destinati
                 how='inner'
             )
 
-            logger.info(f"\n📊 Companies comparison:")
+            logger.info(f"\nCompanies comparison:")
             logger.info(f"   Companies in predictions: {len(df_companies_pred)}")
             logger.info(f"   Companies in ground truth: {len(df_companies_gt)}")
             logger.info(f"   Common companies: {len(merged)}")
@@ -1206,7 +1206,7 @@ def techrank_based_validation(predictions_list, future_sources, future_destinati
                     merged['techrank_gt']
                 )
 
-                logger.info(f"\n✅ Spearman Correlation (Companies):")
+                logger.info(f"\n[OK] Spearman Correlation (Companies):")
                 logger.info(f"   Correlation: {spearman_corr:.4f}")
                 logger.info(f"   P-value: {p_value:.6f}")
                 logger.info(f"   Significance: {'***' if p_value < 0.001 else '**' if p_value < 0.01 else '*' if p_value < 0.05 else 'ns'}")
@@ -1222,24 +1222,24 @@ def techrank_based_validation(predictions_list, future_sources, future_destinati
                         logger.info(f"\n   Top-{k} overlap: {overlap}/{k} ({overlap_pct:.1f}%)")
 
                 # Afficher les top 10 de chaque ranking
-                logger.info("\n📊 Top 10 Companies - Prediction Ranking:")
+                logger.info("\nTop 10 Companies - Prediction Ranking:")
                 top_pred = merged.nlargest(10, 'techrank_pred')[['final_configuration', 'techrank_pred', 'techrank_gt']]
                 for idx, (_, row) in enumerate(top_pred.iterrows(), 1):
                     display_name = row['final_configuration'].replace("COMPANY_", "")
                     logger.info(f"   #{idx:2d} {display_name:40s} → Pred: {row['techrank_pred']:.6f}, GT: {row['techrank_gt']:.6f}")
 
-                logger.info("\n📊 Top 10 Companies - Ground Truth Ranking:")
+                logger.info("\nTop 10 Companies - Ground Truth Ranking:")
                 top_gt = merged.nlargest(10, 'techrank_gt')[['final_configuration', 'techrank_pred', 'techrank_gt']]
                 for idx, (_, row) in enumerate(top_gt.iterrows(), 1):
                     display_name = row['final_configuration'].replace("COMPANY_", "")
                     logger.info(f"   #{idx:2d} {display_name:40s} → GT: {row['techrank_gt']:.6f}, Pred: {row['techrank_pred']:.6f}")
             else:
-                logger.error("❌ No common companies between predictions and ground truth!")
+                logger.error("[ERROR] No common companies between predictions and ground truth!")
         else:
-            logger.error("❌ TechRank failed on one or both graphs!")
+            logger.error("[ERROR] TechRank failed on one or both graphs!")
 
     except Exception as e:
-        logger.error(f"❌ TechRank validation failed: {e}")
+        logger.error(f"[ERROR] TechRank validation failed: {e}")
         import traceback
         traceback.print_exc()
 
@@ -1268,7 +1268,7 @@ def run_techrank_on_graph(graph, dict_companies, dict_investors, logger, graph_n
     dict_companies_filtered = {name: info for name, info in dict_companies.items() if name in graph_nodes}
     dict_investors_filtered = {name: info for name, info in dict_investors.items() if name in graph_nodes}
 
-    logger.info(f"\n🔧 [{graph_name}] Filtered dictionaries:")
+    logger.info(f"\n[{graph_name}] Filtered dictionaries:")
     logger.info(f"   Companies in graph: {len(dict_companies_filtered)}")
     logger.info(f"   Investors in graph: {len(dict_investors_filtered)}")
 
@@ -1295,7 +1295,7 @@ def run_techrank_on_graph(graph, dict_companies, dict_investors, logger, graph_n
     try:
         from code.TechRank import run_techrank
 
-        logger.info(f"\n🚀 [{graph_name}] Running TechRank...")
+        logger.info(f"\n[{graph_name}] Running TechRank...")
 
         # Appliquer TechRank en passant les dictionnaires directement
         df_companies_rank, df_investors_rank, dict_comp_result, dict_inv_result = run_techrank(
@@ -1310,7 +1310,7 @@ def run_techrank_on_graph(graph, dict_companies, dict_investors, logger, graph_n
             B=graph
         )
 
-        logger.info(f"   ✅ [{graph_name}] TechRank completed successfully!")
+        logger.info(f"   [OK] [{graph_name}] TechRank completed successfully!")
 
         if df_companies_rank is not None:
             non_zero = (df_companies_rank['techrank'] > 0).sum()
@@ -1319,10 +1319,10 @@ def run_techrank_on_graph(graph, dict_companies, dict_investors, logger, graph_n
         return df_companies_rank, df_investors_rank
 
     except ImportError as e:
-        logger.error(f"❌ [{graph_name}] Cannot import TechRank: {e}")
+        logger.error(f"[ERROR] [{graph_name}] Cannot import TechRank: {e}")
         return None, None
     except Exception as e:
-        logger.error(f"❌ [{graph_name}] TechRank error: {e}", exc_info=True)
+        logger.error(f"[ERROR] [{graph_name}] TechRank error: {e}", exc_info=True)
         return None, None
 
 
@@ -1356,12 +1356,12 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     """
     Génère le graphe de prédictions UNIQUEMENT pour les liens FUTURS (après train).
 
-    ✅ MÉTHODOLOGIE CORRECTE:
+    [OK] MÉTHODOLOGIE CORRECTE:
     1. Prendre TOUTES les paires possibles (company, investor)
     2. Calculer la probabilité pour chaque paire
     3. Construire un graphe avec les paires ayant une probabilité > seuil
 
-    ⚠️ IMPORTANT: On ne doit PAS utiliser full_data car ça inclut les vrais liens!
+    [WARNING] IMPORTANT: On ne doit PAS utiliser full_data car ça inclut les vrais liens!
     On doit prédire sur TOUTES les paires possibles, y compris celles qui n'existent pas.
 
     Args:
@@ -1378,7 +1378,7 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     logger.info(f"\n{'='*70}")
     logger.info(f"CONSTRUCTION DU GRAPHE DE PRÉDICTION")
     logger.info(f"{'='*70}")
-    logger.info(f"✅ MÉTHODOLOGIE CORRECTE:")
+    logger.info(f"[OK] MÉTHODOLOGIE CORRECTE:")
     logger.info(f"   1. Prédire probabilités pour TOUTES les paires possibles")
     logger.info(f"   2. Construire graphe avec paires prob > seuil")
     logger.info(f"   3. Comparer avec graphe TEST réel pour validation")
@@ -1400,9 +1400,9 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     # ================================================================
     # ÉTAPE 1: Identifier TOUTES les paires possibles
     # ================================================================
-    logger.info(f"\n🔍 Étape 1: Identifier toutes les paires possibles")
+    logger.info(f"\nÉtape 1: Identifier toutes les paires possibles")
 
-    # ⚠️ IMPORTANT: Récupérer d'abord les IDs qui existent dans les données TGN
+    # [WARNING] IMPORTANT: Récupérer d'abord les IDs qui existent dans les données TGN
     all_sources = set(full_data.sources)
     all_destinations = set(full_data.destinations)
 
@@ -1410,7 +1410,7 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     logger.info(f"  Sources (companies): [{min(all_sources)}, {max(all_sources)}] ({len(all_sources)} uniques)")
     logger.info(f"  Destinations (investors): [{min(all_destinations)}, {max(all_destinations)}] ({len(all_destinations)} uniques)")
 
-    # ⚠️ CRITIQUE: Ne garder que les IDs qui existent DANS LES DONNÉES TGN
+    # [WARNING] CRITIQUE: Ne garder que les IDs qui existent DANS LES DONNÉES TGN
     # Sinon on aura des IndexError quand le modèle essaiera d'accéder aux node_features
     company_ids = sorted([cid for cid in id_to_company.keys() if cid in all_sources])
     investor_ids = sorted([iid for iid in id_to_investor.keys() if iid in all_destinations])
@@ -1425,7 +1425,7 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     # ================================================================
     # ÉTAPE 2: Préparer les structures de données
     # ================================================================
-    # ⚠️ CRITIQUE: Utiliser des dictionnaires SÉPARÉS car les IDs se chevauchent!
+    # [WARNING] CRITIQUE: Utiliser des dictionnaires SÉPARÉS car les IDs se chevauchent!
     # Les IDs des companies et des investors commencent tous deux à 0
     company_id_to_name = {}
     investor_id_to_name = {}
@@ -1453,7 +1453,7 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     # ================================================================
     # ÉTAPE 3: Générer TOUTES les paires possibles et prédire
     # ================================================================
-    logger.info(f"\n🚀 Étape 3: Génération des prédictions pour TOUTES les paires")
+    logger.info(f"\nÉtape 3: Génération des prédictions pour TOUTES les paires")
 
     import networkx as nx
 
@@ -1522,7 +1522,7 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
         if len(neg_batch.shape) > 1:
             neg_batch = neg_batch[:, 0]
 
-        # ⚠️ IMPORTANT: torch.no_grad() pour ne pas mettre à jour la mémoire
+        # [WARNING] IMPORTANT: torch.no_grad() pour ne pas mettre à jour la mémoire
         with torch.no_grad():
             try:
                 pos_prob, _ = tgn.compute_edge_probabilities(
@@ -1547,11 +1547,11 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
                     investor_id = d
 
                     # Récupérer les noms de base depuis les dictionnaires SÉPARÉS
-                    # ⚠️ CRITIQUE: Ne PAS utiliser un seul dictionnaire car les IDs se chevauchent!
+                    # [WARNING] CRITIQUE: Ne PAS utiliser un seul dictionnaire car les IDs se chevauchent!
                     company_base_name = company_id_to_name.get(s, f"company_{s}")
                     investor_base_name = investor_id_to_name.get(d, f"investor_{d}")
 
-                    # ⚠️ CRITIQUE: Préfixer les noms avec leur rôle pour éviter les collisions
+                    # [WARNING] CRITIQUE: Préfixer les noms avec leur rôle pour éviter les collisions
                     # Car une même entité (ex: "Legend Capital") peut être à la fois company et investor
                     company_name = f"COMPANY_{company_base_name}"
                     investor_name = f"INVESTOR_{investor_base_name}"
@@ -1601,7 +1601,7 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
                     predictions.append((s, d, prob_score))
 
             except AssertionError as e:
-                logger.error(f"❌ AssertionError at batch {batch_idx}: {e}")
+                logger.error(f"[ERROR] AssertionError at batch {batch_idx}: {e}")
                 logger.error(f"   Timestamps range: [{times_batch.min():.2f}, {times_batch.max():.2f}]")
                 logger.error("   Skipping this batch...")
                 continue
@@ -1609,7 +1609,7 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
         if (batch_idx % 100) == 0:
             logger.info(f"      Processed {end_idx}/{len(all_pairs):,} pairs...")
 
-    logger.info(f"\n✅ Prédictions terminées:")
+    logger.info(f"\n[OK] Prédictions terminées:")
     logger.info(f"   Total paires prédites: {len(all_pairs):,}")
     logger.info(f"   Arêtes retenues (prob > {PROBABILITY_THRESHOLD}): {len(edge_funding_info)}")
     logger.info(f"   Taux de rétention: {len(edge_funding_info)/len(all_pairs)*100:.2f}%")
@@ -1620,7 +1620,7 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     logger.info(f"\n🔨 Étape 4: Construction du graphe final")
 
     # Add edges
-    # ⚠️ IMPORTANT: Convention du graphe original (bipartite_investor_comp.py:934-935):
+    # [WARNING] IMPORTANT: Convention du graphe original (bipartite_investor_comp.py:934-935):
     # Edges vont de Company (bipartite=0) → Investor (bipartite=1)
     for (comp_name, inv_name), funding_info in edge_funding_info.items():
         pred_graph.add_edge(
@@ -1706,7 +1706,7 @@ def diagnostic_graph_before_techrank(pred_graph, dict_companies, dict_investors,
     nodes_0 = [n for n, d in pred_graph.nodes(data=True) if d.get('bipartite') == 0]
     nodes_1 = [n for n, d in pred_graph.nodes(data=True) if d.get('bipartite') == 1]
     
-    logger.info(f"📊 Structure du graphe:")
+    logger.info(f"Structure du graphe:")
     logger.info(f"   Total nodes: {pred_graph.number_of_nodes()}")
     logger.info(f"   Total edges: {pred_graph.number_of_edges()}")
     logger.info(f"   Companies (bipartite=0): {len(nodes_0)}")
@@ -1714,12 +1714,12 @@ def diagnostic_graph_before_techrank(pred_graph, dict_companies, dict_investors,
     logger.info(f"   Dict companies: {len(dict_companies)}")
     logger.info(f"   Dict investors: {len(dict_investors)}")
     
-    logger.info(f"\n📝 Exemples de noms:")
+    logger.info(f"\nExemples de noms:")
     logger.info(f"   Companies (bipartite=0): {nodes_0[:3]}")
     logger.info(f"   Investors (bipartite=1): {nodes_1[:3]}")
     
     isolated = list(nx.isolates(pred_graph))
-    logger.info(f"\n🔍 Nœuds isolés: {len(isolated)}")
+    logger.info(f"\nNœuds isolés: {len(isolated)}")
     if isolated:
         logger.info(f"   Exemples: {isolated[:5]}")
     
@@ -1731,7 +1731,7 @@ def diagnostic_graph_before_techrank(pred_graph, dict_companies, dict_investors,
     investors_in_0 = len(set(dict_investors.keys()) & nodes_0_set)
     investors_in_1 = len(set(dict_investors.keys()) & nodes_1_set)
     
-    logger.info(f"\n🔍 Cohérence dict ↔ graphe:")
+    logger.info(f"\nCohérence dict ↔ graphe:")
     logger.info(f"   Companies dans bipartite=0: {companies_in_0}/{len(dict_companies)}")
     logger.info(f"   Companies dans bipartite=1: {companies_in_1}/{len(dict_companies)} (devrait être 0)")
     logger.info(f"   Investors dans bipartite=0: {investors_in_0}/{len(dict_investors)} (devrait être 0)")
@@ -1748,12 +1748,12 @@ def diagnostic_graph_before_techrank(pred_graph, dict_companies, dict_investors,
             logger.info(f"      Weight: {weight:.6f}, Rounds: {data.get('num_funding_rounds', 0)}")
             
             if u_bipartite == v_bipartite:
-                logger.error(f"      ❌ ERREUR: Les deux nœuds ont le même bipartite={u_bipartite}!")
+                logger.error(f"      [ERROR] ERREUR: Les deux nœuds ont le même bipartite={u_bipartite}!")
             else:
-                logger.info(f"      ✅ OK: Arête bipartite valide")
+                logger.info(f"      [OK] OK: Arête bipartite valide")
         
         edge_weights = [data.get('weight', 0) for u, v, data in pred_graph.edges(data=True)]
-        logger.info(f"\n📊 Statistiques des poids d'arêtes:")
+        logger.info(f"\nStatistiques des poids d'arêtes:")
         logger.info(f"   Min: {min(edge_weights):.6f}")
         logger.info(f"   Max: {max(edge_weights):.6f}")
         logger.info(f"   Moyenne: {np.mean(edge_weights):.6f}")
@@ -1768,17 +1768,17 @@ def run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger):
     companies_in_graph = set(n for n in pred_graph.nodes() if n in dict_companies)
     investors_in_graph = set(n for n in pred_graph.nodes() if n in dict_investors)
 
-    logger.info(f"\n📊 Données pour TechRank:")
+    logger.info(f"\nDonnées pour TechRank:")
     logger.info(f"   Companies dans le graphe: {len(companies_in_graph)}")
     logger.info(f"   Investors dans le graphe: {len(investors_in_graph)}")
     logger.info(f"   Total edges: {pred_graph.number_of_edges()}")
 
-    # ⚠️ CRITIQUE: Filtrer les dictionnaires pour ne garder QUE les nodes dans le graphe!
+    # [WARNING] CRITIQUE: Filtrer les dictionnaires pour ne garder QUE les nodes dans le graphe!
     # Sinon le mapping scores<->noms sera incorrect
     dict_companies_filtered = {name: dict_companies[name] for name in companies_in_graph}
     dict_investors_filtered = {name: dict_investors[name] for name in investors_in_graph}
 
-    logger.info(f"\n🔧 Dictionnaires filtrés:")
+    logger.info(f"\nDictionnaires filtrés:")
     logger.info(f"   dict_companies: {len(dict_companies)} -> {len(dict_companies_filtered)}")
     logger.info(f"   dict_investors: {len(dict_investors)} -> {len(dict_investors_filtered)}")
 
@@ -1796,17 +1796,17 @@ def run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger):
     with open(save_dir_networks / f'bipartite_graph_{num_nodes}.gpickle', 'wb') as f:
         pickle.dump(pred_graph, f)
     
-    logger.info(f"\n✓ Données sauvegardées pour TechRank (limit={num_nodes})")
+    logger.info(f"\n[OK] Données sauvegardées pour TechRank (limit={num_nodes})")
     
     try:
         from code.TechRank import run_techrank
         
-        logger.info("\n🚀 Lancement de TechRank...")
+        logger.info("\nLancement de TechRank...")
         logger.info(f"   Alpha: 0.3, Beta: -5")
         logger.info(f"   Companies: {len(dict_companies_filtered)}")
         logger.info(f"   Investors: {len(dict_investors_filtered)}")
 
-        # ⚠️ IMPORTANT: run_techrank retourne (df_companies, df_investors, dict_comp, dict_investors)
+        # [WARNING] IMPORTANT: run_techrank retourne (df_companies, df_investors, dict_comp, dict_investors)
         # Ordre corrigé pour correspondre à la convention: bipartite=0=Companies, bipartite=1=Investors
         # Passer les dictionnaires FILTRÉS pour avoir le bon mapping
         df_companies_rank, df_investors_rank, _, _ = run_techrank(
@@ -1821,48 +1821,48 @@ def run_techrank_analysis(pred_graph, dict_companies, dict_investors, logger):
             B=pred_graph
         )
         
-        logger.info("\n✓ TechRank terminé avec succès!")
+        logger.info("\n[OK] TechRank terminé avec succès!")
         
         if df_investors_rank is not None and len(df_investors_rank) > 0:
             non_zero_inv = (df_investors_rank['techrank'] > 0).sum()
             max_score_inv = df_investors_rank['techrank'].max()
-            logger.info(f"\n📊 Résultats Investors:")
+            logger.info(f"\nRésultats Investors:")
             logger.info(f"   Total: {len(df_investors_rank)}")
             logger.info(f"   Scores > 0: {non_zero_inv}")
             logger.info(f"   Score max: {max_score_inv:.6f}")
             
             if non_zero_inv > 0:
-                logger.info("\n📊 Top 10 Investors (par TechRank):")
+                logger.info("\nTop 10 Investors (par TechRank):")
                 top_inv = df_investors_rank.nlargest(10, 'techrank')[['final_configuration', 'techrank']]
                 for idx, (_, row) in enumerate(top_inv.iterrows(), 1):
                     # Enlever le préfixe "INVESTOR_" pour l'affichage
                     display_name = row['final_configuration'].replace("INVESTOR_", "")
                     logger.info(f"   #{idx:2d} {display_name:40s} → Score: {row['techrank']:.6f}")
             else:
-                logger.error("\n❌ TOUS les scores investors sont à zéro!")
+                logger.error("\n[ERROR] TOUS les scores investors sont à zéro!")
         
         if df_companies_rank is not None and len(df_companies_rank) > 0:
             non_zero_comp = (df_companies_rank['techrank'] > 0).sum()
             max_score_comp = df_companies_rank['techrank'].max()
-            logger.info(f"\n📊 Résultats Companies:")
+            logger.info(f"\nRésultats Companies:")
             logger.info(f"   Total: {len(df_companies_rank)}")
             logger.info(f"   Scores > 0: {non_zero_comp}")
             logger.info(f"   Score max: {max_score_comp:.6f}")
             
             if non_zero_comp > 0:
-                logger.info("\n📊 Top 10 Companies (par TechRank):")
+                logger.info("\nTop 10 Companies (par TechRank):")
                 top_comp = df_companies_rank.nlargest(10, 'techrank')[['final_configuration', 'techrank']]
                 for idx, (_, row) in enumerate(top_comp.iterrows(), 1):
                     # Enlever le préfixe "COMPANY_" pour l'affichage
                     display_name = row['final_configuration'].replace("COMPANY_", "")
                     logger.info(f"   #{idx:2d} {display_name:40s} → Score: {row['techrank']:.6f}")
             else:
-                logger.error("\n❌ TOUS les scores companies sont à zéro!")
+                logger.error("\n[ERROR] TOUS les scores companies sont à zéro!")
         
     except ImportError as e:
-        logger.error(f"❌ Impossible d'importer TechRank: {e}")
+        logger.error(f"[ERROR] Impossible d'importer TechRank: {e}")
     except Exception as e:
-        logger.error(f"❌ Erreur lors de l'exécution de TechRank: {e}", exc_info=True)
+        logger.error(f"[ERROR] Erreur lors de l'exécution de TechRank: {e}", exc_info=True)
 
 if __name__ == "__main__":
     main()

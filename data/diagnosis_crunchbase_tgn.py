@@ -13,7 +13,7 @@ print("\n1️⃣ Vérification du tri global:")
 is_sorted = (df.ts.diff().dropna() >= 0).all()
 print(f"   Données triées: {is_sorted}")
 if not is_sorted:
-    print("   ❌ PROBLÈME: Les timestamps ne sont pas triés!")
+    print("   [ERROR] PROBLÈME: Les timestamps ne sont pas triés!")
     bad_indices = df[df.ts.diff() < 0].index
     print(f"   Indices problématiques: {bad_indices.tolist()[:10]}")
 
@@ -63,7 +63,7 @@ print(f"   Nœuds destinations uniques: {batch.i.nunique()}")
 for node_col, node_type in [('u', 'source'), ('i', 'destination')]:
     duplicated_nodes = batch[batch[node_col].duplicated(keep=False)]
     if len(duplicated_nodes) > 0:
-        print(f"\n   ⚠️  Nœuds {node_type} apparaissant plusieurs fois dans le batch:")
+        print(f"\n   [WARNING]  Nœuds {node_type} apparaissant plusieurs fois dans le batch:")
         for node in duplicated_nodes[node_col].unique()[:5]:
             node_data = duplicated_nodes[duplicated_nodes[node_col] == node][['u', 'i', 'ts']].sort_values('ts')
             print(f"      Node {node}:")
@@ -71,7 +71,7 @@ for node_col, node_type in [('u', 'source'), ('i', 'destination')]:
             if len(node_data) > 1:
                 ts_diff = node_data.ts.diff().dropna()
                 if (ts_diff < 0).any():
-                    print(f"         ❌ TIMESTAMPS INVERSÉS!")
+                    print(f"         [ERROR] TIMESTAMPS INVERSÉS!")
 
 # 6. Vérifier les timestamps = 0
 print("\n6️⃣ Timestamps à zéro:")
@@ -79,21 +79,21 @@ zero_ts = df[df.ts == 0]
 print(f"   Nombre: {len(zero_ts)}")
 if len(zero_ts) > 0:
     print(f"   Pourcentage: {len(zero_ts)/len(df)*100:.2f}%")
-    print(f"   ⚠️  Ces interactions seront toutes au même timestamp!")
+    print(f"   [WARNING]  Ces interactions seront toutes au même timestamp!")
 
 print("\n" + "=" * 70)
 print("RECOMMANDATIONS")
 print("=" * 70)
 
 if not is_sorted:
-    print("❌ Les données ne sont PAS triées par timestamp")
+    print("[ERROR] Les données ne sont PAS triées par timestamp")
     print("   → Ajoutez df.sort_values('ts') dans prepare_tgn_input()")
 elif len(zero_ts) > len(df) * 0.1:
-    print("⚠️  Plus de 10% des timestamps sont à 0")
+    print("[WARNING]  Plus de 10% des timestamps sont à 0")
     print("   → Filtrez ces lignes OU imputez des timestamps artificiels")
 elif len(problematic_nodes) > 0 or len(problematic_nodes_dst) > 0:
-    print("⚠️  Des nœuds ont des interactions non ordonnées")
+    print("[WARNING]  Des nœuds ont des interactions non ordonnées")
     print("   → Le tri global ne suffit pas, il faut gérer les timestamps égaux")
 else:
-    print("✅ Pas de problème évident détecté")
+    print("[OK] Pas de problème évident détecté")
     print("   Le problème vient probablement du code TGN lui-même")
