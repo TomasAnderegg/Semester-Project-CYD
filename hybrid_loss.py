@@ -301,7 +301,7 @@ def test_hybrid_loss():
     print(f"  Ratio (low/high):               {loss_low.item() / loss_high.item():.2f}x")
     print(f"  → Hybrid correctly prioritizes low-degree hard examples")
 
-    print("\n✅ Tests terminés!")
+    print("\n Tests terminés!")
 
 
 if __name__ == "__main__":

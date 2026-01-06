@@ -159,12 +159,12 @@ def plot_matrix_visualization(M):
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 7))
 
-    axes[0].imshow(M, cmap="bone", aspect="auto")
+    axes[0].imshow(M, cmap="binary", aspect="auto")
     axes[0].set_title("Adjacency Matrix (raw)")
     axes[0].set_xlabel("Investors")
     axes[0].set_ylabel("Companies")
 
-    axes[1].imshow(M_sorted, cmap="bone", aspect="auto")
+    axes[1].imshow(M_sorted, cmap="binary", aspect="auto")
     axes[1].set_title("Adjacency Matrix (sorted by degree)")
     axes[1].set_xlabel("Investors (sorted)")
     axes[1].set_ylabel("Companies (sorted)")
