@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+
 """
 TGN Evaluation Script - Version Corrigée pour Reproduire les Métriques du Training
 """

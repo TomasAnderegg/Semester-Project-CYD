@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+
 """
 TechRank Delta Analysis : Identifier les entreprises prometteuses
 Analyse le delta TechRank (Après TGN - Avant TGN) pour chaque entreprise
