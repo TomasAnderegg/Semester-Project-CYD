@@ -550,7 +550,3 @@ See original TGN repository for license information.
 
 This work was conducted as a semester project at the **CYD Campus (Cyber-Defence Campus)** at EPFL, under the supervision of Prof. Andrea Cavallaro and Julian Jang-Jaccard.
 
-Special thanks to the developers of:
-- [TGN (Temporal Graph Networks)](https://github.com/twitter-research/tgn)
-- [Crunchbase](https://www.crunchbase.com/) for providing access to the dataset
-- The CYD Campus team for their expertise in cyber threat analysis
