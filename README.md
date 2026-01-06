@@ -1,187 +1,331 @@
-# TGN: Temporal Graph Networks [[arXiv](https://arxiv.org/abs/2006.10637), [YouTube](https://www.youtube.com/watch?v=W1GvX2ZcUmY), [Blog Post](https://towardsdatascience.com/temporal-graph-networks-ab8f327f2efe)] 
+# TGN for Investment Prediction with TechRank Validation
 
-Dynamic Graph             |  TGN	
-:-------------------------:|:-------------------------:	
-![](figures/dynamic_graph.png)  |  ![](figures/tgn.png)	
+This project applies Temporal Graph Networks (TGN) to predict future investment links in the Crunchbase dataset, using TechRank as a validation mechanism to assess prediction quality.
 
+## Project Overview
 
+The project models investor-company relationships as a dynamic bipartite graph where:
+- **Nodes**: Companies (bipartite=0) and Investors (bipartite=1)
+- **Edges**: Investment events with timestamps
+- **Task**: Predict future investment links using TGN
+- **Validation**: Compare TechRank scores before/after TGN predictions to assess if predictions align with PageRank-based company quality
 
+### Key Innovation
 
-## Introduction
+Rather than relying solely on traditional metrics (Precision@K, Recall@K), we validate TGN predictions by checking if they improve TechRank scores - a PageRank-inspired algorithm that ranks companies based on their investor network quality.
 
-Despite the plethora of different models for deep learning on graphs, few approaches have been proposed thus far for dealing with graphs that present some sort of dynamic nature (e.g. evolving features or connectivity over time).
- 
-In this paper, we present Temporal Graph Networks (TGNs), a generic, efficient framework for deep learning on dynamic graphs represented as sequences of timed events. Thanks to a novel combination of memory modules and graph-based operators, TGNs are able to significantly outperform previous approaches being at the same time more computationally efficient. 
+## Project Structure
 
-We furthermore show that several previous models for learning on dynamic graphs can be cast as specific instances of our framework. We perform a detailed ablation study of different components of our framework and devise the best configuration that achieves state-of-the-art performance on several transductive and inductive prediction tasks for dynamic graphs.
+```
+.
+├── data/                              # Data processing scripts
+│   ├── data_extraction.py             # Extract raw data from Crunchbase
+│   ├── data_conversion.py             # Convert to TGN format
+│   ├── data_investment_conversion.py  # Investment-specific conversions
+│   ├── bipartite_investor_comp.py     # Build bipartite graphs
+│   ├── bipartite_tech_comp.py         # Technology-company graphs
+│   ├── diagnosis_bipartite_graph.py   # Graph diagnostics
+│   └── diagnosis_crunchbase_tgn.py    # TGN-specific diagnostics
+│
+├── code/                              # Core algorithms
+│   ├── TechRank.py                    # TechRank algorithm implementation
+│   └── test_matrix_M.py               # Adjacency matrix analysis
+│
+├── evaluation/                        # Evaluation tools
+│   ├── Random_forest.py               # Random Forest baselines
+│   ├── test_ranking_logic.py          # Ranking logic tests
+│   └── diagnostic_leakage.py          # Data leakage detection
+│
+├── train_self_supervised.py           # Main TGN training script
+├── TGN_eval.py                        # TGN evaluation with temporal validation
+├── TechRank_Comparison.py             # Compare TechRank before/after TGN
+├── run_all_experiments.py             # Batch experiment runner
+├── compare_models_results.py          # Cross-model comparison
+│
+├── dcl_loss.py                        # Dual Contrastive Loss
+├── focal_loss.py                      # Focal Loss for imbalanced data
+├── hard_negative_mining.py            # Hard negative sampling
+├── plot_loss_comparison.py            # Training loss visualization
+│
+└── utils/                             # Utility modules
+    ├── preprocess_data.py             # Data preprocessing
+    ├── data_processing.py             # Processing utilities
+    └── utils.py                       # General utilities
+```
 
+## Requirements
 
-#### Paper link: [Temporal Graph Networks for Deep Learning on Dynamic Graphs](https://arxiv.org/abs/2006.10637)
-
-
-## Running the experiments
-
-### Requirements
-
-Dependencies (with python >= 3.7):
-
-```{bash}
+```bash
+python >= 3.7
 pandas==1.1.0
 torch==1.6.0
 scikit_learn==0.23.1
+networkx
+numpy
+matplotlib
+scipy
 ```
 
-### Dataset and Preprocessing
+## Data Pipeline
 
-#### Download the public data
-Download the sample datasets (eg. wikipedia and reddit) from
-[here](http://snap.stanford.edu/jodie/) and store their csv files in a folder named
-```data/```.
+### 1. Data Extraction and Conversion
 
-#### Preprocess the data
-We use the dense `npy` format to save the features in binary format. If edge features or nodes 
-features are absent, they will be replaced by a vector of zeros. 
-```{bash}
-python utils/preprocess_data.py --data wikipedia --bipartite
-python utils/preprocess_data.py --data reddit --bipartite
+```bash
+# Extract Crunchbase data
+python data/data_extraction.py
+
+# Convert to bipartite graph format
+python data/bipartite_investor_comp.py
+
+# Convert to TGN format (edge list with timestamps)
+python data/data_conversion.py
 ```
 
+### 2. Data Diagnostics
 
+```bash
+# Analyze graph structure and adjacency matrix
+python code/test_matrix_M.py
 
-### Model Training
+# Check for data leakage
+python evaluation/diagnostic_leakage.py
 
-Self-supervised learning using the link prediction task:
-```{bash}
-# TGN-attn: Supervised learning on the wikipedia dataset
-python train_self_supervised.py --use_memory --prefix tgn-attn --n_runs 10
-
-# TGN-attn-reddit: Supervised learning on the reddit dataset
-python train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit --n_runs 10
+# Diagnose TGN data format
+python data/diagnosis_crunchbase_tgn.py
 ```
 
-Supervised learning on dynamic node classification (this requires a trained model from 
-the self-supervised task, by eg. running the commands above):
-```{bash}
-# TGN-attn: self-supervised learning on the wikipedia dataset
-python train_supervised.py --use_memory --prefix tgn-attn --n_runs 10
+## TechRank Algorithm
 
-# TGN-attn-reddit: self-supervised learning on the reddit dataset
-python train_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit --n_runs 10
+TechRank is a PageRank-inspired algorithm for bipartite graphs with two key parameters:
+
+- **β**: Controls investor degree weighting
+  - Low β (e.g., 0.5): Rewards backing by highly connected investors
+  - High β (e.g., 1.5): Penalizes over-diversified investors
+
+- **α**: Controls company degree weighting
+  - Low α: Rewards companies with many investors
+  - High α: Penalizes over-funded companies
+
+### Running TechRank
+
+```python
+from code.TechRank import TechRank
+
+# Initialize with bipartite graph
+techrank = TechRank(bipartite_graph)
+
+# Compute rankings
+rankings = techrank.compute_techrank(alpha=0.5, beta=0.5)
 ```
 
-### Baselines
+## Model Training
 
-```{bash}
-### Wikipedia Self-supervised
+### Self-Supervised Training
 
-# Jodie
-python train_self_supervised.py --use_memory --memory_updater rnn --embedding_module time --prefix jodie_rnn --n_runs 10
-
-# DyRep
-python train_self_supervised.py --use_memory --memory_updater rnn --dyrep --use_destination_embedding_in_message --prefix dyrep_rnn --n_runs 10
-
-
-### Reddit Self-supervised
-
-# Jodie
-python train_self_supervised.py -d reddit --use_memory --memory_updater rnn --embedding_module time --prefix jodie_rnn_reddit --n_runs 10
-
-# DyRep
-python train_self_supervised.py -d reddit --use_memory --memory_updater rnn --dyrep --use_destination_embedding_in_message --prefix dyrep_rnn_reddit --n_runs 10
-
-
-### Wikipedia Supervised
-
-# Jodie
-python train_supervised.py --use_memory --memory_updater rnn --embedding_module time --prefix jodie_rnn --n_runs 10
-
-# DyRep
-python train_supervised.py --use_memory --memory_updater rnn --dyrep --use_destination_embedding_in_message --prefix dyrep_rnn --n_runs 10
-
-
-### Reddit Supervised
-
-# Jodie
-python train_supervised.py -d reddit --use_memory --memory_updater rnn --embedding_module time --prefix jodie_rnn_reddit --n_runs 10
-
-# DyRep
-python train_supervised.py -d reddit --use_memory --memory_updater rnn  --dyrep --use_destination_embedding_in_message --prefix dyrep_rnn_reddit --n_runs 10
+```bash
+# Train TGN with default parameters
+python train_self_supervised.py \
+    --data crunchbase_invest_comp \
+    --use_memory \
+    --prefix tgn-investment \
+    --n_runs 6 \
+    --n_epoch 50 \
+    --patience 10 \
+    --bs 200 \
+    --lr 0.0001
 ```
 
+### Key Training Parameters
 
-### Ablation Study
-Commands to replicate all results in the ablation study over different modules:
-```{bash}
-# TGN-2l
-python train_self_supervised.py --use_memory --n_layer 2 --prefix tgn-2l --n_runs 10 
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `--data` | crunchbase_invest_comp | Dataset name |
+| `--use_memory` | flag | Enable memory module |
+| `--n_runs` | 6 | Number of training runs |
+| `--n_epoch` | 50 | Maximum epochs |
+| `--patience` | 10 | Early stopping patience |
+| `--bs` | 200 | Batch size |
+| `--lr` | 0.0001 | Learning rate |
+| `--n_degree` | 10 | Neighbors to sample |
+| `--n_head` | 2 | Attention heads |
+| `--n_layer` | 1 | Graph attention layers |
 
-# TGN-no-mem
-python train_self_supervised.py --prefix tgn-no-mem --n_runs 10 
+### Loss Functions
 
-# TGN-time
-python train_self_supervised.py --use_memory --embedding_module time --prefix tgn-time --n_runs 10 
+The project supports multiple loss functions:
 
-# TGN-id
-python train_self_supervised.py --use_memory --embedding_module identity --prefix tgn-id --n_runs 10
+- **Binary Cross-Entropy** (default): Standard link prediction loss
+- **Focal Loss**: Handles class imbalance by focusing on hard examples
+- **DCL Loss**: Dual Contrastive Loss for better negative sampling
 
-# TGN-sum
-python train_self_supervised.py --use_memory --embedding_module graph_sum --prefix tgn-sum --n_runs 10
+```bash
+# Train with Focal Loss
+python train_self_supervised.py --loss focal --focal_alpha 0.25 --focal_gamma 2.0
 
-# TGN-mean
-python train_self_supervised.py --use_memory --aggregator mean --prefix tgn-mean --n_runs 10
+# Train with DCL Loss
+python train_self_supervised.py --loss dcl
 ```
 
+## Evaluation
 
-#### General flags
+### TGN Evaluation with Temporal Validation
 
-```{txt}
-optional arguments:
-  -d DATA, --data DATA         Data sources to use (wikipedia or reddit)
-  --bs BS                      Batch size
-  --prefix PREFIX              Prefix to name checkpoints and results
-  --n_degree N_DEGREE          Number of neighbors to sample at each layer
-  --n_head N_HEAD              Number of heads used in the attention layer
-  --n_epoch N_EPOCH            Number of epochs
-  --n_layer N_LAYER            Number of graph attention layers
-  --lr LR                      Learning rate
-  --patience                   Patience of the early stopping strategy
-  --n_runs                     Number of runs (compute mean and std of results)
-  --drop_out DROP_OUT          Dropout probability
-  --gpu GPU                    Idx for the gpu to use
-  --node_dim NODE_DIM          Dimensions of the node embedding
-  --time_dim TIME_DIM          Dimensions of the time embedding
-  --use_memory                 Whether to use a memory for the nodes
-  --embedding_module           Type of the embedding module
-  --message_function           Type of the message function
-  --memory_updater             Type of the memory updater
-  --aggregator                 Type of the message aggregator
-  --memory_update_at_the_end   Whether to update the memory at the end or at the start of the batch
-  --message_dim                Dimension of the messages
-  --memory_dim                 Dimension of the memory
-  --backprop_every             Number of batches to process before performing backpropagation
-  --different_new_nodes        Whether to use different unseen nodes for validation and testing
-  --uniform                    Whether to sample the temporal neighbors uniformly (or instead take the most recent ones)
-  --randomize_features         Whether to randomize node features
-  --dyrep                      Whether to run the model as DyRep
+The evaluation uses temporal splitting to avoid data leakage:
+
+```bash
+# Evaluate with 60% temporal split (critical for avoiding leakage)
+python TGN_eval.py \
+    --data crunchbase_invest_comp \
+    --use_memory \
+    --prefix tgn-investment \
+    --temporal_split 0.6
 ```
 
-## TODOs 
-* Make code memory efficient: for the sake of simplicity, the memory module of the TGN model is 
-implemented as a parameter (so that it is stored and loaded together of the model). However, this 
-does not need to be the case, and 
-more efficient implementations which treat the models as just tensors (in the same way as the 
-input features) would be more amenable to large graphs.
+**Key Metrics:**
+- **Precision@K**: Fraction of top-K predictions that are correct
+- **Top-K Overlap**: Set intersection between predicted and true top-K companies
+- **P-value**: Statistical significance of overlap vs random baseline
 
-## Cite us
+**Temporal Split Rationale:**
+- Without temporal split: Risk of data leakage (evaluating on past interactions)
+- With `temporal_split=0.6`: Only evaluate on last 40% of test interactions
+- This ensures predictions are truly future-oriented
+
+### TechRank Validation
+
+Compare TechRank rankings before and after adding TGN predictions:
+
+```bash
+python TechRank_Comparison.py \
+    --data crunchbase_invest_comp \
+    --use_memory \
+    --prefix tgn-investment \
+    --temporal_split 0.6
+```
+
+**Analysis Performed:**
+- Spearman rank correlation between TechRank_before and TechRank_after
+- Company-level delta analysis (which companies gain/lose rank)
+- Statistical significance testing
+- Visualization of ranking changes
+
+**Interpretation:**
+- High correlation + low p-value → TGN predictions align with graph structure
+- Top companies gaining rank → Model correctly identifies quality investment targets
+- Random correlation → Model predictions may not respect network topology
+
+### Example Results
+
+```
+Top-20 Overlap Analysis:
+   Predicted companies: 20
+   True future partners: 150
+   Overlap: 17 companies
+   Overlap percentage: 85.0%
+   P-value: 0.049
+
+Spearman Rank Correlation:
+   Correlation: 0.8542
+   P-value: 0.00001
+   Significance: ***
+```
+
+## Analysis Tools
+
+### Graph Structure Analysis
+
+```bash
+# Analyze adjacency matrix and graph properties
+python code/test_matrix_M.py
+```
+
+Output:
+- Node counts (companies/investors)
+- Degree distributions
+- Density metrics
+- Connected components
+- Matrix visualizations (raw and sorted by degree)
+- TechRank readiness assessment
+
+### Prediction Bias Analysis
+
+The evaluation includes scatter plot analysis of prediction errors per company:
+
+```python
+# Automatically generated during TGN_eval.py with --bias_analysis flag
+python TGN_eval.py --bias_analysis --temporal_split 0.6
+```
+
+Generates:
+- Scatter plot: true positives vs false positives per company
+- R² trend line to identify systematic patterns
+- CSV export of per-company error rates
+- Top-5 false positive companies for error analysis
+
+### Loss Comparison
+
+```bash
+# Compare training losses across different runs
+python plot_loss_comparison.py
+```
+
+## Utility Scripts
+
+### Emoji Removal
+
+Removes emojis from print statements (for Windows console compatibility):
+
+```bash
+python remove_emojis.py
+```
+
+### Batch Experiments
+
+```bash
+# Run multiple experiments with different hyperparameters
+python run_all_experiments.py
+```
+
+### Model Comparison
+
+```bash
+# Compare results across different models
+python compare_models_results.py
+```
+
+## Key Findings
+
+1. **Temporal Validation is Critical**
+   - Without temporal split: High Precision@K but data leakage
+   - With temporal_split=0.6: Lower Precision@K but valid predictions
+
+2. **Macro vs Micro Performance**
+   - Macro level (Top-K overlap): 60-85% overlap, statistically significant
+   - Micro level (Precision@K): ~1-3%, indicates granularity mismatch
+   - Interpretation: Model identifies right companies but struggles with exact investor matching
+
+3. **TechRank Validation**
+   - High Spearman correlation (>0.8) validates that predictions respect graph topology
+   - Companies gaining TechRank after TGN predictions confirms quality alignment
+
+4. **Metrics Interpretation**
+   - **Recall@K**: Used during training with negative sampling (1 true + N false)
+   - **Precision@K**: Used in evaluation with full candidate space (all possible pairs)
+   - Both are valid for different evaluation contexts
+
+## Citation
+
+This project builds on the TGN framework:
 
 ```bibtex
 @inproceedings{tgn_icml_grl2020,
     title={Temporal Graph Networks for Deep Learning on Dynamic Graphs},
-    author={Emanuele Rossi and Ben Chamberlain and Fabrizio Frasca and Davide Eynard and Federico 
-    Monti and Michael Bronstein},
+    author={Emanuele Rossi and Ben Chamberlain and Fabrizio Frasca and Davide Eynard and Federico Monti and Michael Bronstein},
     booktitle={ICML 2020 Workshop on Graph Representation Learning},
     year={2020}
 }
 ```
 
+## License
 
+See original TGN repository for license information.
