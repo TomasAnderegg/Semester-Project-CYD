@@ -306,7 +306,7 @@ for i in range(args.n_runs):
     criterion = FocalLoss(alpha=args.focal_alpha, gamma=args.focal_gamma, reduction='mean')
     # criterion = AdaptiveFocalLoss(gamma=args.focal_gamma, reduction='mean')
   else:
-    # 📌 BASELINE: Binary Cross-Entropy (BCE)
+    # BASELINE: Binary Cross-Entropy (BCE)
     logger.info("Using standard Binary Cross-Entropy Loss")
     criterion = torch.nn.BCELoss()
 

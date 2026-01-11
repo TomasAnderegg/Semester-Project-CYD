@@ -55,7 +55,7 @@ def parse_args():
                         help='Run temporal validation on test set')
     parser.add_argument('--temporal_split', type=float, default=0.5,
                         help='Fraction of test set to use as history (default: 0.5)')
-    parser.add_argument('--prediction_threshold', type=float, default=0.0,
+    parser.add_argument('--prediction_threshold', type=float, default=0.3,
                         help='Probability threshold for predictions (default: 0.0 = no threshold)')
     return parser.parse_args()
 
@@ -564,7 +564,7 @@ def main():
 
     logger.info("\n[OK] Evaluation complete!")
 
-def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_values, logger, experiment_name=None):
+def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_values, logger, experiment_name=None, prediction_threshold=0.0):
     """
     Analyse visuelle des erreurs de prédiction par compagnie via scatter plot.
 
@@ -576,6 +576,7 @@ def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_v
         k_values: Liste des valeurs de K à analyser
         logger: Logger
         experiment_name: Nom de l'expérience pour les exports (optionnel)
+        prediction_threshold: Seuil de probabilité minimum (défaut: 0.0)
     """
     import matplotlib.pyplot as plt
     import csv
@@ -583,6 +584,7 @@ def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_v
 
     logger.info("\n" + "="*70)
     logger.info("PREDICTION ERROR ANALYSIS: Scatter Plot Visualization")
+    logger.info(f"Using prediction threshold: {prediction_threshold}")
     logger.info("="*70)
 
     # Créer un dossier pour les exports
@@ -600,6 +602,12 @@ def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_v
         # Prendre les top-K prédictions
         top_k_predictions = predictions_list[:k]
 
+        # Filtrer par seuil de probabilité (cohérent avec Precision@K)
+        top_k_above_threshold = [(s, d, p) for s, d, p in top_k_predictions if p >= prediction_threshold]
+
+        logger.info(f"  Top-{k} predictions: {len(top_k_predictions)}")
+        logger.info(f"  Above threshold ({prediction_threshold}): {len(top_k_above_threshold)}")
+
         # Compter par compagnie
         company_stats = {}
 
@@ -614,8 +622,8 @@ def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_v
                 }
             company_stats[company_id]['true_links'] += 1
 
-        # Compter les prédictions par compagnie
-        for company_id, investor_id, _ in top_k_predictions:
+        # Compter les prédictions par compagnie (SEULEMENT celles au-dessus du seuil)
+        for company_id, investor_id, _ in top_k_above_threshold:
             if company_id not in company_stats:
                 company_stats[company_id] = {
                     'true_links': 0,
@@ -690,7 +698,7 @@ def analyze_prediction_bias_per_company(predictions_list, true_future_links, k_v
 
                 plt.xlabel('True Future Links (Ground Truth)', fontsize=13, fontweight='bold')
                 plt.ylabel('False Positives (Prediction Errors)', fontsize=13, fontweight='bold')
-                plt.title(f'Prediction Error Pattern Analysis (Top-{k})', fontsize=15, fontweight='bold')
+                plt.title(f'Prediction Error Pattern Analysis (Top-{k}, threshold={prediction_threshold})', fontsize=15, fontweight='bold')
                 plt.grid(True, alpha=0.3, linestyle='--')
 
                 # Ajouter une ligne de tendance avec R²
@@ -966,21 +974,18 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
         # Filtrer par seuil de probabilité
         top_k_above_threshold = [(s, d, p) for s, d, p in top_k_predictions if p >= args.prediction_threshold]
 
-        # Compter combien sont vrais
-        true_positives = sum(1 for s, d, _ in top_k_above_threshold if (s, d) in true_future_links)
+        # Compter combien sont vrais parmi celles qui dépassent le threshold
+        true_positives_filtered = sum(1 for s, d, _ in top_k_above_threshold if (s, d) in true_future_links)
 
-        # Calculer precision
-        if len(top_k_above_threshold) > 0:
-            precision = true_positives / len(top_k_above_threshold)
-        else:
-            precision = 0.0
+        # Calculer precision CORRECTE: dénominateur = K (pas le nombre filtré!)
+        precision_with_threshold = true_positives_filtered / k
 
         # Calculer aussi sans seuil pour comparaison
         true_positives_no_threshold = sum(1 for s, d, _ in top_k_predictions if (s, d) in true_future_links)
         precision_no_threshold = true_positives_no_threshold / k
 
         logger.info(f"\nPrecision@{k:4d}:")
-        logger.info(f"  With threshold {args.prediction_threshold}: {precision:.4f} ({true_positives}/{len(top_k_above_threshold)} predictions)")
+        logger.info(f"  With threshold {args.prediction_threshold}: {precision_with_threshold:.4f} ({true_positives_filtered}/{k} predictions, {len(top_k_above_threshold)} above threshold)")
         logger.info(f"  Without threshold:  {precision_no_threshold:.4f} ({true_positives_no_threshold}/{k} predictions)")
 
     # ================================================================
@@ -992,7 +997,8 @@ def temporal_validation(tgn, test_data, full_data, full_ngh_finder, args, logger
         true_future_links,
         k_values=[100, 500, 1000, 5000],
         logger=logger,
-        experiment_name=f"temporal_split_{args.temporal_split:.1f}"
+        experiment_name=f"temporal_split_{args.temporal_split:.1f}",
+        prediction_threshold=args.prediction_threshold
     )
 
     # ================================================================
@@ -1586,7 +1592,7 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
                         'timestamp': timestamp,
                         'probability': prob_score
                     })
-                    edge_funding_info[edge_key]['total_raised_amount_usd'] += prob_score
+                    edge_funding_info[edge_key]['total_raised_amount_usd'] = prob_score
                     edge_funding_info[edge_key]['num_funding_rounds'] += 1
 
                     dict_companies[company_name]['total_funding'] += prob_score
@@ -1616,7 +1622,7 @@ def generate_predictions_and_graph(tgn, id_to_company, id_to_investor, full_data
     # ================================================================
     # ÉTAPE 4: Construire le graphe final
     # ================================================================
-    logger.info(f"\n🔨 Étape 4: Construction du graphe final")
+    logger.info(f"\n Étape 4: Construction du graphe final")
 
     # Add edges
     # [WARNING] IMPORTANT: Convention du graphe original (bipartite_investor_comp.py:934-935):

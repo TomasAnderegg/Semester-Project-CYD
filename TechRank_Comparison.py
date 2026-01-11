@@ -480,11 +480,11 @@ def create_cross_methodology_bump_chart(save_dir, logger):
 
     # Données du tableau du rapport (top 4 TGN)
     data = {
-        'Company': ['Quantistry', 'Phaseshift Tech.', 'QSIM Plus', 'Global Telecom'],
+        'Company': ['Quranium', 'Three tree Ventures', 'Quantum-South', 'EeroQ'],
         'TGN_Rank': [1, 2, 3, 4],
-        'Growth_Score': [92, 86, 90, 94],
-        'CB_Rank': [24664, 36647, 115969, 18185],
-        'Heat_Score': [78, 64, 55, 92]
+        'Growth_Score': [65, 5, 72, 93],
+        'CB_Rank': [60947, 205846, 106889, 1742],
+        'Heat_Score': [51, 20, 61, 85]
     }
 
     df = pd.DataFrame(data)
@@ -510,10 +510,10 @@ def create_cross_methodology_bump_chart(save_dir, logger):
 
     # Couleurs distinctes pour chaque entreprise
     colors = {
-        'Quantistry': '#e74c3c',          # Rouge
-        'Phaseshift Tech.': '#3498db',    # Bleu
-        'QSIM Plus': '#2ecc71',           # Vert
-        'Global Telecom': '#9b59b6'       # Violet
+        'Quranium': '#e74c3c',            # Rouge
+        'Three tree Ventures': '#3498db',  # Bleu
+        'Quantum-South': '#2ecc71',        # Vert
+        'EeroQ': '#9b59b6'                 # Violet
     }
 
     # Tracer les lignes pour chaque entreprise
@@ -548,7 +548,7 @@ def create_cross_methodology_bump_chart(save_dir, logger):
                             edgecolor=color, alpha=0.8))
 
     # Configuration des axes
-    ax.set_xlim(-0.3, 3.7)
+    ax.set_xlim(-0.3, 4.2)  # Augmenté pour laisser de l'espace aux labels à droite
     ax.set_ylim(4.6, 0.4)  # Inverser l'axe Y (1 = meilleur en haut)
 
     ax.set_xticks(positions)
@@ -606,7 +606,7 @@ def create_cross_methodology_bump_chart(save_dir, logger):
         logger.info(f"    TGN vs Growth Score: {growth_div:+d}")
 
 
-def create_bump_chart(df_delta, save_dir, logger, top_n=20):
+def create_bump_chart(df_delta, save_dir, logger, top_n=30):
     """
     Crée un bump chart pour visualiser les changements de ranking.
 
@@ -616,17 +616,17 @@ def create_bump_chart(df_delta, save_dir, logger, top_n=20):
     Args:
         df_delta: DataFrame avec rank_before et rank_after
         save_dir: Dossier où sauvegarder le graphique
-        top_n: Nombre d'entreprises à afficher (par défaut 20)
+        top_n: Nombre d'entreprises à afficher (par défaut 30)
     """
     logger.info(f"\nGenerating bump chart for top {top_n} rank changes...")
 
     # Sélectionner les top N entreprises avec le plus grand changement de rang absolu
     df_top = df_delta.nlargest(top_n, 'rank_change').copy()
 
-    # Trier par rank_after pour avoir un affichage cohérent
-    df_top = df_top.sort_values('rank_after')
+    # Trier par rank_change descendant pour avoir le même ordre que le bar chart
+    df_top = df_top.sort_values('rank_change', ascending=False)
 
-    fig, ax = plt.subplots(figsize=(14, max(10, top_n * 0.5)))
+    fig, ax = plt.subplots(figsize=(10, max(7, top_n * 0.35)))
 
     # Utiliser display_name si disponible
     name_col = 'display_name' if 'display_name' in df_top.columns else 'final_configuration'
@@ -642,43 +642,48 @@ def create_bump_chart(df_delta, save_dir, logger, top_n=20):
         if rank_change > 0:
             color = '#2ecc71'  # Vert pour amélioration
             alpha = 0.8
-            linewidth = 2.5
+            linewidth = 1.5
         elif rank_change < 0:
             color = '#e74c3c'  # Rouge pour dégradation
             alpha = 0.6
-            linewidth = 1.5
+            linewidth = 1.0
         else:
             color = '#95a5a6'  # Gris pour inchangé
             alpha = 0.4
-            linewidth = 1.0
+            linewidth = 0.7
 
         # Tracer la ligne entre before et after
         ax.plot([0, 1], [rank_before, rank_after],
                color=color, alpha=alpha, linewidth=linewidth,
-               marker='o', markersize=8, markeredgecolor='black', markeredgewidth=0.5)
+               marker='o', markersize=5, markeredgecolor='black', markeredgewidth=0.3)
 
         # Ajouter le nom de l'entreprise à droite (position after)
         # Tronquer le nom si trop long
         display_name = company_name[:35] + '...' if len(company_name) > 35 else company_name
         ax.text(1.02, rank_after, display_name,
-               va='center', fontsize=10, fontweight='bold')
+               va='center', fontsize=7, fontweight='bold')
 
-        # Ajouter le changement de rang à gauche (position before)
-        change_text = f"+{int(rank_change)}" if rank_change > 0 else f"{int(rank_change)}"
-        ax.text(-0.02, rank_before, change_text,
-               va='center', ha='right', fontsize=9,
-               color=color, fontweight='bold')
+        # Ajouter le changement de rang à gauche (position before) - SEULEMENT POSITIFS
+        if rank_change > 0:  # Seulement pour les améliorations (vert)
+            change_text = f"+{int(rank_change)}"
+            ax.text(-0.02, rank_before, change_text,
+                   va='center', ha='right', fontsize=6,
+                   color=color, fontweight='bold')
 
     # Configuration des axes
-    ax.set_xlim(-0.15, 1.4)
-    ax.set_ylim(df_top['rank_after'].max() + 5, df_top['rank_before'].min() - 5)  # Inverser l'axe Y
+    ax.set_xlim(-0.2, 2.0)  # Augmenté pour laisser de l'espace aux labels à droite
+    # Prendre le min entre rank_before et rank_after pour la limite supérieure
+    min_rank = min(df_top['rank_before'].min(), df_top['rank_after'].min())
+    max_rank = max(df_top['rank_before'].max(), df_top['rank_after'].max())
+    ax.set_ylim(max_rank + 5, max(0, min_rank - 10))  # Inverser l'axe Y avec plus d'espace en haut
 
     ax.set_xticks([0, 1])
-    ax.set_xticklabels(['Before TGN', 'After TGN'], fontsize=14, fontweight='bold')
-    ax.set_ylabel('Rank (1 = Best)', fontsize=13, fontweight='bold')
-    ax.set_title(f'Ranking Shifts: Top {top_n} Companies by Absolute Rank Change\n'
-                f'(Before vs After TGN Predictions)',
-                fontsize=14, fontweight='bold', pad=20)
+    ax.set_xticklabels(['Before TGN', 'After TGN'], fontsize=9, fontweight='bold')
+    ax.set_ylabel('Rank (1 = Best)', fontsize=9, fontweight='bold')
+    ax.tick_params(axis='y', labelsize=7)
+    # ax.set_title(f'Ranking Shifts: Top {top_n} Companies by Absolute Rank Change\n'
+    #             f'(Before vs After TGN Predictions)',
+    #             fontsize=14, fontweight='bold', pad=35)
 
     # Grille horizontale pour faciliter la lecture
     ax.grid(True, alpha=0.3, axis='y', linestyle='--')
@@ -689,13 +694,13 @@ def create_bump_chart(df_delta, save_dir, logger, top_n=20):
     # Légende
     from matplotlib.lines import Line2D
     legend_elements = [
-        Line2D([0], [0], color='#2ecc71', linewidth=2.5, label='Rank Improved (↑)'),
-        Line2D([0], [0], color='#e74c3c', linewidth=1.5, label='Rank Declined (↓)'),
-        Line2D([0], [0], color='#95a5a6', linewidth=1.0, label='No Change (=)')
+        Line2D([0], [0], color='#2ecc71', linewidth=1.5, label='Rank Improved (↑)'),
+        Line2D([0], [0], color='#e74c3c', linewidth=1.0, label='Rank Declined (↓)'),
+        Line2D([0], [0], color='#95a5a6', linewidth=0.7, label='No Change (=)')
     ]
-    ax.legend(handles=legend_elements, loc='upper right', fontsize=11, framealpha=0.9)
+    ax.legend(handles=legend_elements, loc='upper right', fontsize=7, framealpha=0.9)
 
-    plt.tight_layout()
+    plt.tight_layout()  # Pas besoin de réserver d'espace (pas de titre)
     bump_chart_path = save_dir / f'bump_chart_top{top_n}_rank_changes.png'
     plt.savefig(bump_chart_path, dpi=300, bbox_inches='tight')
     logger.info(f"   [OK] Saved bump chart: {bump_chart_path}")
@@ -723,8 +728,8 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
         'figure.titlesize': 22    # titre figure
     })
 
-    # 0. BUMP CHART - Visualisation des changements de ranking
-    create_bump_chart(df_delta, save_dir, logger, top_n=top_k_viz)
+    # 0. BUMP CHART - Visualisation des changements de ranking (top 30 comme le bar chart)
+    create_bump_chart(df_delta, save_dir, logger, top_n=30)
 
     # 0b. CROSS-METHODOLOGY BUMP CHART - Comparaison TGN vs Crunchbase
     create_cross_methodology_bump_chart(save_dir, logger)
@@ -871,7 +876,7 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
         ax.set_yticks(y_pos)
         # Utiliser display_name (sans préfixe COMPANY_)
         name_col = 'display_name' if 'display_name' in df_top_movers.columns else 'final_configuration'
-        ax.set_yticklabels([name[:40] for name in df_top_movers[name_col]], fontsize=9)
+        ax.set_yticklabels([name[:40] for name in df_top_movers[name_col]], fontsize=16, fontweight='bold')
         ax.set_xlabel('Rank Improvement (positive = moved up)', fontsize=11, fontweight='bold')
         ax.set_title('Top 30 Companies by Rank Change', fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3, axis='x')
@@ -882,7 +887,7 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
             rank_val = int(row['rank_change'])
             sign = "+" if rank_val >= 0 else ""
             ax.text(row['rank_change'], i, f" {sign}{rank_val}",
-                   va='center', fontsize=8, fontweight='bold')
+                   va='center', fontsize=14, fontweight='bold')
         
         plt.tight_layout()
         rank_plot_path = save_dir / 'rank_changes.png'
