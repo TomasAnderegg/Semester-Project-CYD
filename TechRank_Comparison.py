@@ -750,13 +750,13 @@ def create_visualizations(df_delta, df_promising, threshold, save_dir, logger, t
         bar_height = 0.35
         
         # Barres AVANT TGN (en bleu)
-        bars_before = ax.barh(y_pos - bar_height/2, topK['techrank_before'], 
-                              bar_height, label='Before TGN', 
+        bars_before = ax.barh(y_pos - bar_height/2, topK['techrank_before'],
+                              bar_height, label='$R_{initial}$',
                               color='#3498db', alpha=0.8, edgecolor='black', linewidth=0.2)
-        
+
         # Barres APRÈS TGN (en vert)
-        bars_after = ax.barh(y_pos + bar_height/2, topK['techrank_after'], 
-                            bar_height, label='After TGN', 
+        bars_after = ax.barh(y_pos + bar_height/2, topK['techrank_after'],
+                            bar_height, label='$R_{predicted}$',
                             color='#2ecc71', alpha=0.8, edgecolor='black', linewidth=0.2)
         
         # Ajouter les valeurs sur les barres
