@@ -225,7 +225,7 @@ TechRank then runs on this single graph and produces a single score per company.
    - **P(top-K)**: the probability that a company appears in the top-K across samples
 
 **What this enables:**
-- **Distinguish confident from uncertain rankings**: A company ranked #3 with narrow CI [#2, #5] is a robust finding; one ranked #3 with CI [#1, #40] is unreliable. The current deterministic pipeline cannot make this distinction.
+- **Distinguish confident from uncertain rankings**: A company ranked #3 with narrow CI [#2, #5] (Confidence Interval of #2 and #5) is a robust finding; one ranked #3 with CI [#1, #40] is unreliable. The current deterministic pipeline cannot make this distinction.
 - **Threshold-free analysis**: Instead of choosing a single arbitrary threshold, Monte Carlo naturally integrates over all possible graph realizations weighted by their probability. A pair with P=0.44 still contributes to some samples, rather than being completely discarded.
 - **Robust disruption detection**: Companies flagged as disruptive should have consistently high delta_R across samples, not just under one specific graph realization.
 
