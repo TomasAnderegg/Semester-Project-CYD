@@ -16,26 +16,6 @@ The key idea is detecting **disruptive signals** by analyzing how company rankin
 
 ---
 
-## Table of Contents
-
-- [Motivation](#motivation)
-- [Research Question](#research-question)
-- [Approach](#approach)
-  - [TechRank Algorithm](#techrank-algorithm)
-  - [Temporal Graph Networks](#temporal-graph-networks)
-  - [Gaps and Complementarity](#gaps-and-complementarity)
-  - [Integration Pipeline](#integration-pipeline)
-- [Project Structure](#project-structure)
-- [Dataset](#dataset)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Evaluation Metrics](#evaluation-metrics)
-- [Limitations](#limitations)
-- [Improvements](#improvements)
-- [Citation](#citation)
-
----
-
 ## Motivation
 
 Technological innovation evolves at an unprecedented pace, with profound implications for national security and cyber defence. **Disruptive technologies** often start weak, attract only niche users, but eventually transform entire industries (e.g., Internet, smartphones, quantum computing).
