@@ -480,11 +480,11 @@ def create_cross_methodology_bump_chart(save_dir, logger):
 
     # Données du tableau du rapport (top 4 TGN)
     data = {
-        'Company': ['Quranium', 'Three tree Ventures', 'Quantum-South', 'EeroQ'],
-        'TGN_Rank': [1, 2, 3, 4],
-        'Growth_Score': [65, 5, 72, 93],
-        'CB_Rank': [60947, 205846, 106889, 1742],
-        'Heat_Score': [51, 20, 61, 85]
+        'Company': ['Quranium', 'Quantum-South', 'EeroQ'],
+        'TGN_Rank': [1, 2, 3],
+        'Growth_Score': [65, 72, 93],
+        'CB_Rank': [60947, 106889, 1742],
+        'Heat_Score': [51, 61, 85]
     }
 
     df = pd.DataFrame(data)
@@ -511,7 +511,6 @@ def create_cross_methodology_bump_chart(save_dir, logger):
     # Couleurs distinctes pour chaque entreprise
     colors = {
         'Quranium': '#e74c3c',            # Rouge
-        'Three tree Ventures': '#3498db',  # Bleu
         'Quantum-South': '#2ecc71',        # Vert
         'EeroQ': '#9b59b6'                 # Violet
     }
@@ -549,16 +548,16 @@ def create_cross_methodology_bump_chart(save_dir, logger):
 
     # Configuration des axes
     ax.set_xlim(-0.3, 4.2)  # Augmenté pour laisser de l'espace aux labels à droite
-    ax.set_ylim(4.6, 0.4)  # Inverser l'axe Y (1 = meilleur en haut)
+    ax.set_ylim(3.6, 0.4)  # Inverser l'axe Y (1 = meilleur en haut)
 
     ax.set_xticks(positions)
     ax.set_xticklabels(labels, fontsize=14, fontweight='bold')
     ax.set_ylabel('Rank (1 = Best)', fontsize=14, fontweight='bold')
-    ax.set_yticks([1, 2, 3, 4])
-    ax.set_yticklabels(['1st', '2nd', '3rd', '4th'], fontsize=13, fontweight='bold')
+    ax.set_yticks([1, 2, 3])
+    ax.set_yticklabels(['1st', '2nd', '3rd'], fontsize=13, fontweight='bold')
 
     ax.set_title('Cross-Methodology Ranking Comparison: TGN vs Crunchbase Metrics\n'
-                 'Top 4 Companies from TGN Predictions',
+                 'Top 3 Companies from TGN Predictions',
                  fontsize=15, fontweight='bold', pad=20)
 
     # Grille horizontale
@@ -944,6 +943,11 @@ def main():
             logger.info(f"   {name}")
 
     df_comp_before = df_comp_before[df_comp_before['techrank'] != 0.0]
+
+    # Exclure les entités mal classifiées (investisseurs dans le mapping company)
+    misclassified = ['COMPANY_Three Tree Ventures']
+    df_comp_before = df_comp_before[~df_comp_before['final_configuration'].isin(misclassified)]
+
     df_comp_before.to_csv("techrank_comparison/before_tgn.csv", index=False)
 
 
@@ -954,6 +958,7 @@ def main():
         args.alpha, args.beta, "APRÈS TGN (Predictions)", logger
     )
     df_comp_after = df_comp_after[df_comp_after['techrank'] != 0.0]
+    df_comp_after = df_comp_after[~df_comp_after['final_configuration'].isin(misclassified)]
     df_comp_after.to_csv("techrank_comparison/after_tgn.csv", index=False)
 
     # 5. Analyser les deltas et identifier les entreprises prometteuses

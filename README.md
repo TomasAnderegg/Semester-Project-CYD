@@ -10,14 +10,9 @@
 
 ## Abstract
 
-This project develops a novel framework for forecasting emerging disruptive technologies in the context of national cyber defence. By combining **TechRank** (a PageRank-inspired centrality algorithm for bipartite networks) with **Temporal Graph Networks** (TGN), the framework identifies companies positioned for significant influence growth in the technology ecosystem.
+This project develops a framework for forecasting emerging disruptive technologies in the context of national cyber defence. By combining **TechRank** (a PageRank-inspired centrality algorithm for bipartite networks) with **Temporal Graph Networks** (TGN), the framework identifies companies positioned for significant influence growth in the technology ecosystem.
 
-The key innovation is detecting **disruptive signals** by analyzing how company rankings evolve when TGN predicts future investment patterns. Companies that start with low TechRank scores but experience dramatic increases after prediction may signal early-stage disruptive trajectories.
-
-**Key Results:**
-- Spearman rank correlation: **ρ = 0.3746, p = 0.0495** (statistically significant)
-- Top-20 overlap: **85%** between predicted and actual influential companies
-- DCL loss achieves **Recall@50 = 91%** on transductive link prediction
+The key idea is detecting **disruptive signals** by analyzing how company rankings evolve when TGN predicts future investment patterns. Companies that experience dramatic TechRank increases after prediction may signal early-stage disruptive trajectories.
 
 ---
 
@@ -25,21 +20,18 @@ The key innovation is detecting **disruptive signals** by analyzing how company 
 
 - [Motivation](#motivation)
 - [Research Question](#research-question)
-- [Methodology](#methodology)
+- [Approach](#approach)
   - [TechRank Algorithm](#techrank-algorithm)
   - [Temporal Graph Networks](#temporal-graph-networks)
+  - [Gaps and Complementarity](#gaps-and-complementarity)
   - [Integration Pipeline](#integration-pipeline)
 - [Project Structure](#project-structure)
 - [Dataset](#dataset)
 - [Installation](#installation)
 - [Usage](#usage)
-  - [Data Pipeline](#data-pipeline)
-  - [Training TGN](#training-tgn)
-  - [TechRank Comparison](#techrank-comparison)
-- [Evaluation](#evaluation)
-- [Key Findings](#key-findings)
+- [Evaluation Metrics](#evaluation-metrics)
 - [Limitations](#limitations)
-- [Future Work](#future-work)
+- [Improvements](#improvements)
 - [Citation](#citation)
 
 ---
@@ -49,14 +41,11 @@ The key innovation is detecting **disruptive signals** by analyzing how company 
 Technological innovation evolves at an unprecedented pace, with profound implications for national security and cyber defence. **Disruptive technologies** often start weak, attract only niche users, but eventually transform entire industries (e.g., Internet, smartphones, quantum computing).
 
 Traditional monitoring frameworks struggle to:
-1. Model temporal evolution of technology ecosystems
+1. Model the temporal evolution of technology ecosystems
 2. Detect early signals before disruption becomes obvious
 3. Handle dynamic, non-linear changes in investment patterns
 
-This project addresses these gaps by combining:
-- **TechRank**: Measures current influence in investor-company networks
-- **TGN**: Predicts future network evolution
-- **ΔR metric**: Identifies companies with dramatic rank increases (disruption signals)
+This project addresses these gaps by combining two complementary approaches: a static ranking algorithm (TechRank) and a temporal deep learning model (TGN).
 
 ---
 
@@ -64,120 +53,53 @@ This project addresses these gaps by combining:
 
 > **How can Temporal Graph Networks enhance TechRank to improve temporal forecasting of cyber-relevant disruptive technologies?**
 
-**Hypothesis:** Modeling the technology ecosystem as a dynamic bipartite graph (investors ↔ companies) enables earlier identification of high-potential technologies compared to static network analysis alone.
+**Hypothesis:** Modeling the technology ecosystem as a dynamic bipartite graph (investors <-> companies) enables earlier identification of high-potential technologies compared to static network analysis alone.
 
 ---
 
-## Methodology
+## Approach
 
-### TechRank Algorithm
+![Pipeline Overview](figures/New_Pipeline_Predictive_tech.drawio.png)
 
-TechRank is a **bipartite PageRank** variant that ranks companies and investors based on mutual influence:
+This project combines two algorithms:
 
-```
-Initial scores:
-w_c^(0) = Σ_t M_{c,t}  (company degree)
-w_t^(0) = Σ_c M_{c,t}  (investor degree)
+- **TechRank** — a bipartite PageRank variant that ranks companies and investors by mutual influence in a static network. See: [Mezzetti et al., 2022](https://arxiv.org/abs/2210.07824)
+- **Temporal Graph Networks (TGN)** — a deep learning model that processes timestamped interaction events to predict future links in dynamic graphs. See: [Rossi et al., 2020](https://arxiv.org/abs/2006.10637)
 
-Recursive update:
-w_c^(n+1) = Σ_t G_{c,t}(β) · w_t^(n)
-w_t^(n+1) = Σ_c G_{t,c}(α) · w_c^(n)
-```
+### Gaps and Complementarity
 
-**Key Parameters:**
-- **β = -5.0**: Strongly amplifies influence of highly active investors
-  - An investor funding 50 companies has weight **9.7 million times** larger than one funding 2 companies (50^5 / 2^5)
-  - This makes TechRank highly sensitive to new connections with established investors
-  - Enables detection of sudden attractiveness shifts
+The two algorithms address fundamentally different aspects of the problem, and their gaps are complementary:
 
-- **α = 0.3**: Companies contribute nearly equally regardless of connectivity
-  - Avoids penalizing emerging companies with few investors
-  - Maintains focus on investor activity as the primary signal
+| Aspect | TechRank | TGN |
+|--------|----------|-----|
+| **Input** | Static bipartite graph | Temporal sequence of events |
+| **Output** | Node centrality scores | Pairwise link probabilities |
+| **Temporal awareness** | None | Core capability |
+| **Global ranking** | Core capability | None |
+| **Prediction** | Cannot predict future | Predicts future links |
+| **Bias** | Sensitive to parameter choice (alpha, beta) | Degree bias toward hubs |
 
-### Temporal Graph Networks
+**How they complement each other:**
 
-TGN processes the investor-company graph as a sequence of **timestamped events** (funding rounds):
+1. **TGN fills TechRank's temporal gap**: TechRank alone can only rank companies based on the current network. By feeding TGN's predicted future graph into TechRank, we obtain forward-looking rankings that anticipate network evolution.
 
-1. **Memory module**: Captures historical state of each node (company/investor)
-2. **Message passing**: Updates memory after each interaction
-3. **Attention-based aggregation**: Generates embeddings from recent neighbors
-4. **Link prediction**: MLP decoder predicts probability of future investments
+2. **TechRank fills TGN's ranking gap**: TGN alone produces link probabilities without any notion of which companies matter most. TechRank aggregates these predictions into meaningful centrality scores, converting local pairwise predictions into global influence rankings.
 
-**Architecture:**
-- Node embedding: 200-dim
-- Temporal embedding: 200-dim
-- Graph attention with 2 heads
-- GRU memory updater
+3. **Disruption detection emerges from the combination**: Neither algorithm alone can detect disruption. The **delta metric** (change in TechRank before vs. after TGN prediction) identifies companies whose structural importance is predicted to shift dramatically. This is only possible when both temporal prediction and centrality analysis are combined.
 
-### Integration Pipeline
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ 1. Compute TechRank on observed graph                   │
-│    → Initial influence scores (Score₀)                   │
-└─────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────┐
-│ 2. Train TGN on temporal interactions                    │
-│    → Learn dynamics of investment patterns               │
-└─────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────┐
-│ 3. Predict future graph with TGN                         │
-│    → Generate all company-investor pair probabilities    │
-└─────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────┐
-│ 4. Recompute TechRank on predicted graph                 │
-│    → Updated influence scores (Score_pred)               │
-└─────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────┐
-│ 5. Compute ΔR = (Score_pred - Score₀) / (Score₀ + ε)    │
-│    → Identify companies with significant rank increase   │
-└─────────────────────────────────────────────────────────┘
-```
-
-**Disruption Detection:**
-Companies with **high ΔR** (large relative increase in TechRank) signal potential disruption:
-- Started with low visibility / few investors
-- Predicted to attract high-influence investors
-- May be developing breakthrough technologies
+4. **Error aggregation is beneficial**: TGN may produce noisy pairwise predictions (low Precision@K at the link level), but TechRank's aggregation mechanism averages out individual errors. A company predicted to attract several high-influence investors will rank high even if some individual link predictions are wrong.
 
 ---
 
 ## Project Structure
 
-```
-.
-├── data/                              # Data extraction & preprocessing
-│   ├── data_extraction.py             # Extract from Crunchbase
-│   ├── data_conversion.py             # Convert to TGN format
-│   ├── bipartite_investor_comp.py     # Build bipartite graphs
-│   ├── diagnosis_bipartite_graph.py   # Graph quality diagnostics
-│   └── diagnostic_leakage.py          # Temporal leakage detection
-│
-├── code/                              # Core algorithms
-│   ├── TechRank.py                    # TechRank implementation (α, β parameters)
-│   └── test_matrix_M.py               # Adjacency matrix analysis
-│
-├── evaluation/                        # Evaluation & baselines
-│   ├── Random_forest.py               # Random Forest baseline
-│   └── test_ranking_logic.py          # Ranking validation
-│
-├── train_self_supervised.py           # TGN training (main entry point)
-├── TGN_eval.py                        # TGN evaluation with temporal split
-├── TechRank_Comparison.py             # Before/after TechRank comparison
-├── run_all_experiments.py             # Batch experiments
-│
-├── dcl_loss.py                        # Degree Contrastive Loss
-├── focal_loss.py                      # Focal Loss (class imbalance)
-├── hard_negative_mining.py            # Hard negative sampling
-│
-└── utils/                             # Utilities
-    ├── preprocess_data.py
-    └── data_processing.py
-```
+| Script | Description |
+|--------|-------------|
+| `data/bipartite_investor_comp.py` | Extract Crunchbase data, build bipartite graph + prepare TGN input files (.csv, .npy) |
+| `code/TechRank.py` | TechRank algorithm implementation |
+| `train_self_supervised.py` | Train TGN model |
+| `TGN_eval.py` | Evaluate TGN + generate predicted graph (.pkl) |
+| `TechRank_Comparison.py` | Delta analysis: TechRank before vs after TGN |
 
 ---
 
@@ -186,35 +108,19 @@ Companies with **high ΔR** (large relative increase in TechRank) signal potenti
 **Source:** [Crunchbase](https://www.crunchbase.com/)
 **Focus:** Quantum computing & quantum key distribution companies
 
-### Statistics
-
 | Metric | Value |
 |--------|-------|
 | Companies | 223 |
 | Investors | 1,016 |
 | Funding events | 1,330 |
 | Edge features | 2 (raised amount USD, #investors) |
-| Timespan | 42,684 days (~117 years of data) |
+| Timespan | ~117 years of data |
 | Train/Val/Test split | 70% / 15% / 15% (chronological) |
 
-### Key Features
-
-**Investors:**
-- Name
-- Funding round ID
-- Timestamp (funding announcement date)
-- Amount raised (USD)
-- Number of co-investors
-
-**Companies:**
-- Name
-- Company ID
-- Associated technologies
-
 **Graph Properties:**
-- Bipartite structure: Investor (type-1) ↔ Company (type-0)
+- Bipartite structure: Investor (type-1) <-> Company (type-0)
 - Sparse (density = 0.0059)
-- Hub structure: Few highly connected investors, many low-degree companies
+- Hub structure: few highly connected investors, many low-degree companies
 - Extreme class imbalance: 0.59% positive links (169:1 negative-to-positive ratio)
 
 ---
@@ -235,288 +141,150 @@ pip install matplotlib
 
 ## Usage
 
-### Data Pipeline
-
-#### 1. Extract and Convert Data
+### 1. Data Preparation
 
 ```bash
-# Extract Crunchbase data
-python data/data_extraction.py
-
-# Build bipartite graph
-python data/bipartite_investor_comp.py
-
-# Convert to TGN format (CSV + edge features)
-python data/data_conversion.py
+python -m data.bipartite_investor_comp
 ```
 
-#### 2. Diagnose Graph Quality
+### 2. Train TGN
 
 ```bash
-# Visualize adjacency matrix, check for isolated nodes
-python code/test_matrix_M.py
-
-# Detect temporal leakage
-python evaluation/diagnostic_leakage.py
-```
-
-### Training TGN
-
-```bash
-# Train with BCE loss (baseline)
 python train_self_supervised.py \
-    --data crunchbase_invest_comp \
     --use_memory \
-    --prefix tgn-baseline \
-    --n_runs 6 \
-    --n_epoch 50 \
+    --prefix tgn-attn \
+    --n_epoch 100 \
     --patience 10 \
-    --bs 200 \
-    --lr 0.0001
-
-# Train with DCL loss (mitigates degree bias)
-python train_self_supervised.py \
-    --data crunchbase_invest_comp \
-    --use_memory \
-    --loss dcl \
-    --prefix tgn-dcl \
-    --n_runs 6 \
-    --n_epoch 50 \
-    --patience 10
+    --lr 1e-4 \
+    --node_dim 200 --time_dim 200 --memory_dim 200 --message_dim 200 \
+    --use_wandb --wandb_project "tgn-experiments" \
+    --n_runs 6
 ```
 
-### TechRank Comparison
-
-#### Evaluate TGN with Temporal Validation
+### 3. Evaluate TGN + Generate Predictions
 
 ```bash
-# Critical: Use temporal_split=0.6 to avoid leakage
 python TGN_eval.py \
-    --data crunchbase_invest_comp \
+    --data crunchbase \
+    --model_path saved_models/tgn-dcl-crunchbase.pth \
     --use_memory \
-    --prefix tgn-dcl \
-    --temporal_split 0.6
+    --auto_detect_params \
+    --run_techrank \
+    --temporal_validation --temporal_split 0.6 \
+    --prediction_threshold 0.45
 ```
 
-**What this does:**
-1. Splits test set: 60% for prediction, 40% as ground truth (future)
-2. Computes TechRank on historical + predicted interactions
-3. Computes TechRank on historical + ground truth interactions
-4. Measures Spearman correlation between predicted and actual rankings
-
-#### Compare TechRank Before/After TGN
+### 4. Delta Analysis
 
 ```bash
 python TechRank_Comparison.py \
-    --data crunchbase_invest_comp \
-    --use_memory \
-    --prefix tgn-dcl \
-    --temporal_split 0.6
+    --data crunchbase \
+    --mapping_dir data/mappings \
+    --alpha 0.3 --beta -5 \
+    --save_dir techrank_comparison \
+    --plot --threshold 0.001
 ```
 
-**Output:**
-- Spearman rank correlation (r, p-value)
-- Top-K overlap (companies appearing in both predicted and true top-K)
-- Ranking visualizations (bump chart, diverging bar chart)
-- CSV export of companies with high ΔR
-
 ---
 
-## Evaluation
+## Evaluation Metrics
 
-### Metrics
+### Link Prediction (TGN Performance)
 
-#### Link Prediction (TGN Performance)
-
-- **AUROC / AP**: Binary classification metrics
+- **AUROC / AP**: Binary classification metrics for link prediction
 - **MRR (Mean Reciprocal Rank)**: Rank of first correct prediction
-- **Recall@K**: Proportion of true links in top-K predictions
+- **Recall@K**: Proportion of true links found in top-K predictions
 
-#### Ranking Validation (Pipeline Performance)
+### Ranking Validation (Pipeline Performance)
 
-- **Spearman Rank Correlation (ρ)**: Agreement between predicted and actual influential companies
-- **P-value**: Statistical significance of correlation
-- **Top-K Overlap**: Set intersection |Predicted_Top-K ∩ True_Top-K|
-
-#### Disruption Detection
-
-- **ΔR (Delta Ranking)**: Relative change in TechRank score
+- **Spearman Rank Correlation**: Agreement between predicted and actual company rankings
+- **Top-K Overlap**: Set intersection between predicted and true top-K companies
+- **delta_R (Delta Ranking)**: Relative change in TechRank score
   ```
-  ΔR = (TechRank_predicted - TechRank_initial) / (TechRank_initial + ε)
+  delta_R = (TechRank_predicted - TechRank_initial) / (TechRank_initial + epsilon)
   ```
-- Companies with **high ΔR** are flagged as potentially disruptive
-
-### Results
-
-#### TGN Model Performance
-
-| Model | AUROC | AP | MRR | Recall@10 | Recall@50 |
-|-------|-------|-----|-----|-----------|-----------|
-| Random Forest | 0.519 | 0.602 | 0.086 | 0.225 | 0.500 |
-| JODIE | 0.764 | 0.712 | 0.143 | 0.282 | 0.823 |
-| DyRep | 0.720 | 0.718 | 0.185 | 0.323 | 0.682 |
-| **TGN (BCE)** | 0.835 | 0.848 | 0.530 | 0.645 | 0.870 |
-| **TGN-DCL** | **0.763** | **0.779** | 0.527 | **0.755** | **0.910** |
-
-**Key Insight:** DCL loss significantly improves **Recall@50** (91%) by mitigating degree bias, allowing better identification of low-degree (emerging) companies.
-
-#### Temporal Validation (Pipeline)
-
-| Metric | Result |
-|--------|--------|
-| Spearman correlation (ρ) | **0.3746** |
-| P-value | **0.0495** (p < 0.05, significant) |
-| Top-10 overlap | **60%** (6/10) |
-| Top-20 overlap | **85%** (17/20) |
-
-**Interpretation:**
-- Model preserves **relative ranking** of influential companies
-- Statistically significant correlation confirms temporal patterns are captured
-- High Top-K overlap validates that predicted rankings align with future reality
-
-#### Top Disruptive Companies (High ΔR)
-
-| Rank | Company | TechRank_before | TechRank_after | ΔR |
-|------|---------|-----------------|----------------|----|
-| 1 | Quantistry | 0.0013 | 0.1448 | **111× increase** |
-| 2 | Phaseshift Tech. | 0.0001 | 0.0089 | 89× increase |
-| 3 | QSIM Plus | 0.0012 | 0.0826 | 69× increase |
-| 4 | Global Telecom | 0.0013 | 0.0499 | 38× increase |
 
 ---
 
-## Key Findings
+## Improvements
 
-### 1. Temporal Validation is Critical
+### Monte Carlo TechRank (Uncertainty Propagation)
 
-- **Without temporal split**: High metrics but data leakage (model sees future)
-- **With temporal_split=0.6**: Valid predictions, statistically significant correlation
-- **Temporal_split=0.5**: Non-significant (p=0.314), insufficient future data
+**The problem:** TGN outputs a probability for each company-investor pair. For example:
 
-### 2. Macro vs Micro Performance Gap
+| Pair | TGN Probability |
+|------|----------------|
+| Company A - Investor X | 0.99 |
+| Company A - Investor Y | 0.46 |
+| Company B - Investor Z | 0.44 |
+| Company B - Investor W | 0.80 |
 
-- **Macro level** (Top-K overlap): 60-85% overlap, model identifies right companies
-- **Micro level** (Precision@K): ~0.2% at K=2000, struggles with exact investor matching
-- **Interpretation**: Model captures company-level disruption but not investor-company pair granularity
-  - Analogy: Knows "Mbappé will change clubs" but can't predict "which club"
+Currently, the pipeline applies a hard threshold (e.g., 0.45): edges above become part of the graph, edges below are discarded. With threshold=0.45:
+- Company A gets **2 edges** (0.99 and 0.46 both pass)
+- Company B gets **1 edge** (only 0.80 passes, 0.44 is dropped)
 
-### 3. TechRank Parameter Choice Matters
+But this is misleading:
+- The edge at P=0.46 is barely above threshold — almost as uncertain as the one at P=0.44 that was dropped
+- The edge at P=0.99 is almost certain, yet it carries the same binary weight as the one at P=0.46
+- If we had chosen threshold=0.43 instead, Company B would also have 2 edges, potentially changing the entire ranking
 
-- **β = -5.0**: Amplifies high-degree investor influence by factor of k^5
-  - When TGN predicts new link to established investor → dramatic TechRank increase
-  - Enables detection of sudden attractiveness shifts
-- **α = 0.3**: Avoids penalizing emerging companies with few investors
-  - Ensures low-degree companies can still achieve high ΔR
+TechRank then runs on this single graph and produces a single score per company. But this score depends heavily on the arbitrary threshold choice, and two edges with very different confidence levels (0.99 vs 0.46) are treated identically.
 
-### 4. DCL Loss Mitigates Degree Bias
+**Why the output is a Bernoulli distribution:** TGN's link prediction decoder passes the pair embedding through a sigmoid function, which outputs a value in [0, 1]. This value represents P(edge exists | node embeddings) — the probability that a future investment link will form between a given company-investor pair. For any single pair, the outcome is binary: either the investment happens (1) or it doesn't (0). A random variable that takes value 1 with probability p and value 0 with probability (1-p) is by definition a **Bernoulli(p) distribution**. Each predicted edge is therefore an independent Bernoulli trial, and the predicted graph as a whole is a collection of independent Bernoulli random variables — one per company-investor pair.
 
-- Standard BCE: Focuses learning on high-degree nodes (hubs)
-- DCL: Downweights hub interactions, upweights low-degree interactions
-- Result: **+16% Recall@50** improvement for detecting emerging companies
+**Why Monte Carlo follows naturally:** Since each edge is a Bernoulli random variable, the predicted graph is not a single fixed graph but a **probability distribution over graphs**. There are exponentially many possible graph realizations (2^N for N pairs), so we cannot enumerate them all. Monte Carlo simulation solves this by sampling: we draw N random graphs from this distribution (each edge independently included with its predicted probability), run TechRank on each, and use the empirical distribution of scores as an approximation. By the law of large numbers, as N grows, the sample statistics (mean, variance, quantiles) converge to the true values. No additional modeling assumptions are needed — we simply use the probabilities TGN already provides.
 
-### 5. Error Analysis: Random vs Systematic
+**The approach:**
+1. For each of N samples (e.g., N=500), independently sample a binary graph where each edge is included with probability p (Bernoulli sampling)
+2. Run TechRank on each sampled graph, producing N sets of company rankings
+3. Aggregate across samples to obtain:
+   - **Mean score** and **standard deviation** for each company
+   - **95% confidence intervals** (percentiles 2.5% and 97.5%)
+   - **P(top-K)**: the probability that a company appears in the top-K across samples
 
-- Prediction errors appear **largely random** rather than systematic
-- High-variance errors across companies (Table 11 in report)
-- TechRank aggregation mechanism preserves ranking despite low precision
-- No evidence of graph distance bias, community structure bias (Sinha et al., 2018)
+**What this enables:**
+- **Distinguish confident from uncertain rankings**: A company ranked #3 with narrow CI [#2, #5] is a robust finding; one ranked #3 with CI [#1, #40] is unreliable. The current deterministic pipeline cannot make this distinction.
+- **Threshold-free analysis**: Instead of choosing a single arbitrary threshold, Monte Carlo naturally integrates over all possible graph realizations weighted by their probability. A pair with P=0.44 still contributes to some samples, rather than being completely discarded.
+- **Robust disruption detection**: Companies flagged as disruptive should have consistently high delta_R across samples, not just under one specific graph realization.
 
----
+### Hyperparameter Optimization
 
-## Limitations
+- **TechRank parameters**: Systematic grid search for (alpha, beta) rather than manual selection
+- **Loss function tuning**: Optimize Focal Loss (gamma, alpha) and DCL hyperparameters
+- **Prediction threshold**: Study the sensitivity of downstream TechRank rankings to the probability threshold used when building the predicted graph
 
-### Dataset Limitations
+### Richer Node Features
 
-1. **Small dataset**: 223 companies, 1,330 events
-   - Limits generalization to other technology domains
-   - Maximum 10 timestamps per company (sparse temporal signal)
+- **Company features**: Number of patents, publications, sector classification, funding stage
+- **Investor features**: Portfolio diversity, historical success rate, investment focus areas
+- **Edge features**: Funding round type (seed, Series A, etc.), co-investor information
 
-2. **Missing information**:
-   - No data on how funding is allocated within companies
-   - All technologies weighted equally (no prioritization)
-   - No semantic features (patents, publications, etc.)
+### Directed Graph Modeling
 
-3. **Domain-specific**: Focus on quantum computing
-   - Results may not generalize to AI, biotech, etc.
+Explicitly model the Investor -> Company direction in the bipartite graph rather than treating it as undirected. This would allow TGN to learn asymmetric patterns in investment flows.
 
-### Model Limitations
+### Alternative Architectures
 
-1. **Low Precision@K**: Exact investor-company pair prediction remains challenging
-   - Precision@K ≈ 0 for K < 2000
-   - Model captures company potential but not investor preferences
+- **JEPA (Joint Embedding Predictive Architecture)**: Self-supervised learning approach that may better capture latent structure
+- **Data assimilation methods**: Inspired by weather forecasting, could provide principled uncertainty quantification
 
-2. **Hyperparameters not optimized**:
-   - TechRank (α, β): Manual selection based on reasoning
-   - Focal Loss / DCL: Default hyperparameters used
-   - Potential for improvement with systematic tuning
+### Dataset Expansion
 
-3. **No directionality enforcement**: Investor → Company direction implicit but not enforced
-
-### Validation Limitations
-
-1. **Crunchbase metrics unreliable**: Heat Score, Growth Score use proprietary algorithms
-   - Cannot be used for rigorous validation
-
-2. **Ground truth ambiguity**: Disruption is subjective
-   - No labeled "disruptive" companies in dataset
-   - Validation relies on proxy metrics (rank correlation, overlap)
-
----
-
-## Future Work
-
-### Methodological Improvements
-
-1. **Hyperparameter Optimization**:
-   - Grid search for (α, β) in TechRank
-   - Tune Focal Loss (γ, α) and DCL (temperature, exponent)
-
-2. **Richer Node Features**:
-   - Company: #patents, #publications, sector, funding stage
-   - Investor: portfolio diversity, historical success rate
-   - Edge: funding round type (seed, Series A, etc.)
-
-3. **Directed Graph Modeling**: Explicitly model Investor → Company direction
-
-4. **Alternative Models**:
-   - JEPA (Joint Embedding Predictive Architecture) for self-supervised learning
-   - Data assimilation methods (inspired by weather forecasting)
-
-### Data & Validation Improvements
-
-1. **Larger Dataset**:
-   - Expand beyond quantum computing (AI, biotech, autonomous vehicles)
-   - Include patent databases, academic publications
-
-2. **Synthetic Data Augmentation**:
-   - Generate additional timestamps to enrich temporal signal
-   - Ensure fixed minimum #interactions per company
-
-3. **Expert Validation**:
-   - Collaborate with domain experts to label disruptive companies
-   - Validate predictions against realized market outcomes
-
-4. **Technology Weighting**:
-   - Prioritize emerging technologies over mature ones
-   - Use external signals (e.g., hype cycle, R&D investment trends)
+- **Broader domains**: Expand beyond quantum computing to AI, biotech, autonomous vehicles
+- **Richer data sources**: Include patent databases, academic publications, regulatory filings
+- **Synthetic data augmentation**: Generate additional timestamps to enrich the temporal signal for companies with sparse histories
 
 ### Operational Deployment
 
-1. **Agentic AI Integration**:
-   - Continuous monitoring of Crunchbase updates
-   - Real-time alerts for companies with sudden ΔR spikes
-   - Autonomous parameter adjustment based on drift detection
-
-2. **Interactive Dashboard**:
-   - Visualize company trajectories over time
-   - Filter by technology sector, geographic region
-   - Export high-ΔR companies for strategic analysis
+- **Continuous monitoring**: Integrate with Crunchbase API for real-time updates
+- **Alert system**: Automated alerts for companies with sudden delta_R spikes
+- **Interactive dashboard**: Visualize company trajectories over time, filter by sector or region
 
 ---
 
 ## Citation
 
-This project builds upon the TGN framework:
+This project builds upon:
 
 ```bibtex
 @inproceedings{tgn_icml_grl2020,
@@ -526,8 +294,6 @@ This project builds upon the TGN framework:
     year={2020}
 }
 ```
-
-For the TechRank algorithm:
 
 ```bibtex
 @article{mezzetti2022techrank,
@@ -540,13 +306,6 @@ For the TechRank algorithm:
 
 ---
 
-## License
-
-See original TGN repository for license information.
-
----
-
 ## Acknowledgments
 
 This work was conducted as a semester project at the **CYD Campus (Cyber-Defence Campus)** at EPFL, under the supervision of Prof. Andrea Cavallaro and Julian Jang-Jaccard.
-
