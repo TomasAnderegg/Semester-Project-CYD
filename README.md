@@ -39,7 +39,7 @@ This project addresses these gaps by combining two complementary approaches: a s
 
 ## Approach
 
-![Pipeline Overview](figures/New_Pipeline_Predictive_tech.drawio.png)
+![Pipeline Overview](New_Pipeline_Predictive_tech.drawio.png)
 
 This project combines two algorithms:
 
