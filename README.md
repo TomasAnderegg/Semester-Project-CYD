@@ -1,4 +1,4 @@
-# Forecasting Emerging Disruptive Technologies
+s# Forecasting Emerging Disruptive Technologies
 
 **EPFL Semester Project - CYD Campus**
 *Combining Temporal Graph Networks with TechRank for Early Detection of Disruptive Technologies*
