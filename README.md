@@ -39,7 +39,9 @@ This project addresses these gaps by combining two complementary approaches: a s
 
 ## Approach
 
-![Pipeline Overview](New_Pipeline_Predictive_tech.drawio.png)
+<p align="center">
+  <img src="New_Pipeline_Predictive_tech.drawio.png" alt="Pipeline Overview" width="60%">
+</p>
 
 This project combines two algorithms:
 
